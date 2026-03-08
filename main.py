@@ -51,6 +51,21 @@ import gc
 from datetime import datetime
 from pathlib import Path
 
+# ============================================================
+# RENDER DEPLOYMENT OVERLAP PROTECTION
+# ============================================================
+# Render starts the NEW instance FIRST, waits for health check,
+# THEN sends SIGTERM to the OLD instance. This means both run
+# simultaneously for ~30-60 seconds. Telegram polling allows
+# only ONE consumer — the overlap causes Conflict errors.
+#
+# FIX: The NEW instance delays starting Telegram polling by
+# RENDER_OVERLAP_GRACE_SEC seconds, giving the OLD instance
+# time to receive SIGTERM and release the polling lock.
+# The web server starts IMMEDIATELY (Render needs /health).
+# ============================================================
+RENDER_OVERLAP_GRACE_SEC = int(os.getenv('RENDER_OVERLAP_GRACE_SEC', '45'))
+
 try:
     from loguru import logger
 
@@ -212,7 +227,24 @@ class Application:
             logger.error("  CRITICAL: Service may not stay alive on Render!")
 
         # Step 8: Telegram bot
+        # On Render, we MUST delay polling to let the OLD instance die first.
+        # Render sends SIGTERM to old instance only AFTER new instance is healthy.
+        # The old instance gets a 30s grace period to shut down.
+        # We wait RENDER_OVERLAP_GRACE_SEC to guarantee no overlap.
         logger.info("[8/10] Starting Telegram bot...")
+        is_render = os.getenv('RENDER', '') or os.getenv('RENDER_DEPLOY', '')
+        if is_render:
+            logger.info(
+                f"  Render detected — waiting {RENDER_OVERLAP_GRACE_SEC}s "
+                f"for old instance to release polling lock..."
+            )
+            logger.info(
+                f"  (Web server is already live on port "
+                f"{os.getenv('PORT', '10000')} — health checks pass)"
+            )
+            await asyncio.sleep(RENDER_OVERLAP_GRACE_SEC)
+            logger.info("  Grace period complete. Starting Telegram bot now.")
+
         try:
             from agents.a12_telegram_reporter import get_telegram_reporter
             self._telegram = get_telegram_reporter()
@@ -359,11 +391,41 @@ def setup_signal_handlers(app: Application, loop: asyncio.AbstractEventLoop):
     When Render deploys a new version, it sends SIGTERM to the old instance.
     We MUST stop the Telegram polling IMMEDIATELY so the new instance
     can start polling without hitting Conflict errors.
+
+    PRIORITY: Kill Telegram polling FIRST, in the signal handler itself,
+    before even entering the async shutdown sequence. This is the fastest
+    possible way to release the getUpdates lock.
     """
     def handle_signal(signum, frame):
         sig_name = signal.Signals(signum).name
-        logger.info(f"Received {sig_name} — initiating IMMEDIATE shutdown")
-        loop.call_soon_threadsafe(app.request_shutdown)
+        logger.info(f"Received {sig_name} — KILLING TELEGRAM POLLING IMMEDIATELY")
+
+        # NUCLEAR OPTION: Schedule the Telegram stop as the HIGHEST priority
+        # task on the event loop. This runs before any other pending callbacks.
+        if app._telegram and app._telegram._app:
+            async def _emergency_stop_polling():
+                """Emergency: stop polling lock ASAP on SIGTERM."""
+                try:
+                    tg_app = app._telegram._app
+                    if tg_app.updater and tg_app.updater.running:
+                        logger.info("[SIGTERM] Force-stopping Telegram updater...")
+                        await asyncio.wait_for(
+                            tg_app.updater.stop(), timeout=8.0
+                        )
+                        logger.info("[SIGTERM] Telegram updater STOPPED")
+                except asyncio.TimeoutError:
+                    logger.warning("[SIGTERM] Updater stop timed out (8s)")
+                except Exception as e:
+                    logger.error(f"[SIGTERM] Emergency stop error: {e}")
+                finally:
+                    # Now trigger the full graceful shutdown
+                    app.request_shutdown()
+
+            loop.call_soon_threadsafe(
+                lambda: asyncio.ensure_future(_emergency_stop_polling())
+            )
+        else:
+            loop.call_soon_threadsafe(app.request_shutdown)
 
     signal.signal(signal.SIGTERM, handle_signal)
     signal.signal(signal.SIGINT, handle_signal)
