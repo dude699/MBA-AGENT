@@ -923,6 +923,174 @@ class GoogleNewsScanner:
 
 
 # ============================================================
+# SERPAPI SIGNAL SCANNER (230+/month budget)
+# ============================================================
+
+class SerpAPISignalScanner:
+    """
+    Uses SerpAPI for high-value intent signal discovery.
+    Budget: ~2 searches/day allocated to A-01 (60/month).
+
+    Searches for:
+        - Tier 1-2 company hiring announcements (Google Search)
+        - Campus recruitment drives (Google Search)
+        - High-value HR recruiter posts (Google Search)
+
+    Only triggers for Tier 1-2 companies where DDG/RSS found
+    no signals, to fill coverage gaps.
+    """
+
+    # A-01 gets 2 SerpAPI searches per day from the 230+/month pool
+    MAX_SERP_PER_SESSION = 2
+
+    SERP_QUERY_TEMPLATES = [
+        '"{company}" hiring intern OR internship 2026 india',
+        '"{company}" campus placement OR recruitment drive 2026',
+        '"{company}" MBA summer intern program india',
+    ]
+
+    def __init__(self, analyzer: SignalAnalyzer, matcher: CompanyMatcher,
+                 db: DatabaseManager):
+        self.analyzer = analyzer
+        self.matcher = matcher
+        self.db = db
+        self._serpapi_key = get_config().serpapi.api_key
+        self._session_count = 0
+
+    def scan_priority_companies(self, companies: List[Dict],
+                                already_signaled_ids: Set[int]) -> List[IntentSignal]:
+        """
+        SerpAPI scan for Tier 1-2 companies without existing signals.
+
+        Args:
+            companies: Tier 1-2 company list
+            already_signaled_ids: Company IDs that already have signals
+
+        Returns:
+            List of new IntentSignal objects
+        """
+        if not self._serpapi_key:
+            return []
+
+        signals = []
+        self._session_count = 0
+
+        # Only scan companies WITHOUT existing signals (gap-filling)
+        gap_companies = [
+            c for c in companies
+            if c.get('id') not in already_signaled_ids
+            and c.get('tier', 5) <= 2
+        ]
+
+        # Prioritize: Tier 1 first, then Tier 2
+        gap_companies.sort(key=lambda c: c.get('tier', 5))
+
+        for company in gap_companies:
+            if self._session_count >= self.MAX_SERP_PER_SESSION:
+                break
+
+            try:
+                company_signals = self._serp_search_company(company)
+                signals.extend(company_signals)
+                time.sleep(random.uniform(2, 5))
+            except Exception as e:
+                logger.debug(f"[{AGENT_ID}] SerpAPI scan error: {e}")
+                continue
+
+        logger.info(
+            f"[{AGENT_ID}] SerpAPI scan: {len(signals)} signals, "
+            f"{self._session_count}/{self.MAX_SERP_PER_SESSION} searches used"
+        )
+        return signals
+
+    def _serp_search_company(self, company: Dict) -> List[IntentSignal]:
+        """Search SerpAPI for a single company's hiring signals."""
+        signals = []
+        name = company.get('name', '')
+        company_id = company.get('id')
+        tier = company.get('tier', 5)
+
+        if not name or not company_id:
+            return signals
+
+        # Pick the best query template
+        template = self.SERP_QUERY_TEMPLATES[
+            self._session_count % len(self.SERP_QUERY_TEMPLATES)
+        ]
+        query = template.format(company=name)
+
+        try:
+            import requests as req_lib
+            resp = req_lib.get(
+                'https://serpapi.com/search.json',
+                params={
+                    'q': query,
+                    'api_key': self._serpapi_key,
+                    'num': 10,
+                    'gl': 'in',
+                    'hl': 'en',
+                },
+                timeout=15,
+            )
+            self._session_count += 1
+
+            if resp.status_code != 200:
+                logger.debug(f"[{AGENT_ID}] SerpAPI HTTP {resp.status_code}")
+                return signals
+
+            data = resp.json()
+            for result in data.get('organic_results', [])[:8]:
+                title = result.get('title', '') or ''
+                snippet = result.get('snippet', '') or ''
+                link = result.get('link', '') or ''
+
+                full_text = f"{title} {snippet}"
+                analysis = self.analyzer.analyze_text(full_text)
+
+                if not analysis.is_positive:
+                    continue
+
+                tier_boost = TIER_BOOST.get(tier, 1.0)
+                # SerpAPI results are Google-ranked = higher credibility
+                credibility = 0.9
+                recency_mult = 0.85  # Can't easily determine date from SerpAPI
+
+                score = (
+                    analysis.base_score * credibility
+                    * tier_boost * recency_mult
+                )
+                score = max(0.0, min(100.0, score))
+
+                signal = IntentSignal(
+                    company_id=company_id,
+                    signal_type=analysis.signal_type,
+                    signal_text=f"[SerpAPI] {full_text[:480]}",
+                    signal_score=round(score, 1),
+                    source_url=link,
+                    expires_at=(
+                        datetime.now(IST) + timedelta(days=7)
+                    ).isoformat(),
+                )
+
+                # Dedup check
+                existing = self.db.get_latest_signal_for_company(company_id)
+                if existing:
+                    if score > existing.get('signal_score', 0):
+                        self.db.update_intent_signal_score(existing['id'], score)
+                    continue
+
+                self.db.insert_intent_signal(signal)
+                signals.append(signal)
+
+        except ImportError:
+            logger.warning(f"[{AGENT_ID}] requests library not available for SerpAPI")
+        except Exception as e:
+            logger.debug(f"[{AGENT_ID}] SerpAPI query error: {e}")
+
+        return signals
+
+
+# ============================================================
 # DDG HR POST SCANNER
 # ============================================================
 
@@ -1262,6 +1430,9 @@ class IntentScanner:
         self.hr_scanner = DDGHRPostScanner(
             self.analyzer, self.matcher, self.router, self.db
         )
+        self.serp_scanner = SerpAPISignalScanner(
+            self.analyzer, self.matcher, self.db
+        )
 
     def run_scan(self, tier_filter: Optional[List[int]] = None,
                  scan_type: str = "full") -> ScanResult:
@@ -1329,20 +1500,38 @@ class IntentScanner:
             result.errors.append(f"DDG: {e}")
             logger.error(f"[{AGENT_ID}] DDG scan failed: {e}")
 
-        # 4. Apply signal decay
+        # 4. SerpAPI gap-fill for Tier 1-2 (230+/month budget)
+        try:
+            already_signaled = set()
+            existing_signals = self.db.get_active_signals(min_score=10, days=7)
+            for sig in existing_signals:
+                cid = sig.get('company_id')
+                if cid:
+                    already_signaled.add(cid)
+
+            serp_signals = self.serp_scanner.scan_priority_companies(
+                [c for c in companies if c.get('tier', 5) <= 2],
+                already_signaled
+            )
+            result.signals_found += len(serp_signals)
+        except Exception as e:
+            result.errors.append(f"SerpAPI: {e}")
+            logger.error(f"[{AGENT_ID}] SerpAPI scan failed: {e}")
+
+        # 5. Apply signal decay (renumbered after SerpAPI step)
         try:
             decayed = self.decay_engine.apply_daily_decay(decay_per_day=10.0)
             result.signals_decayed = decayed
         except Exception as e:
             result.errors.append(f"Decay: {e}")
 
-        # 5. Cleanup expired signals
+        # 6. Cleanup expired signals
         try:
             self.decay_engine.cleanup_expired()
         except Exception:
             pass
 
-        # 6. Count urgent alerts
+        # 7. Count urgent alerts
         try:
             urgent = self.decay_engine.get_urgent_alerts(
                 min_score=70.0, max_tier=2

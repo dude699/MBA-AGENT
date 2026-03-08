@@ -44,11 +44,12 @@ Architecture:
     │                                                  │
     └──────────────────────────────────────────────────┘
 
-SerpAPI Budget Rules (CRITICAL — Only 100/month):
-    - NEVER use for routine daily operations
-    - USE ONLY for Tier 1 companies (McKinsey, BCG, Goldman, etc.)
-    - Max 5 network lookups per day
-    - Prefer DDG dorks for all other companies
+SerpAPI Budget Rules (230+/month plan):
+    - Network Mapper gets ~3 SerpAPI searches/day (90/month)
+    - Auto-use SerpAPI for Tier 1-2 companies
+    - DDG first for Tier 3-5, SerpAPI fallback if DDG yields <3 results
+    - On-demand /network commands get extra 2/day budget
+    - Track usage in api_quotas table for monthly rollup
 ============================================================
 """
 
@@ -77,9 +78,13 @@ from core.ai_router import get_router, AIRouter
 AGENT_ID = "A-09"
 AGENT_NAME = "Network/Alumni Mapper"
 
-# Daily SerpAPI budget
-MAX_SERP_LOOKUPS_PER_DAY = 5
-SERP_TIER_THRESHOLD = 2  # Only use SerpAPI for Tier 1 and 2
+# SerpAPI budget for network mapper (from 230+/month plan)
+# A-09 gets 3/day scheduled + 2/day on-demand = 5/day max
+MAX_SERP_SCHEDULED_PER_DAY = 3   # Auto alumni/HR discovery
+MAX_SERP_ON_DEMAND_PER_DAY = 2   # User-triggered /network commands
+MAX_SERP_TOTAL_PER_DAY = 5       # Hard cap
+SERP_AUTO_TIER_THRESHOLD = 2     # Tier 1-2: auto-use SerpAPI
+SERP_FALLBACK_TIER_THRESHOLD = 5 # Tier 3-5: use SerpAPI if DDG fails
 
 # DDG search templates
 DDG_ALUMNI_DORK = 'site:linkedin.com/in "{college}" "{company}" {keywords}'
@@ -199,8 +204,10 @@ class AlumniDiscovery:
         self.router = router
         self.db = db
         self._ddg = None
-        self._serpapi_key = get_config().serp_api_key
-        self._daily_serp_count = 0
+        config = get_config()
+        self._serpapi_key = config.serpapi.api_key
+        self._daily_serp_scheduled = 0
+        self._daily_serp_on_demand = 0
         self._daily_serp_date = datetime.now(IST).date()
 
     def _get_ddg(self):
@@ -212,25 +219,76 @@ class AlumniDiscovery:
                 logger.warning("duckduckgo_search not installed")
         return self._ddg
 
-    def _can_use_serpapi(self, tier: int) -> bool:
-        """Check if SerpAPI budget allows usage."""
+    def _reset_daily_counters_if_needed(self):
+        """Reset daily SerpAPI counters at midnight IST."""
         today = datetime.now(IST).date()
         if today != self._daily_serp_date:
-            self._daily_serp_count = 0
+            self._daily_serp_scheduled = 0
+            self._daily_serp_on_demand = 0
             self._daily_serp_date = today
 
-        return (
-            self._serpapi_key and
-            tier <= SERP_TIER_THRESHOLD and
-            self._daily_serp_count < MAX_SERP_LOOKUPS_PER_DAY
-        )
+    def _can_use_serpapi(self, tier: int, is_on_demand: bool = False) -> bool:
+        """
+        Check if SerpAPI budget allows usage.
 
-    def search_alumni(self, company: str, college: str, tier: int = 5) -> List[AlumniProfile]:
-        """Search for alumni at a target company."""
+        Strategy (230+/month plan):
+          - Tier 1-2: auto-approve if daily budget remains
+          - Tier 3-5: only if DDG yielded <3 results (fallback)
+          - On-demand (/network command): separate budget pool
+        """
+        self._reset_daily_counters_if_needed()
+
+        if not self._serpapi_key:
+            return False
+
+        total_today = self._daily_serp_scheduled + self._daily_serp_on_demand
+        if total_today >= MAX_SERP_TOTAL_PER_DAY:
+            return False
+
+        if is_on_demand:
+            return self._daily_serp_on_demand < MAX_SERP_ON_DEMAND_PER_DAY
+
+        # Scheduled usage
+        if self._daily_serp_scheduled >= MAX_SERP_SCHEDULED_PER_DAY:
+            return False
+
+        # Tier-based access
+        return tier <= SERP_AUTO_TIER_THRESHOLD
+
+    def _record_serpapi_use(self, is_on_demand: bool = False):
+        """Record a SerpAPI call against today's budget."""
+        if is_on_demand:
+            self._daily_serp_on_demand += 1
+        else:
+            self._daily_serp_scheduled += 1
+
+    def get_serpapi_usage(self) -> Dict[str, Any]:
+        """Get current SerpAPI usage stats for /quota command."""
+        self._reset_daily_counters_if_needed()
+        total_today = self._daily_serp_scheduled + self._daily_serp_on_demand
+        return {
+            'daily_scheduled': self._daily_serp_scheduled,
+            'daily_on_demand': self._daily_serp_on_demand,
+            'daily_total': total_today,
+            'daily_limit': MAX_SERP_TOTAL_PER_DAY,
+            'monthly_limit': get_config().serpapi.monthly_limit,
+            'has_key': bool(self._serpapi_key),
+        }
+
+    def search_alumni(self, company: str, college: str, tier: int = 5,
+                       is_on_demand: bool = False) -> List[AlumniProfile]:
+        """
+        Search for alumni at a target company.
+
+        With 230+/month SerpAPI plan:
+          - Tier 1-2: DDG first, then SerpAPI to fill gaps
+          - Tier 3-5: DDG only, SerpAPI fallback if <3 results
+          - On-demand (/network): always try SerpAPI for best results
+        """
         profiles = []
         seen_urls = set()
 
-        # Strategy 1: DDG dorks (always available)
+        # Strategy 1: DDG dorks (always available, free)
         ddg_profiles = self._ddg_alumni_search(company, college)
         for p in ddg_profiles:
             if p.linkedin_url not in seen_urls:
@@ -238,15 +296,29 @@ class AlumniDiscovery:
                 profiles.append(p)
         time.sleep(random.uniform(3, 8))
 
-        # Strategy 2: SerpAPI (Tier 1-2 only, budget limited)
-        if self._can_use_serpapi(tier) and len(profiles) < 5:
+        # Strategy 2: SerpAPI (budget-aware)
+        # Use SerpAPI if: Tier 1-2 auto-approve, OR DDG found <3 results, OR on-demand
+        use_serp = False
+        if is_on_demand and self._can_use_serpapi(tier, is_on_demand=True):
+            use_serp = True
+        elif tier <= SERP_AUTO_TIER_THRESHOLD and self._can_use_serpapi(tier):
+            use_serp = True
+        elif len(profiles) < 3 and self._can_use_serpapi(tier):
+            # Fallback: DDG didn't find enough, try SerpAPI
+            use_serp = True
+
+        if use_serp:
             serp_profiles = self._serpapi_alumni_search(company, college)
             for p in serp_profiles:
                 if p.linkedin_url not in seen_urls:
                     seen_urls.add(p.linkedin_url)
                     p.source = 'serpapi'
                     profiles.append(p)
-            self._daily_serp_count += 1
+            self._record_serpapi_use(is_on_demand=is_on_demand)
+            logger.info(
+                f"[{AGENT_ID}] SerpAPI used for '{company}' (tier={tier}, "
+                f"on_demand={is_on_demand}, found={len(serp_profiles)})"
+            )
 
         return profiles
 
@@ -500,7 +572,8 @@ class NetworkMapper:
         self.drafts = OutreachDraftGenerator(self.router, self.db)
 
     def map_network(self, company_name: str, college: str = '',
-                    specialization: str = '') -> NetworkMapResult:
+                    specialization: str = '',
+                    is_on_demand: bool = False) -> NetworkMapResult:
         """
         Full network mapping for a company.
         
@@ -535,7 +608,8 @@ class NetworkMapper:
         # 1. Alumni search
         try:
             alumni = self.discovery.search_alumni(
-                result.company_name, college, result.company_tier
+                result.company_name, college, result.company_tier,
+                is_on_demand=is_on_demand
             )
             for p in alumni:
                 result.profiles.append(p)
@@ -634,6 +708,7 @@ def get_network_mapper() -> NetworkMapper:
 
 if __name__ == "__main__":
     print(f"✅ {AGENT_NAME} ({AGENT_ID}) ready")
-    print(f"  SerpAPI daily budget: {MAX_SERP_LOOKUPS_PER_DAY}")
-    print(f"  SerpAPI tier threshold: Tier ≤ {SERP_TIER_THRESHOLD}")
+    print(f"  SerpAPI monthly plan: {get_config().serpapi.monthly_limit} searches/month")
+    print(f"  SerpAPI daily budget: {MAX_SERP_SCHEDULED_PER_DAY} scheduled + {MAX_SERP_ON_DEMAND_PER_DAY} on-demand = {MAX_SERP_TOTAL_PER_DAY} total")
+    print(f"  SerpAPI auto-approve tier: Tier ≤ {SERP_AUTO_TIER_THRESHOLD}")
     print(f"  Outreach templates: {len(OUTREACH_CONTEXT)}")

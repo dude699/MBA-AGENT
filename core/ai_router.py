@@ -1490,24 +1490,39 @@ class AIRouter:
         }
 
     def get_quota_report(self) -> str:
-        """Generate a human-readable quota report."""
+        """Generate a human-readable quota report including search APIs."""
         health = self.get_health()
         groq_usage = health['groq']['rate_limiter']
         cerebras_usage = health['cerebras']['rate_limiter']
 
+        # SerpAPI stats
+        from core.config import get_config
+        config = get_config()
+        serp_key_set = bool(config.serpapi.api_key)
+        serp_monthly = config.serpapi.monthly_limit
+        serp_daily_wd = config.serpapi.daily_budget_weekday
+        serp_daily_we = config.serpapi.daily_budget_weekend
+
         report = (
-            f"📊 AI Quota Report\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"🤖 Groq (llama-3.3-70b-versatile)\n"
+            f"📊 <b>API Quota Report</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"🤖 <b>Groq</b> (llama-3.3-70b-versatile)\n"
             f"  Day: {groq_usage['day']}/{groq_usage['day_limit']} ({groq_usage['day_pct']}%)\n"
             f"  Hour: {groq_usage['hour']}/{groq_usage['hour_limit']} ({groq_usage['hour_pct']}%)\n"
             f"  Circuit: {health['groq']['circuit_breaker']['state']}\n\n"
-            f"⚡ Cerebras (llama-3.3-70b)\n"
+            f"⚡ <b>Cerebras</b> (llama-3.3-70b)\n"
             f"  Day: {cerebras_usage['day']}/{cerebras_usage['day_limit']} ({cerebras_usage['day_pct']}%)\n"
             f"  Hour: {cerebras_usage['hour']}/{cerebras_usage['hour_limit']} ({cerebras_usage['hour_pct']}%)\n"
             f"  Circuit: {health['cerebras']['circuit_breaker']['state']}\n\n"
-            f"📈 Session Stats\n"
-            f"  Total calls: {health['total_calls']}\n"
+            f"🔍 <b>SerpAPI</b> {'✅' if serp_key_set else '❌ No Key'}\n"
+            f"  Plan: {serp_monthly} searches/month\n"
+            f"  Daily Budget: {serp_daily_wd}/day (weekday) | {serp_daily_we}/day (weekend)\n"
+            f"  Allocation: A-01 intent(2) + A-09 network(3) + on-demand(2)\n\n"
+            f"🦆 <b>DuckDuckGo</b> (unlimited)\n"
+            f"  Hourly cap: {config.ddg.max_queries_per_hour}/hr\n"
+            f"  Daily cap: {config.ddg.max_queries_per_day}/day\n\n"
+            f"📈 <b>Session Stats</b>\n"
+            f"  Total AI calls: {health['total_calls']}\n"
             f"  Total tokens: {health['total_tokens']}\n"
             f"  Errors: {health['total_errors']}\n"
             f"  Fallbacks: {health['fallback_count']}\n"

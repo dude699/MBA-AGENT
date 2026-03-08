@@ -587,18 +587,47 @@ SITE_STEALTH_PROFILES: Dict[str, Dict[str, Any]] = {
 
 @dataclass(frozen=True)
 class SerpAPIConfig:
-    """Configuration for SerpAPI (100 queries/month — HIGH VALUE ONLY)."""
+    """
+    Configuration for SerpAPI (230+ queries/month plan).
+
+    Budget Allocation Strategy (230 searches/month ≈ 7-8/day):
+        - Alumni/Network Discovery (A-09):  ~90/month (3/day)
+        - Intent Signal Boosting (A-01):    ~60/month (2/day)
+        - HR/Recruiter Discovery (A-09):    ~40/month (1-2/day)
+        - Company Careers Page (A-04):      ~20/month (on-demand)
+        - On-demand /research commands:     ~20/month (user-triggered)
+        - Buffer:                           ~10/month (safety)
+
+    Smart Budget Rules:
+        - Weekdays get 8 searches/day, weekends get 5
+        - Unused weekday budget does NOT roll over
+        - Tier 1-2 companies get priority SerpAPI access
+        - Tier 3+ companies use DDG dorks first, SerpAPI only if DDG fails
+        - Track monthly usage in api_quotas table
+    """
     api_key: str = ""
     base_url: str = "https://serpapi.com/search"
-    monthly_limit: int = 100
-    daily_budget: int = 4  # Conservative: ~3-4/day
+    monthly_limit: int = 230
+    daily_budget_weekday: int = 8   # Mon-Fri: ~8 searches/day
+    daily_budget_weekend: int = 5   # Sat-Sun: ~5 searches/day
     timeout_seconds: int = 30
-    # Only use for these high-value tasks
+    # Per-agent daily sub-budgets (must sum ≤ daily_budget_weekday)
+    budget_network_mapper: int = 3    # A-09 alumni/HR discovery
+    budget_intent_scanner: int = 2    # A-01 high-value signal search
+    budget_ats_crawler: int = 1       # A-04 careers page discovery
+    budget_on_demand: int = 2         # User /research, /network commands
+    # Tier-based access control
+    tier_auto_approve: int = 2        # Tier 1-2: auto-use SerpAPI
+    tier_ddg_first: int = 5           # Tier 3-5: try DDG first
+    # Allowed task types
     ALLOWED_TASKS: frozenset = frozenset({
         'alumni_discovery',
         'hr_poster_identification',
         'dark_channel_seed',
         'company_careers_page_discovery',
+        'intent_signal_boost',
+        'company_research',
+        'hiring_verification',
     })
 
 
@@ -968,8 +997,9 @@ class RateLimitConfig:
     cf_kv_daily_writes: int = 1000
 
     # Search APIs
-    serpapi_monthly_limit: int = 100
-    serpapi_daily_budget: int = 4
+    serpapi_monthly_limit: int = 230
+    serpapi_daily_budget_weekday: int = 8
+    serpapi_daily_budget_weekend: int = 5
     bing_monthly_limit: int = 1000
     bing_daily_budget: int = 33
     ddg_per_hour: int = 30
@@ -1643,7 +1673,7 @@ class Config:
         self.serpapi = SerpAPIConfig(
             api_key=_get_env(
                 'SERP_API_KEY', default='',
-                description='SerpAPI key (100/month)'
+                description='SerpAPI key (230+/month plan)'
             ),
         )
         self.bing = BingSearchConfig(

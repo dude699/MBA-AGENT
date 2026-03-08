@@ -81,7 +81,7 @@ except ImportError:
 from core.config import (
     get_config, IST,
     TIER_PPO_SCORES, DEFAULT_TIER_SCORE,
-    PPO_PARAMS, CATEGORY_MEDIAN_STIPENDS as CONFIG_MEDIANS,
+    PPO_PARAMS,
 )
 from core.database import get_db, DatabaseManager
 

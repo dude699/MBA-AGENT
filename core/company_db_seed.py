@@ -37,7 +37,7 @@ except ImportError:
     import logging
     logger = logging.getLogger(__name__)
 
-from core.database import get_db
+from core.database import get_db, Company
 
 
 # ============================================================
@@ -377,22 +377,22 @@ def seed_companies(force: bool = False) -> int:
             try:
                 name, sector, size_band, hq_city, ats_platform, ats_board_id = company_tuple
 
-                company_data = {
-                    'name': name,
-                    'normalized_name': name.lower().strip(),
-                    'tier': tier,
-                    'sector': sector,
-                    'sub_sector': '',
-                    'size_band': size_band,
-                    'hq_city': hq_city,
-                    'careers_url': '',
-                    'ats_platform': ats_platform or '',
-                    'ats_board_id': ats_board_id or '',
-                    'cirs': 40.0,  # Default CIRS
-                    'glassdoor_rating': 0.0,
-                }
+                company_obj = Company(
+                    name=name,
+                    normalized_name=name.lower().strip(),
+                    tier=tier,
+                    sector=sector,
+                    sub_sector='',
+                    size_band=size_band,
+                    hq_city=hq_city,
+                    careers_url='',
+                    ats_platform=ats_platform or '',
+                    ats_board_id=ats_board_id or '',
+                    cirs=40.0,
+                    glassdoor_rating=0.0,
+                )
 
-                result = db.insert_company(company_data)
+                result = db.insert_company(company_obj)
                 if result:
                     inserted += 1
                     tier_inserted += 1

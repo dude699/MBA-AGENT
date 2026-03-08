@@ -2,9 +2,12 @@ services:
   - type: worker
     name: operation-firstmover
     runtime: python
+    pythonVersion: "3.11.0"
     buildCommand: pip install -r requirements.txt && python -c "import nltk; nltk.download('punkt_tab')"
     startCommand: python main.py
     envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.0"
       - key: GROQ_API_KEY
         sync: false
       - key: CEREBRAS_API_KEY

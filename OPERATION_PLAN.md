@@ -60,16 +60,21 @@ Operation First Mover is a **fully automated, zero-cost AI-driven job search sys
 | **Cerebras** (llama-3.3-70b) | Generous free tier | Ghost classify, intent classify, extract basics, dedup score, parse, tag | ~400-600 req |
 | **Cloudflare Workers** | 100,000 req/day | Proxy relay, IP rotation, request masking | ~500-2000 req |
 | **Cloudflare KV** | 100,000 reads/day | Cache company scores, proxy health, rate limit counters | ~1000 reads |
-| **SerpAPI** | 100 queries/month | Alumni discovery, HR poster identification (HIGH VALUE ONLY) | ~3-4/day max |
+| **SerpAPI** | 230+ queries/month | Alumni discovery, HR identification, intent signal boost, on-demand research | ~7-8/day (weekday) |
 | **Webshare Proxy** | 10 free rotating IPs | Primary proxy for Internshala, IIMjobs, Wellfound | All scraping |
 | **Telegram Bot API** | Unlimited | Command center, reports, alerts | Unlimited |
 | **DuckDuckGo Search** | Unlimited (rate-limited) | LinkedIn job dorks, news search, HR post discovery | ~50-100/day |
 | **Render Free Tier** | 750 hrs/month, 512MB RAM | 24/7 hosting of all 12 agents | Always-on |
 
-### SerpAPI Budget Rules (CRITICAL — Only 100/month)
-- ❌ **NEVER use for:** routine daily operations, general job searches
-- ✅ **USE ONLY for:** Alumni discovery on LinkedIn, HR poster identification, dark channel seed discovery
-- 🔄 **Alternatives:** DuckDuckGo for news/signals, Bing Search API (1000 free/month) as backup
+### SerpAPI Budget Allocation (230+ searches/month)
+- **A-09 Network Mapper:** ~90/month (3/day) — alumni discovery, HR identification
+- **A-01 Intent Scanner:** ~60/month (2/day) — Tier 1-2 hiring signal gap-fill
+- **A-04 ATS Crawler:** ~20/month (on-demand) — careers page discovery
+- **On-demand commands:** ~20/month — user /research, /network triggers
+- **Buffer:** ~10/month — safety margin
+- **Daily Caps:** 8/day weekdays, 5/day weekends
+- **Tier Priority:** Tier 1-2 = auto-approve SerpAPI; Tier 3-5 = DDG first, SerpAPI fallback
+- 🔄 **Alternatives still active:** DuckDuckGo for routine searches, Bing Search API (1000 free/month) as backup
 
 ---
 
@@ -280,10 +285,10 @@ PPO_Score = w1×has_ppo_tag + w2×company_tier_score + w3×low_applicant_bonus +
 **Schedule:** On-demand via `/network [company]`  
 **Key Features:**
 - DDG dorks: `site:linkedin.com/in "[college name]" "[company]" alumni`
-- SerpAPI for high-value Tier 1 companies only
+- SerpAPI for Tier 1-2 companies (auto-approve) + DDG fallback for Tier 3-5
 - Outreach draft generation (200-word warm intro email)
 - Alumni path mapping: 1st degree → 2nd degree → cold outreach
-- Rate: max 5 network lookups/day to conserve SerpAPI
+- Rate: 3 scheduled + 2 on-demand SerpAPI lookups/day (5 total for A-09)
 
 ### A-10: ATS Simulator (`agents/a10_ats_simulator.py`)
 **Purpose:** Simulate ATS keyword scanning on resume vs JD  

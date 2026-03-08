@@ -803,10 +803,10 @@ class TelegramReporter:
         await self._send_long_message(update, msg)
 
     async def _cmd_quota(self, update, context):
-        """API quota usage."""
+        """API quota usage including SerpAPI, Groq, Cerebras, DDG."""
         try:
             report = self.router.get_quota_report()
-            await update.message.reply_text(report)
+            await update.message.reply_text(report, parse_mode='HTML')
         except Exception as e:
             await update.message.reply_text(f"❌ Error: {e}")
 

@@ -425,7 +425,7 @@ CREATE_TABLES_SQL: List[str] = [
         size_band TEXT DEFAULT 'mid' CHECK(size_band IN ('startup','small','mid','large','enterprise')),
         hq_city TEXT DEFAULT '',
         careers_url TEXT DEFAULT '',
-        ats_platform TEXT DEFAULT '' CHECK(ats_platform IN ('','greenhouse','lever','workday','custom','smartrecruiters','icims','taleo','breezy','jobvite')),
+        ats_platform TEXT DEFAULT '' CHECK(ats_platform IN ('','greenhouse','lever','workday','custom','smartrecruiters','icims','taleo','breezy','jobvite','ashby')),
         ats_board_id TEXT DEFAULT '',
         cirs REAL DEFAULT 40.0 CHECK(cirs BETWEEN 0 AND 100),
         glassdoor_rating REAL DEFAULT 0.0 CHECK(glassdoor_rating BETWEEN 0 AND 5),
@@ -2175,6 +2175,19 @@ class DatabaseManager:
                 f"{signals_deleted} expired signals, "
                 f"{quota_deleted} old quota records"
             )
+
+    def seed_agent_heartbeats(self):
+        """Seed agent heartbeats (called from main.py startup)."""
+        with self.get_cursor() as cur:
+            for agent in AGENT_SEEDS:
+                cur.execute(
+                    """
+                    INSERT OR IGNORE INTO agent_heartbeats (agent_id, agent_name)
+                    VALUES (?, ?)
+                    """,
+                    (agent['agent_id'], agent['agent_name'])
+                )
+        logger.info("Agent heartbeats seeded (A-01 to A-12)")
 
     def get_health_report(self) -> Dict[str, Any]:
         """Generate a comprehensive database health report."""
