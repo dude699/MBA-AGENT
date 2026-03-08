@@ -1,0 +1,41 @@
+services:
+  - type: worker
+    name: operation-firstmover
+    runtime: python
+    buildCommand: pip install -r requirements.txt && python -c "import nltk; nltk.download('punkt_tab')"
+    startCommand: python main.py
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: CEREBRAS_API_KEY
+        sync: false
+      - key: TG_BOT_TOKEN
+        sync: false
+      - key: TG_CHAT_ID
+        sync: false
+      - key: TG_API_ID
+        sync: false
+      - key: TG_API_HASH
+        sync: false
+      - key: SERP_API_KEY
+        sync: false
+      - key: BING_API_KEY
+        sync: false
+      - key: WEBSHARE_KEY
+        sync: false
+      - key: CF_WORKER_URL
+        sync: false
+      - key: CF_RELAY_SECRET
+        sync: false
+      - key: X_BEARER_TOKEN
+        sync: false
+      - key: DATABASE_PATH
+        value: data/firstmover.db
+      - key: LOG_LEVEL
+        value: INFO
+      - key: TIMEZONE
+        value: Asia/Kolkata
+      - key: RENDER_DEPLOY
+        value: "true"
+    plan: free
+    region: oregon

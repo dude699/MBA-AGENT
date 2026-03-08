@@ -1,0 +1,46 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment
+.env
+.venv/
+env/
+venv/
+
+# Database
+data/*.db
+data/*.db-journal
+data/*.db-wal
+
+# Logs
+logs/*.log
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Telethon sessions
+*.session
+*.session-journal
+
+# Temporary
+tmp/
+temp/
+*.tmp
+
+# Distribution
+dist/
+build/
+*.egg-info/
+
+# Playwright browsers
+playwright-browsers/
