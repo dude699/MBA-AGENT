@@ -996,29 +996,32 @@ loguru>=0.7
 
 ## BUILD STATUS TRACKER
 
-| # | File | Status | Lines | Commit |
-|---|------|--------|:-----:|--------|
-| 1 | `OPERATION_PLAN.md` | ✅ COMPLETE | ~800 | — |
-| 2 | Project Structure + configs | ⬜ PENDING | — | — |
-| 3 | `core/config.py` | ⬜ PENDING | — | — |
-| 4 | `core/database.py` | ⬜ PENDING | — | — |
-| 5 | `core/ai_router.py` | ⬜ PENDING | — | — |
-| 6 | `core/stealth_engine.py` | ⬜ PENDING | — | — |
-| 7 | `agents/a01_intent_scanner.py` | ⬜ PENDING | — | — |
-| 8 | `agents/a02_dark_channel.py` | ⬜ PENDING | — | — |
-| 9 | `agents/a03_primary_scraper.py` | ⬜ PENDING | — | — |
-| 10 | `agents/a04_ats_crawler.py` | ⬜ PENDING | — | — |
-| 11 | `agents/a05_ghost_detector.py` | ⬜ PENDING | — | — |
-| 12 | `agents/a06_dedup_engine.py` | ⬜ PENDING | — | — |
-| 13 | `agents/a07_intelligence_enricher.py` | ⬜ PENDING | — | — |
-| 14 | `agents/a08_ppo_optimizer.py` | ⬜ PENDING | — | — |
-| 15 | `agents/a09_network_mapper.py` | ⬜ PENDING | — | — |
-| 16 | `agents/a10_ats_simulator.py` | ⬜ PENDING | — | — |
-| 17 | `agents/a11_outcome_learner.py` | ⬜ PENDING | — | — |
-| 18 | `agents/a12_telegram_reporter.py` | ⬜ PENDING | — | — |
-| 19 | `core/scheduler.py` | ⬜ PENDING | — | — |
-| 20 | `core/company_db_seed.py` | ⬜ PENDING | — | — |
-| 21 | `main.py` + Dockerfile + render.yaml | ⬜ PENDING | — | — |
+**Total: 21,251 lines of Python | 22,385 lines total (including JS, MD, YAML)**
+
+| # | File | Status | Lines | Notes |
+|---|------|--------|:-----:|-------|
+| 1 | `OPERATION_PLAN.md` | ✅ COMPLETE | 1,025 | Full build plan |
+| 2 | Project Structure + configs | ✅ COMPLETE | — | .env, .gitignore, render.yaml, Dockerfile, requirements.txt |
+| 3 | `core/config.py` | ✅ COMPLETE | 1,789 | 20 config sections, singleton, validation |
+| 4 | `core/database.py` | ✅ COMPLETE | 2,263 | 12 tables, 30+ indexes, full CRUD |
+| 5 | `core/ai_router.py` | ✅ COMPLETE | 1,549 | Dual-brain routing, rate limiting, circuit breaker |
+| 6 | `core/stealth_engine.py` | ✅ COMPLETE | 1,165 | 4-layer proxy, TLS fingerprinting, timing |
+| 7 | `agents/a01_intent_scanner.py` | ✅ COMPLETE | 1,525 | RSS + GNews + DDG, signal scoring, decay engine |
+| 8 | `agents/a02_dark_channel.py` | ✅ COMPLETE | 1,242 | Telegram + Twitter + Reddit, AI classify |
+| 9 | `agents/a03_primary_scraper.py` | ✅ COMPLETE | 1,210 | Internshala + Naukri + IIMjobs + LinkedIn |
+| 10 | `agents/a04_ats_crawler.py` | ✅ COMPLETE | 2,313 | Greenhouse + Lever + Workday + Wellfound + Ashby |
+| 11 | `agents/a05_ghost_detector.py` | ✅ COMPLETE | 726 | 5-signal ghost scoring system |
+| 12 | `agents/a06_dedup_engine.py` | ✅ COMPLETE | 1,437 | 6-layer dedup (URL/fuzzy/BERT/location/platform) |
+| 13 | `agents/a07_intelligence_enricher.py` | ✅ COMPLETE | 1,202 | Blue Ocean + CIRS + competition analysis |
+| 14 | `agents/a08_ppo_optimizer.py` | ✅ COMPLETE | 961 | 10-variable PPO formula with batch scoring |
+| 15 | `agents/a09_network_mapper.py` | ✅ COMPLETE | 639 | Alumni DDG + SerpAPI + outreach drafts |
+| 16 | `agents/a10_ats_simulator.py` | ✅ COMPLETE | 458 | ATS keyword gap + resume tweaks |
+| 17 | `agents/a11_outcome_learner.py` | ✅ COMPLETE | 469 | LogReg retrain + funnel analytics |
+| 18 | `agents/a12_telegram_reporter.py` | ✅ COMPLETE | 1,032 | 22 commands + scheduled reports + alerts |
+| 19 | `core/scheduler.py` | ✅ COMPLETE | 490 | APScheduler 24-hour IST, 16 daily + 2 infra jobs |
+| 20 | `core/company_db_seed.py` | ✅ COMPLETE | 462 | 1,080+ companies across 5 tiers |
+| 21 | `main.py` | ✅ COMPLETE | 317 | 8-step startup, signal handling, graceful shutdown |
+| 22 | `cloudflare/relay_worker.js` | ✅ COMPLETE | 109 | CF Worker relay for IP masking |
 
 ---
 
