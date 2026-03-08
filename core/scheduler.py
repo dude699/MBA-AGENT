@@ -437,7 +437,32 @@ class AgentScheduler:
         )
 
     async def _keep_alive(self):
-        logger.debug("[SCHEDULER] Keep-alive ping")
+        """
+        Layer 2 keep-alive: Scheduler pings the HTTP endpoint every 10 min.
+        This is a backup to Layer 1 (self-ping loop).
+        """
+        logger.debug("[SCHEDULER] Keep-alive ping (Layer 2)")
+        try:
+            import aiohttp
+            port = int(os.getenv('PORT', '10000'))
+            external_url = os.getenv('RENDER_EXTERNAL_URL', '')
+
+            # Prefer external URL (counts as real traffic for Render)
+            url = (
+                f"{external_url}/ping"
+                if external_url
+                else f"http://127.0.0.1:{port}/ping"
+            )
+
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url) as resp:
+                    if resp.status == 200:
+                        logger.debug("[SCHEDULER] Keep-alive ping: OK")
+                    else:
+                        logger.warning(f"[SCHEDULER] Keep-alive ping: HTTP {resp.status}")
+        except Exception as e:
+            logger.debug(f"[SCHEDULER] Keep-alive ping error: {e}")
 
     async def _run_maintenance(self):
         logger.info("[SCHEDULER] Running DB maintenance...")

@@ -821,23 +821,31 @@ Each layer has a confidence score. If ANY layer flags duplicate, merge entries (
 - **CPU:** Shared
 - **Hours:** 750 hours/month (enough for 24/7)
 - **Disk:** Ephemeral (need SQLite backup strategy)
-- **Spin-down:** After 15 min inactivity (use keep-alive ping)
+- **Spin-down:** After 15 min inactivity (SOLVED with 5-layer keep-alive)
 
 ### Deployment Strategy
-1. **Worker Service** (not Web Service) to avoid HTTP requirement
-2. **SQLite** stored on ephemeral disk with periodic backup to Cloudflare KV
-3. **Keep-alive:** Self-ping every 10 minutes via Telegram webhook or internal timer
-4. **Memory optimization:** Lazy-load sentence-transformers, batch processing
-5. **Startup:** Initialize DB → Seed companies → Start scheduler → Start Telegram bot
+1. **Web Service** (free tier) with embedded aiohttp HTTP server
+2. **5-Layer Keep-Alive** to prevent spin-down:
+   - Layer 1: Internal self-ping every 4 min (asyncio loop)
+   - Layer 2: Scheduler keep-alive every 10 min (APScheduler hits /ping)
+   - Layer 3: cron-job.org external ping every 5 min (free)
+   - Layer 4: UptimeRobot monitoring every 5 min (free + alerts)
+   - Layer 5: Your Telegram commands (each = HTTP activity)
+3. **Health Endpoints:** GET /, /health, /status, /ping
+4. **SQLite** stored on ephemeral disk with periodic backup
+5. **Memory optimization:** Lazy-load heavy modules, batch processing
+6. **Startup:** Web Server → DB → Seed → Self-Ping → Telegram → Scheduler
 
 ### render.yaml
 ```yaml
 services:
-  - type: worker
+  - type: web
     name: operation-firstmover
     runtime: python
+    pythonVersion: "3.11.0"
     buildCommand: pip install -r requirements.txt && python -c "import nltk; nltk.download('punkt_tab')"
     startCommand: python main.py
+    healthCheckPath: /health
     envVars:
       - key: GROQ_API_KEY
         sync: false
@@ -867,7 +875,29 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 RUN python -c "import nltk; nltk.download('punkt_tab')"
 COPY . .
+ENV PORT=10000
+EXPOSE 10000
+HEALTHCHECK --interval=60s --timeout=10s CMD curl -f http://localhost:10000/health || exit 1
 CMD ["python", "main.py"]
+```
+
+### Keep-Alive Architecture
+```
+┌─────────────────────────────────────────────────────┐
+│              RENDER WEB SERVICE (free tier)          │
+│                                                      │
+│  aiohttp (port $PORT)    Application Core            │
+│  GET /  /health           Telegram Bot (polling)     │
+│  GET /status /ping        APScheduler (24hr IST)     │
+│                           12 AI Agents               │
+│  Layer 1: Self-Ping       Layer 2: Scheduler Ping    │
+│  (every 4 min)            (every 10 min)             │
+└─────────────────────────────────────────────────────┘
+         ▲            ▲            ▲
+         │            │            │
+  cron-job.org    UptimeRobot   Your Telegram
+  (5 min)         (5 min)       commands
+  LAYER 3         LAYER 4       LAYER 5
 ```
 
 ---
@@ -875,8 +905,14 @@ CMD ["python", "main.py"]
 ## 16. FILE-BY-FILE BUILD CHECKLIST <a name="build-checklist"></a>
 
 ### Core Infrastructure
-- [ ] `core/__init__.py` — Package init
-- [ ] `core/config.py` — All configuration, env vars, constants, rate limits
+- [x] `core/__init__.py` — Package init
+- [x] `core/config.py` — All configuration, env vars, constants, rate limits
+- [x] `core/database.py` — SQLite with WAL, all CRUD, migrations
+- [x] `core/ai_router.py` — Dual-brain Groq+Cerebras with failover
+- [x] `core/stealth_engine.py` — Proxy rotation, TLS fingerprinting, delays
+- [x] `core/company_db_seed.py` — 1081 company seeder
+- [x] `core/scheduler.py` — APScheduler 24-hour IST schedule
+- [x] `core/keepalive.py` — 5-layer keep-alive engine (Web Service mode)
 - [ ] `core/database.py` — SQLite schema, migrations, all CRUD operations
 - [ ] `core/ai_router.py` — Dual-brain AI routing (Groq + Cerebras) + quota tracking
 - [ ] `core/stealth_engine.py` — 4-layer proxy, UA rotation, TLS fingerprinting, timing

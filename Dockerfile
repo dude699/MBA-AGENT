@@ -25,5 +25,13 @@ RUN mkdir -p data logs
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
+ENV PORT=10000
+
+# Expose the web service port
+EXPOSE 10000
+
+# Health check
+HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:10000/health || exit 1
 
 CMD ["python", "main.py"]
