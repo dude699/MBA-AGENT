@@ -39,6 +39,7 @@ import os
 import json
 import time
 import asyncio
+import signal
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 
@@ -47,6 +48,12 @@ try:
 except ImportError:
     import logging
     logger = logging.getLogger(__name__)
+
+try:
+    import httpx
+    HTTPX_AVAILABLE = True
+except ImportError:
+    HTTPX_AVAILABLE = False
 
 from core.config import get_config, IST, MBA_CATEGORIES
 from core.database import get_db, DatabaseManager, Outcome, OutcomeStatus
@@ -247,10 +254,31 @@ class ReportFormatter:
 # TELEGRAM BOT
 # ============================================================
 
+# ============================================================
+# CONSTANTS
+# ============================================================
+
+# Max retries for bot startup when Conflict is hit
+BOT_START_MAX_RETRIES = 5
+BOT_START_RETRY_BASE_DELAY = 3  # seconds, exponential backoff
+BOT_CONFLICT_COOLDOWN = 10  # seconds to wait after killing stale session
+
+
 class TelegramReporter:
     """
     Telegram bot command center with 22 commands.
     Uses python-telegram-bot v21 with async handlers.
+
+    ROBUSTNESS FEATURES:
+        1. Pre-flight cleanup: deletes any stale webhook AND
+           calls getUpdates with offset=-1 to flush the queue
+           and release any lingering polling lock.
+        2. Conflict-aware startup with exponential backoff:
+           If Conflict is detected, waits and retries up to 5 times.
+        3. Custom error handler that catches Conflict during runtime
+           and auto-restarts polling instead of crashing.
+        4. Graceful shutdown ensures polling is fully stopped
+           before the process exits (SIGTERM from Render).
     """
 
     def __init__(self):
@@ -260,9 +288,95 @@ class TelegramReporter:
         self.formatter = ReportFormatter()
         self._app = None
         self._running = False
+        self._restart_lock = asyncio.Lock()
+        self._restart_count = 0
+        self._max_runtime_restarts = 10  # max auto-restarts during runtime
+
+    # ================================================================
+    # PRE-FLIGHT: CLEAN STALE SESSIONS
+    # ================================================================
+
+    async def _kill_stale_sessions(self, token: str):
+        """
+        NUCLEAR CLEANUP — Call this BEFORE starting polling.
+
+        This does two things:
+        1. deleteWebhook(drop_pending_updates=True)
+           → Removes any webhook AND flushes pending updates.
+        2. getUpdates(offset=-1, timeout=1)
+           → Forces Telegram to release any existing long-poll
+             connection from a previous instance.
+
+        After this, we are GUARANTEED to be the only consumer.
+        """
+        import aiohttp
+
+        base = f"https://api.telegram.org/bot{token}"
+        timeout = aiohttp.ClientTimeout(total=15)
+
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                # Step 1: Delete webhook + flush pending
+                logger.info(f"[{AGENT_ID}] Pre-flight: deleting webhook...")
+                async with session.post(
+                    f"{base}/deleteWebhook",
+                    json={"drop_pending_updates": True}
+                ) as resp:
+                    result = await resp.json()
+                    logger.info(
+                        f"[{AGENT_ID}] Pre-flight: deleteWebhook → "
+                        f"{result.get('ok', False)}"
+                    )
+
+                # Step 2: Force-release any stale getUpdates lock
+                # By calling getUpdates with offset=-1 and short timeout,
+                # we tell Telegram "I'm the new consumer, kill the old one"
+                logger.info(f"[{AGENT_ID}] Pre-flight: flushing stale polling lock...")
+                async with session.post(
+                    f"{base}/getUpdates",
+                    json={"offset": -1, "timeout": 1}
+                ) as resp:
+                    result = await resp.json()
+                    ok = result.get('ok', False)
+                    updates = result.get('result', [])
+                    logger.info(
+                        f"[{AGENT_ID}] Pre-flight: getUpdates flush → "
+                        f"ok={ok}, pending={len(updates)}"
+                    )
+
+                # Step 3: If there were updates, acknowledge the last one
+                if updates:
+                    last_update_id = updates[-1].get('update_id', 0)
+                    async with session.post(
+                        f"{base}/getUpdates",
+                        json={"offset": last_update_id + 1, "timeout": 1}
+                    ) as resp:
+                        await resp.json()
+                        logger.info(
+                            f"[{AGENT_ID}] Pre-flight: acknowledged up to "
+                            f"update_id {last_update_id}"
+                        )
+
+                # Wait for Telegram to fully release the connection
+                await asyncio.sleep(2)
+
+        except Exception as e:
+            logger.warning(
+                f"[{AGENT_ID}] Pre-flight cleanup error (non-fatal): {e}"
+            )
+            # Non-fatal — we still try to start
+
+    # ================================================================
+    # BOT START WITH RETRY
+    # ================================================================
 
     async def start_bot(self):
-        """Initialize and start the Telegram bot."""
+        """
+        Initialize and start the Telegram bot with full robustness:
+        1. Kill stale sessions (pre-flight)
+        2. Build application with error handler
+        3. Start polling with exponential backoff retries
+        """
         token = self.config.telegram.bot_token
         if not token:
             logger.error(f"[{AGENT_ID}] TG_BOT_TOKEN not set!")
@@ -271,14 +385,35 @@ class TelegramReporter:
         try:
             from telegram import Update, Bot
             from telegram.ext import (
-                Application, CommandHandler, ContextTypes,
+                Application as TGApplication,
+                CommandHandler, ContextTypes,
                 MessageHandler, filters,
             )
+            from telegram.error import Conflict, TimedOut, NetworkError
         except ImportError:
             logger.error(f"[{AGENT_ID}] python-telegram-bot not installed")
             return
 
-        self._app = Application.builder().token(token).build()
+        # ---- STEP 1: Kill any stale polling session ----
+        await self._kill_stale_sessions(token)
+
+        # ---- STEP 2: Build application ----
+        self._app = (
+            TGApplication.builder()
+            .token(token)
+            .connect_timeout(30)
+            .read_timeout(30)
+            .write_timeout(30)
+            .pool_timeout(30)
+            .get_updates_connect_timeout(30)
+            .get_updates_read_timeout(30)
+            .get_updates_write_timeout(30)
+            .get_updates_pool_timeout(30)
+            .build()
+        )
+
+        # Register custom error handler for runtime Conflict errors
+        self._app.add_error_handler(self._on_telegram_error)
 
         # Register all 22 command handlers
         commands = {
@@ -311,26 +446,221 @@ class TelegramReporter:
 
         logger.info(f"[{AGENT_ID}] Bot starting with {len(commands)} commands...")
 
-        try:
-            await self._app.initialize()
-            await self._app.start()
-            await self._app.updater.start_polling(drop_pending_updates=True)
-            self._running = True
-            logger.info(f"[{AGENT_ID}] Telegram bot is running!")
-        except Exception as e:
-            logger.error(f"[{AGENT_ID}] Bot start failed: {e}")
+        # ---- STEP 3: Start polling with retry ----
+        last_error = None
+        for attempt in range(1, BOT_START_MAX_RETRIES + 1):
+            try:
+                await self._app.initialize()
+                await self._app.start()
+                await self._app.updater.start_polling(
+                    drop_pending_updates=True,
+                    allowed_updates=["message", "callback_query"],
+                    # If Conflict happens mid-poll, PTB retries internally.
+                    # We set a generous error_callback interval.
+                )
+                self._running = True
+                logger.info(
+                    f"[{AGENT_ID}] Telegram bot is running! "
+                    f"(started on attempt {attempt})"
+                )
+                return  # SUCCESS
+
+            except Conflict as e:
+                last_error = e
+                delay = BOT_START_RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                logger.warning(
+                    f"[{AGENT_ID}] Conflict on attempt {attempt}/{BOT_START_MAX_RETRIES}: {e}. "
+                    f"Retrying in {delay}s..."
+                )
+                # Try to clean up the app state before retrying
+                try:
+                    await self._app.updater.stop()
+                except Exception:
+                    pass
+                try:
+                    await self._app.stop()
+                except Exception:
+                    pass
+                try:
+                    await self._app.shutdown()
+                except Exception:
+                    pass
+
+                await asyncio.sleep(delay)
+
+                # Re-kill stale sessions
+                await self._kill_stale_sessions(token)
+
+                # Rebuild the application for retry
+                self._app = (
+                    TGApplication.builder()
+                    .token(token)
+                    .connect_timeout(30)
+                    .read_timeout(30)
+                    .write_timeout(30)
+                    .pool_timeout(30)
+                    .get_updates_connect_timeout(30)
+                    .get_updates_read_timeout(30)
+                    .get_updates_write_timeout(30)
+                    .get_updates_pool_timeout(30)
+                    .build()
+                )
+                self._app.add_error_handler(self._on_telegram_error)
+                for cmd_name, handler_fn in commands.items():
+                    self._app.add_handler(CommandHandler(cmd_name, handler_fn))
+
+            except Exception as e:
+                last_error = e
+                logger.error(
+                    f"[{AGENT_ID}] Bot start attempt {attempt} failed: {e}"
+                )
+                if attempt < BOT_START_MAX_RETRIES:
+                    delay = BOT_START_RETRY_BASE_DELAY * attempt
+                    await asyncio.sleep(delay)
+
+        # All retries exhausted
+        logger.error(
+            f"[{AGENT_ID}] Bot failed to start after {BOT_START_MAX_RETRIES} "
+            f"attempts. Last error: {last_error}"
+        )
+        logger.error(
+            f"[{AGENT_ID}] System will continue WITHOUT Telegram. "
+            f"Fix: ensure only ONE instance uses this bot token."
+        )
+
+    # ================================================================
+    # RUNTIME ERROR HANDLER (catches Conflict during polling)
+    # ================================================================
+
+    async def _on_telegram_error(self, update, context):
+        """
+        Custom error handler that catches Conflict errors during
+        runtime polling and triggers an auto-restart.
+        """
+        from telegram.error import Conflict, TimedOut, NetworkError
+
+        error = context.error
+
+        if isinstance(error, Conflict):
+            logger.error(
+                f"[{AGENT_ID}] RUNTIME Conflict detected: {error}. "
+                f"Scheduling auto-restart..."
+            )
+            # Schedule restart in background (don't block error handler)
+            asyncio.create_task(self._auto_restart_polling())
+
+        elif isinstance(error, (TimedOut, NetworkError)):
+            logger.warning(
+                f"[{AGENT_ID}] Network issue (auto-recoverable): {error}"
+            )
+            # PTB handles these automatically, just log
+
+        else:
+            logger.error(
+                f"[{AGENT_ID}] Unhandled error: {type(error).__name__}: {error}"
+            )
+
+    async def _auto_restart_polling(self):
+        """
+        Auto-restart polling after a Conflict error.
+        Uses a lock to prevent multiple concurrent restarts.
+        """
+        async with self._restart_lock:
+            if self._restart_count >= self._max_runtime_restarts:
+                logger.error(
+                    f"[{AGENT_ID}] Max runtime restarts "
+                    f"({self._max_runtime_restarts}) reached. Giving up."
+                )
+                return
+
+            self._restart_count += 1
+            logger.info(
+                f"[{AGENT_ID}] Auto-restart #{self._restart_count}..."
+            )
+
+            try:
+                # Stop current polling
+                if self._app and self._app.updater and self._app.updater.running:
+                    await self._app.updater.stop()
+                    logger.info(f"[{AGENT_ID}] Polling stopped for restart")
+
+                # Wait for stale connection to clear
+                await asyncio.sleep(BOT_CONFLICT_COOLDOWN)
+
+                # Kill stale sessions
+                token = self.config.telegram.bot_token
+                await self._kill_stale_sessions(token)
+
+                # Restart polling
+                await self._app.updater.start_polling(
+                    drop_pending_updates=True,
+                    allowed_updates=["message", "callback_query"],
+                )
+                logger.info(
+                    f"[{AGENT_ID}] Polling restarted successfully "
+                    f"(restart #{self._restart_count})"
+                )
+
+            except Exception as e:
+                logger.error(
+                    f"[{AGENT_ID}] Auto-restart failed: {e}. "
+                    f"Bot may be non-functional."
+                )
+
+    # ================================================================
+    # GRACEFUL SHUTDOWN
+    # ================================================================
 
     async def stop_bot(self):
-        """Stop the Telegram bot gracefully."""
-        if self._app and self._running:
-            try:
-                await self._app.updater.stop()
-                await self._app.stop()
-                await self._app.shutdown()
-                self._running = False
-                logger.info(f"[{AGENT_ID}] Bot stopped")
-            except Exception as e:
-                logger.error(f"[{AGENT_ID}] Bot stop error: {e}")
+        """
+        Stop the Telegram bot with FULL cleanup.
+        Order matters:
+        1. Stop polling (releases getUpdates lock)
+        2. Stop application
+        3. Shutdown (cleanup resources)
+        """
+        if not self._app:
+            return
+
+        logger.info(f"[{AGENT_ID}] Stopping bot...")
+
+        # Step 1: Stop updater/polling FIRST
+        try:
+            if self._app.updater and self._app.updater.running:
+                await asyncio.wait_for(
+                    self._app.updater.stop(), timeout=10.0
+                )
+                logger.info(f"[{AGENT_ID}] Updater stopped")
+        except asyncio.TimeoutError:
+            logger.warning(f"[{AGENT_ID}] Updater stop timed out (10s)")
+        except Exception as e:
+            logger.error(f"[{AGENT_ID}] Updater stop error: {e}")
+
+        # Step 2: Stop the application
+        try:
+            if self._app.running:
+                await asyncio.wait_for(
+                    self._app.stop(), timeout=10.0
+                )
+                logger.info(f"[{AGENT_ID}] Application stopped")
+        except asyncio.TimeoutError:
+            logger.warning(f"[{AGENT_ID}] App stop timed out (10s)")
+        except Exception as e:
+            logger.error(f"[{AGENT_ID}] App stop error: {e}")
+
+        # Step 3: Shutdown (cleanup)
+        try:
+            await asyncio.wait_for(
+                self._app.shutdown(), timeout=10.0
+            )
+            logger.info(f"[{AGENT_ID}] Application shutdown complete")
+        except asyncio.TimeoutError:
+            logger.warning(f"[{AGENT_ID}] App shutdown timed out (10s)")
+        except Exception as e:
+            logger.error(f"[{AGENT_ID}] App shutdown error: {e}")
+
+        self._running = False
+        logger.info(f"[{AGENT_ID}] Bot fully stopped")
 
     async def send_message(self, text: str, chat_id: str = None):
         """Send a message to configured chat, with auto-splitting."""

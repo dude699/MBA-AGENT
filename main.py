@@ -274,43 +274,70 @@ class Application:
             await self.shutdown()
 
     async def shutdown(self):
-        """Graceful shutdown sequence."""
+        """
+        Graceful shutdown sequence.
+
+        ORDER IS CRITICAL:
+        1. Telegram FIRST — releases the getUpdates polling lock
+           so the NEXT instance can start cleanly.
+        2. Scheduler second — stops firing new jobs.
+        3. Keep-alive last — stop pinging (let Render know we're done).
+        4. Database close.
+
+        Each step has a timeout to prevent hanging on Render's
+        SIGTERM deadline (usually 30s grace period).
+        """
+        if not self._running:
+            return  # Already shut down or never started
+
         logger.info("=" * 60)
-        logger.info("  SHUTTING DOWN...")
+        logger.info("  SHUTTING DOWN (graceful)...")
         logger.info("=" * 60)
 
-        # Stop keep-alive first (stops pinging)
-        if self._keepalive:
-            try:
-                await self._keepalive.stop()
-                logger.info("  Keep-alive: stopped")
-            except Exception as e:
-                logger.error(f"  Keep-alive stop error: {e}")
-
-        # Stop scheduler
-        if self._scheduler:
-            try:
-                await self._scheduler.stop()
-                logger.info("  Scheduler: stopped")
-            except Exception as e:
-                logger.error(f"  Scheduler stop error: {e}")
-
-        # Stop Telegram bot
+        # ---- STEP 1: TELEGRAM FIRST (release polling lock) ----
         if self._telegram:
             try:
-                await self._telegram.stop_bot()
-                logger.info("  Telegram bot: stopped")
+                await asyncio.wait_for(
+                    self._telegram.stop_bot(), timeout=15.0
+                )
+                logger.info("  [1/4] Telegram bot: STOPPED (polling lock released)")
+            except asyncio.TimeoutError:
+                logger.warning("  [1/4] Telegram bot: stop timed out (15s)")
             except Exception as e:
-                logger.error(f"  Telegram stop error: {e}")
+                logger.error(f"  [1/4] Telegram stop error: {e}")
 
-        # Database close
+        # ---- STEP 2: SCHEDULER ----
+        if self._scheduler:
+            try:
+                await asyncio.wait_for(
+                    self._scheduler.stop(), timeout=10.0
+                )
+                logger.info("  [2/4] Scheduler: STOPPED")
+            except asyncio.TimeoutError:
+                logger.warning("  [2/4] Scheduler: stop timed out (10s)")
+            except Exception as e:
+                logger.error(f"  [2/4] Scheduler stop error: {e}")
+
+        # ---- STEP 3: KEEP-ALIVE ----
+        if self._keepalive:
+            try:
+                await asyncio.wait_for(
+                    self._keepalive.stop(), timeout=5.0
+                )
+                logger.info("  [3/4] Keep-alive: STOPPED")
+            except asyncio.TimeoutError:
+                logger.warning("  [3/4] Keep-alive: stop timed out (5s)")
+            except Exception as e:
+                logger.error(f"  [3/4] Keep-alive stop error: {e}")
+
+        # ---- STEP 4: DATABASE ----
         try:
             from core.database import get_db
             db = get_db()
             db.close()
-            logger.info("  Database: closed")
+            logger.info("  [4/4] Database: CLOSED")
         except Exception as e:
-            logger.error(f"  Database close error: {e}")
+            logger.error(f"  [4/4] Database close error: {e}")
 
         self._running = False
         logger.info("  Shutdown complete. Goodbye!")
@@ -326,10 +353,16 @@ class Application:
 # ============================================================
 
 def setup_signal_handlers(app: Application, loop: asyncio.AbstractEventLoop):
-    """Register OS signal handlers for graceful shutdown."""
+    """Register OS signal handlers for graceful shutdown.
+
+    CRITICAL FOR RENDER DEPLOYMENTS:
+    When Render deploys a new version, it sends SIGTERM to the old instance.
+    We MUST stop the Telegram polling IMMEDIATELY so the new instance
+    can start polling without hitting Conflict errors.
+    """
     def handle_signal(signum, frame):
         sig_name = signal.Signals(signum).name
-        logger.info(f"Received {sig_name}")
+        logger.info(f"Received {sig_name} — initiating IMMEDIATE shutdown")
         loop.call_soon_threadsafe(app.request_shutdown)
 
     signal.signal(signal.SIGTERM, handle_signal)

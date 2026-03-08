@@ -6,9 +6,14 @@ services:
     buildCommand: pip install -r requirements.txt && python -c "import nltk; nltk.download('punkt_tab')"
     startCommand: python main.py
     healthCheckPath: /health
+    # Ensure only ONE instance runs (critical for Telegram polling)
+    numInstances: 1
     envVars:
       - key: PYTHON_VERSION
         value: "3.11.0"
+      # Force single worker — NEVER run 2+ workers with polling bot
+      - key: WEB_CONCURRENCY
+        value: "1"
       - key: GROQ_API_KEY
         sync: false
       - key: CEREBRAS_API_KEY
