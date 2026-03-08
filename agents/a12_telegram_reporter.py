@@ -259,9 +259,15 @@ class ReportFormatter:
 # ============================================================
 
 # Max retries for bot startup when Conflict is hit
-BOT_START_MAX_RETRIES = 5
-BOT_START_RETRY_BASE_DELAY = 3  # seconds, exponential backoff
-BOT_CONFLICT_COOLDOWN = 10  # seconds to wait after killing stale session
+BOT_START_MAX_RETRIES = 3
+BOT_START_RETRY_BASE_DELAY = 10  # seconds — must be long enough for old instance to die
+BOT_CONFLICT_COOLDOWN = 15  # seconds to wait after killing stale session
+
+# Pre-flight drain: number of rapid getUpdates calls to forcefully
+# terminate any lingering long-poll connection from a previous instance.
+# One call isn't enough because PTB auto-retries immediately.
+PREFLIGHT_DRAIN_ROUNDS = 5
+PREFLIGHT_DRAIN_INTERVAL = 2  # seconds between drain calls
 
 
 class TelegramReporter:
@@ -300,14 +306,22 @@ class TelegramReporter:
         """
         NUCLEAR CLEANUP — Call this BEFORE starting polling.
 
-        This does two things:
-        1. deleteWebhook(drop_pending_updates=True)
-           → Removes any webhook AND flushes pending updates.
-        2. getUpdates(offset=-1, timeout=1)
-           → Forces Telegram to release any existing long-poll
-             connection from a previous instance.
+        WHY ONE getUpdates ISN'T ENOUGH:
+        python-telegram-bot has an internal retry loop. When we call
+        getUpdates(offset=-1), it terminates the OLD instance's current
+        long-poll, but PTB immediately retries. The old instance re-
+        establishes the connection within ~1 second.
 
-        After this, we are GUARANTEED to be the only consumer.
+        FIX: We call getUpdates in a DRAIN LOOP — multiple rapid calls
+        that keep interrupting the old instance until it gives up or
+        the SIGTERM handler finally kills it.
+
+        Steps:
+        1. deleteWebhook(drop_pending_updates=True)
+        2. DRAIN LOOP: call getUpdates N times with short intervals
+           to keep breaking the old instance's retry loop
+        3. Final acknowledgment of any pending updates
+        4. Wait for Telegram servers to fully release the connection
         """
         import aiohttp
 
@@ -328,37 +342,66 @@ class TelegramReporter:
                         f"{result.get('ok', False)}"
                     )
 
-                # Step 2: Force-release any stale getUpdates lock
-                # By calling getUpdates with offset=-1 and short timeout,
-                # we tell Telegram "I'm the new consumer, kill the old one"
-                logger.info(f"[{AGENT_ID}] Pre-flight: flushing stale polling lock...")
-                async with session.post(
-                    f"{base}/getUpdates",
-                    json={"offset": -1, "timeout": 1}
-                ) as resp:
-                    result = await resp.json()
-                    ok = result.get('ok', False)
-                    updates = result.get('result', [])
-                    logger.info(
-                        f"[{AGENT_ID}] Pre-flight: getUpdates flush → "
-                        f"ok={ok}, pending={len(updates)}"
-                    )
-
-                # Step 3: If there were updates, acknowledge the last one
-                if updates:
-                    last_update_id = updates[-1].get('update_id', 0)
-                    async with session.post(
-                        f"{base}/getUpdates",
-                        json={"offset": last_update_id + 1, "timeout": 1}
-                    ) as resp:
-                        await resp.json()
-                        logger.info(
-                            f"[{AGENT_ID}] Pre-flight: acknowledged up to "
-                            f"update_id {last_update_id}"
+                # Step 2: DRAIN LOOP — repeatedly call getUpdates to
+                # keep interrupting any lingering polling connection.
+                # Each call terminates the old instance's current request;
+                # by doing this N times with intervals, we outlast PTB's
+                # internal retry mechanism.
+                logger.info(
+                    f"[{AGENT_ID}] Pre-flight: drain loop "
+                    f"({PREFLIGHT_DRAIN_ROUNDS} rounds, "
+                    f"{PREFLIGHT_DRAIN_INTERVAL}s apart)..."
+                )
+                last_update_id = None
+                for i in range(1, PREFLIGHT_DRAIN_ROUNDS + 1):
+                    try:
+                        async with session.post(
+                            f"{base}/getUpdates",
+                            json={"offset": -1, "timeout": 1}
+                        ) as resp:
+                            result = await resp.json()
+                            updates = result.get('result', [])
+                            if updates:
+                                last_update_id = updates[-1].get('update_id', 0)
+                            logger.debug(
+                                f"[{AGENT_ID}] Pre-flight drain #{i}: "
+                                f"ok={result.get('ok')}, "
+                                f"updates={len(updates)}"
+                            )
+                    except Exception as drain_err:
+                        logger.debug(
+                            f"[{AGENT_ID}] Pre-flight drain #{i} error: "
+                            f"{drain_err}"
                         )
+                    if i < PREFLIGHT_DRAIN_ROUNDS:
+                        await asyncio.sleep(PREFLIGHT_DRAIN_INTERVAL)
 
-                # Wait for Telegram to fully release the connection
-                await asyncio.sleep(2)
+                logger.info(
+                    f"[{AGENT_ID}] Pre-flight: drain loop complete "
+                    f"({PREFLIGHT_DRAIN_ROUNDS} rounds)"
+                )
+
+                # Step 3: Acknowledge the last update so the queue is clean
+                if last_update_id is not None:
+                    try:
+                        async with session.post(
+                            f"{base}/getUpdates",
+                            json={"offset": last_update_id + 1, "timeout": 1}
+                        ) as resp:
+                            await resp.json()
+                            logger.info(
+                                f"[{AGENT_ID}] Pre-flight: acknowledged up to "
+                                f"update_id {last_update_id}"
+                            )
+                    except Exception:
+                        pass
+
+                # Step 4: Final cooldown — let Telegram servers fully
+                # release the connection state
+                logger.info(
+                    f"[{AGENT_ID}] Pre-flight: final cooldown (5s)..."
+                )
+                await asyncio.sleep(5)
 
         except Exception as e:
             logger.warning(
@@ -534,20 +577,33 @@ class TelegramReporter:
 
     async def _on_telegram_error(self, update, context):
         """
-        Custom error handler that catches Conflict errors during
-        runtime polling and triggers an auto-restart.
+        Custom error handler for runtime errors.
+
+        CRITICAL CHANGE: We do NOT auto-restart on Conflict errors.
+
+        WHY: Auto-restarting polling on Conflict creates a feedback loop:
+          1. Instance A is polling
+          2. Instance B starts polling → A gets Conflict
+          3. A's error handler restarts polling → B gets Conflict
+          4. B's error handler restarts polling → A gets Conflict
+          5. → infinite loop of Conflict errors
+
+        CORRECT BEHAVIOR: If we get a Conflict, it means another instance
+        legitimately took over. We should STOP polling and let it win.
+        The old instance will be killed by SIGTERM shortly anyway.
         """
         from telegram.error import Conflict, TimedOut, NetworkError
 
         error = context.error
 
         if isinstance(error, Conflict):
-            logger.error(
-                f"[{AGENT_ID}] RUNTIME Conflict detected: {error}. "
-                f"Scheduling auto-restart..."
+            logger.warning(
+                f"[{AGENT_ID}] RUNTIME Conflict: another instance took over. "
+                f"STOPPING polling (this is expected during redeployment)."
             )
-            # Schedule restart in background (don't block error handler)
-            asyncio.create_task(self._auto_restart_polling())
+            # Do NOT restart. Let the other instance win.
+            # PTB will keep retrying internally — we stop it.
+            asyncio.create_task(self._surrender_polling())
 
         elif isinstance(error, (TimedOut, NetworkError)):
             logger.warning(
@@ -560,51 +616,29 @@ class TelegramReporter:
                 f"[{AGENT_ID}] Unhandled error: {type(error).__name__}: {error}"
             )
 
-    async def _auto_restart_polling(self):
+    async def _surrender_polling(self):
         """
-        Auto-restart polling after a Conflict error.
-        Uses a lock to prevent multiple concurrent restarts.
+        Gracefully surrender polling when a Conflict is detected.
+        This means another instance legitimately started polling.
+        We stop our updater so we don't keep fighting.
         """
         async with self._restart_lock:
-            if self._restart_count >= self._max_runtime_restarts:
-                logger.error(
-                    f"[{AGENT_ID}] Max runtime restarts "
-                    f"({self._max_runtime_restarts}) reached. Giving up."
-                )
-                return
-
-            self._restart_count += 1
-            logger.info(
-                f"[{AGENT_ID}] Auto-restart #{self._restart_count}..."
-            )
-
             try:
-                # Stop current polling
                 if self._app and self._app.updater and self._app.updater.running:
-                    await self._app.updater.stop()
-                    logger.info(f"[{AGENT_ID}] Polling stopped for restart")
-
-                # Wait for stale connection to clear
-                await asyncio.sleep(BOT_CONFLICT_COOLDOWN)
-
-                # Kill stale sessions
-                token = self.config.telegram.bot_token
-                await self._kill_stale_sessions(token)
-
-                # Restart polling
-                await self._app.updater.start_polling(
-                    drop_pending_updates=True,
-                    allowed_updates=["message", "callback_query"],
-                )
-                logger.info(
-                    f"[{AGENT_ID}] Polling restarted successfully "
-                    f"(restart #{self._restart_count})"
-                )
-
+                    logger.info(
+                        f"[{AGENT_ID}] Surrendering: stopping updater..."
+                    )
+                    await asyncio.wait_for(
+                        self._app.updater.stop(), timeout=10.0
+                    )
+                    self._running = False
+                    logger.info(
+                        f"[{AGENT_ID}] Updater stopped. "
+                        f"This instance will NOT restart polling."
+                    )
             except Exception as e:
                 logger.error(
-                    f"[{AGENT_ID}] Auto-restart failed: {e}. "
-                    f"Bot may be non-functional."
+                    f"[{AGENT_ID}] Surrender stop error: {e}"
                 )
 
     # ================================================================

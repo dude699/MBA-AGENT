@@ -226,6 +226,7 @@ class WebServer:
     - GET /health    → Detailed JSON health report
     - GET /status    → One-line text status
     - GET /ping      → Bare minimum "pong" (fastest response)
+    - GET /telegram-status → Telegram bot polling status
 
     This is what keeps Render from sleeping the service.
     Every HTTP request to ANY of these endpoints resets the
@@ -246,6 +247,7 @@ class WebServer:
         app.router.add_get('/health', self._handle_health)
         app.router.add_get('/status', self._handle_status)
         app.router.add_get('/ping', self._handle_ping)
+        app.router.add_get('/telegram-status', self._handle_telegram_status)
         # HEAD requests (some monitors use HEAD instead of GET)
         app.router.add_route('HEAD', '/', self._handle_ping)
         app.router.add_route('HEAD', '/health', self._handle_ping)
@@ -325,6 +327,24 @@ class WebServer:
         """Ultra-minimal ping response (fastest)."""
         self.health.record_ping("external")
         return web.Response(text="pong", content_type='text/plain')
+
+    async def _handle_telegram_status(self, request: web.Request) -> web.Response:
+        """
+        Telegram bot status endpoint.
+        Returns whether polling is active. The NEW instance can check
+        this on the OLD instance to know when polling has stopped.
+        """
+        self.health.record_request()
+        import json
+        status = {
+            "telegram_running": self.health._telegram_running,
+            "uptime": self.health.uptime_str,
+            "timestamp": datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S IST"),
+        }
+        return web.Response(
+            text=json.dumps(status),
+            content_type='application/json',
+        )
 
 
 # ============================================================
