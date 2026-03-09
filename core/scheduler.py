@@ -250,7 +250,10 @@ class AgentScheduler:
     async def stop(self):
         """Stop the scheduler gracefully."""
         if self._scheduler:
-            self._scheduler.shutdown(wait=True)
+            try:
+                self._scheduler.shutdown(wait=False)  # Don't wait — SIGTERM has deadline
+            except Exception as e:
+                logger.warning(f"[SCHEDULER] Shutdown error (non-fatal): {e}")
             self._running = False
             logger.info("[SCHEDULER] Stopped")
 
@@ -344,13 +347,15 @@ class AgentScheduler:
     # ================================================================
 
     async def _safe_run(self, name: str, func: Callable, *args, **kwargs):
-        """Safely run a function with error handling and tracking."""
+        """Safely run a function with error handling, tracking, and timeout."""
         execution = JobExecution(job_id=name, start_time=time.time())
+        # Default timeout: 15 minutes for any single job
+        job_timeout = kwargs.pop('job_timeout', 900)
         try:
             logger.info(f"[SCHEDULER] Running {name}...")
             result = func(*args, **kwargs)
             if asyncio.iscoroutine(result):
-                result = await result
+                result = await asyncio.wait_for(result, timeout=job_timeout)
             execution.success = True
             execution.end_time = time.time()
             logger.info(
@@ -358,14 +363,45 @@ class AgentScheduler:
                 f"{execution.duration_sec}s"
             )
             return result
+        except asyncio.TimeoutError:
+            execution.success = False
+            execution.error = f"Timed out after {job_timeout}s"
+            execution.end_time = time.time()
+            logger.error(
+                f"[SCHEDULER] {name} TIMED OUT after {job_timeout}s"
+            )
+            return None
         except Exception as e:
             execution.success = False
             execution.error = str(e)
             execution.end_time = time.time()
-            logger.error(f"[SCHEDULER] {name} failed: {e}")
+            logger.error(
+                f"[SCHEDULER] {name} failed: {type(e).__name__}: {e}"
+            )
+            # Log traceback for debugging
+            try:
+                tb = traceback.format_exc()
+                if tb and 'NoneType' not in tb:
+                    logger.debug(f"[SCHEDULER] {name} traceback:\n{tb}")
+            except Exception:
+                pass
             return None
         finally:
             self._tracker.record(execution)
+            # Update agent heartbeat in database
+            try:
+                from core.database import get_db
+                db = get_db()
+                agent_id = name.split(' ')[0] if ' ' in name else name
+                db.update_agent_heartbeat(
+                    agent_id=agent_id,
+                    status='completed' if execution.success else 'error',
+                    items_processed=execution.items_processed,
+                    errors=0 if execution.success else 1,
+                    duration_sec=execution.duration_sec,
+                )
+            except Exception:
+                pass  # Don't let heartbeat update failure crash anything
 
     # ================================================================
     # JOB IMPLEMENTATIONS

@@ -27,11 +27,16 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PORT=10000
 
+# CRITICAL: Single instance for Telegram polling bots
+ENV WEB_CONCURRENCY=1
+
 # Expose the web service port
 EXPOSE 10000
 
-# Health check
-HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
+# Health check — increased start-period for Telegram grace period
+HEALTHCHECK --interval=60s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:10000/health || exit 1
 
+# Use exec form so SIGTERM goes directly to the Python process
+# (not to a shell wrapper that would swallow the signal)
 CMD ["python", "main.py"]

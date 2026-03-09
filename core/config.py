@@ -1594,9 +1594,10 @@ class Config:
             'ENVIRONMENT', default='production',
             description='Deployment environment'
         )
-        self.is_render = _get_env(
-            'RENDER_DEPLOY', default='false', cast_type=bool,
-            description='Running on Render platform'
+        self.is_render = bool(
+            _get_env('RENDER_DEPLOY', default='false', cast_type=bool,
+                     description='Running on Render platform')
+            or _get_env('RENDER', default='', description='Render env flag')
         )
         self.is_docker = _get_env(
             'DOCKER_DEPLOY', default='false', cast_type=bool,
