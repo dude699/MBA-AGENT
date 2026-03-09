@@ -119,6 +119,9 @@ class HealthTracker:
         self._scheduler_running = False
         self._telegram_running = False
         self._db_healthy = False
+        self._shutdown_requested = False
+        self._last_error: Optional[str] = None
+        self._error_count = 0
 
     def record_ping(self, source: str = "unknown"):
         """Record a keep-alive ping."""
@@ -146,6 +149,15 @@ class HealthTracker:
     def set_db_status(self, healthy: bool):
         self._db_healthy = healthy
 
+    def set_shutdown_requested(self):
+        """Mark that a shutdown signal was received."""
+        self._shutdown_requested = True
+
+    def record_error(self, error_msg: str):
+        """Record a system error for health reporting."""
+        self._last_error = error_msg
+        self._error_count += 1
+
     @property
     def ping_count(self) -> int:
         return self._ping_count
@@ -171,7 +183,7 @@ class HealthTracker:
         """Full health report for /health endpoint."""
         now = time.time()
         return {
-            "status": "alive",
+            "status": "shutting_down" if self._shutdown_requested else "alive",
             "uptime": self.uptime_str,
             "uptime_seconds": round(self.uptime_seconds, 1),
             "ping_count": self._ping_count,
@@ -183,6 +195,9 @@ class HealthTracker:
             "scheduler_running": self._scheduler_running,
             "telegram_running": self._telegram_running,
             "db_healthy": self._db_healthy,
+            "shutdown_requested": self._shutdown_requested,
+            "error_count": self._error_count,
+            "last_error": self._last_error,
             "memory_mb": self._get_memory_usage(),
             "timestamp": datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S IST"),
         }
@@ -333,12 +348,17 @@ class WebServer:
         Telegram bot status endpoint.
         Returns whether polling is active. The NEW instance can check
         this on the OLD instance to know when polling has stopped.
+
+        Also returns shutdown_requested flag so the new instance can
+        see if SIGTERM has been received.
         """
         self.health.record_request()
         import json
         status = {
             "telegram_running": self.health._telegram_running,
             "uptime": self.health.uptime_str,
+            "uptime_seconds": round(self.health.uptime_seconds, 1),
+            "shutdown_requested": self.health._shutdown_requested,
             "timestamp": datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S IST"),
         }
         return web.Response(

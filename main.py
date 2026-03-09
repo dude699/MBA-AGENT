@@ -64,7 +64,12 @@ from pathlib import Path
 # time to receive SIGTERM and release the polling lock.
 # The web server starts IMMEDIATELY (Render needs /health).
 # ============================================================
-RENDER_OVERLAP_GRACE_SEC = int(os.getenv('RENDER_OVERLAP_GRACE_SEC', '45'))
+# Grace period is now SHORTER because the real fix is in the
+# pre-flight /close API call (in a12_telegram_reporter.py).
+# The /close call server-side releases the polling lock, so we
+# don't need to blindly wait 45s and hope for the best.
+# 15s is enough for Render to send SIGTERM to the old instance.
+RENDER_OVERLAP_GRACE_SEC = int(os.getenv('RENDER_OVERLAP_GRACE_SEC', '15'))
 
 try:
     from loguru import logger
@@ -322,19 +327,30 @@ class Application:
         if not self._running:
             return  # Already shut down or never started
 
-        logger.info("=" * 60)
+        logger.info("="  * 60)
         logger.info("  SHUTTING DOWN (graceful)...")
         logger.info("=" * 60)
 
-        # ---- STEP 1: TELEGRAM FIRST (release polling lock) ----
+        # Mark shutdown in health tracker so new instance can detect it
+        try:
+            from core.keepalive import get_health_tracker
+            get_health_tracker().set_shutdown_requested()
+            get_health_tracker().set_telegram_status(False)
+        except Exception:
+            pass
+
+        # ---- STEP 1: TELEGRAM FIRST (release polling lock + /close) ----
         if self._telegram:
             try:
                 await asyncio.wait_for(
-                    self._telegram.stop_bot(), timeout=15.0
+                    self._telegram.stop_bot(), timeout=20.0
                 )
-                logger.info("  [1/4] Telegram bot: STOPPED (polling lock released)")
+                logger.info(
+                    "  [1/4] Telegram bot: STOPPED "
+                    "(polling lock + server session released)"
+                )
             except asyncio.TimeoutError:
-                logger.warning("  [1/4] Telegram bot: stop timed out (15s)")
+                logger.warning("  [1/4] Telegram bot: stop timed out (20s)")
             except Exception as e:
                 logger.error(f"  [1/4] Telegram stop error: {e}")
 
@@ -398,31 +414,68 @@ def setup_signal_handlers(app: Application, loop: asyncio.AbstractEventLoop):
     """
     def handle_signal(signum, frame):
         sig_name = signal.Signals(signum).name
-        logger.info(f"Received {sig_name} — KILLING TELEGRAM POLLING IMMEDIATELY")
+        logger.info(f"Received {sig_name} — EMERGENCY TELEGRAM SHUTDOWN")
 
-        # NUCLEAR OPTION: Schedule the Telegram stop as the HIGHEST priority
-        # task on the event loop. This runs before any other pending callbacks.
-        if app._telegram and app._telegram._app:
-            async def _emergency_stop_polling():
-                """Emergency: stop polling lock ASAP on SIGTERM."""
+        # PRIORITY: Stop Telegram polling AND call /close API to release
+        # the server-side session. This is THE critical step for Render
+        # redeployments — the new instance needs the polling lock ASAP.
+        if app._telegram:
+            async def _emergency_stop_telegram():
+                """Emergency: release polling lock + /close API on SIGTERM."""
                 try:
-                    tg_app = app._telegram._app
-                    if tg_app.updater and tg_app.updater.running:
-                        logger.info("[SIGTERM] Force-stopping Telegram updater...")
-                        await asyncio.wait_for(
-                            tg_app.updater.stop(), timeout=8.0
+                    # Step 1: Stop the updater (releases local polling)
+                    if app._telegram._app:
+                        tg_app = app._telegram._app
+                        if tg_app.updater and tg_app.updater.running:
+                            logger.info(
+                                "[SIGTERM] Force-stopping Telegram updater..."
+                            )
+                            await asyncio.wait_for(
+                                tg_app.updater.stop(), timeout=5.0
+                            )
+                            logger.info("[SIGTERM] Telegram updater STOPPED")
+
+                    # Step 2: Call /close API to release server-side session
+                    # This is what actually prevents the Conflict error
+                    # on the new instance.
+                    try:
+                        import aiohttp
+                        token = app._telegram.config.telegram.bot_token
+                        if token:
+                            base = f"https://api.telegram.org/bot{token}"
+                            timeout = aiohttp.ClientTimeout(total=5)
+                            async with aiohttp.ClientSession(
+                                timeout=timeout
+                            ) as session:
+                                async with session.post(
+                                    f"{base}/close"
+                                ) as resp:
+                                    result = await resp.json()
+                                    logger.info(
+                                        f"[SIGTERM] /close API: "
+                                        f"{result.get('ok', False)}"
+                                    )
+                    except Exception as close_err:
+                        logger.warning(
+                            f"[SIGTERM] /close API failed: {close_err}"
                         )
-                        logger.info("[SIGTERM] Telegram updater STOPPED")
+
                 except asyncio.TimeoutError:
-                    logger.warning("[SIGTERM] Updater stop timed out (8s)")
+                    logger.warning("[SIGTERM] Updater stop timed out (5s)")
                 except Exception as e:
                     logger.error(f"[SIGTERM] Emergency stop error: {e}")
                 finally:
+                    # Update health tracker
+                    try:
+                        from core.keepalive import get_health_tracker
+                        get_health_tracker().set_telegram_status(False)
+                    except Exception:
+                        pass
                     # Now trigger the full graceful shutdown
                     app.request_shutdown()
 
             loop.call_soon_threadsafe(
-                lambda: asyncio.ensure_future(_emergency_stop_polling())
+                lambda: asyncio.ensure_future(_emergency_stop_telegram())
             )
         else:
             loop.call_soon_threadsafe(app.request_shutdown)
