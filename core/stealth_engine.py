@@ -209,12 +209,21 @@ class ProxyPoolManager:
         try:
             import requests
             api_key = self.config.webshare.api_key
+            if not api_key:
+                logger.debug("Webshare API key not set, skipping")
+                return
+
             headers = {"Authorization": f"Token {api_key}"}
+
+            # Try v2 API list endpoint first
+            api_url = self.config.webshare.api_url
             resp = requests.get(
-                self.config.webshare.api_url,
+                api_url,
                 headers=headers,
+                params={"mode": "direct", "page": "1", "page_size": "25"},
                 timeout=15
             )
+
             if resp.status_code == 200:
                 data = resp.json()
                 for proxy_data in data.get('results', []):
@@ -234,7 +243,35 @@ class ProxyPoolManager:
                             'latency': 0,
                             'failures': 0,
                         }
-                logger.info(f"Loaded {len(self._webshare_proxies)} Webshare proxies")
+                if self._webshare_proxies:
+                    logger.info(f"Loaded {len(self._webshare_proxies)} Webshare proxies")
+                else:
+                    logger.warning("Webshare API returned 200 but no proxies found")
+            elif resp.status_code in (400, 401, 403):
+                # Try download URL format as fallback
+                try:
+                    download_url = self.config.webshare.download_url.format(api_key=api_key)
+                    resp2 = requests.get(download_url, timeout=15)
+                    if resp2.status_code == 200 and resp2.text.strip():
+                        for line in resp2.text.strip().split('\n'):
+                            line = line.strip()
+                            if line and ':' in line:
+                                proxy_url = f"http://{line}"
+                                self._webshare_proxies.append(proxy_url)
+                                self._proxy_health[proxy_url] = {
+                                    'type': 'webshare',
+                                    'alive': True,
+                                    'latency': 0,
+                                    'failures': 0,
+                                }
+                        if self._webshare_proxies:
+                            logger.info(f"Loaded {len(self._webshare_proxies)} Webshare proxies via download URL")
+                        else:
+                            logger.warning(f"Webshare download URL returned no proxies")
+                    else:
+                        logger.warning(f"Webshare API returned {resp.status_code}, download fallback also failed")
+                except Exception as e2:
+                    logger.warning(f"Webshare API returned {resp.status_code}, fallback failed: {e2}")
             else:
                 logger.warning(f"Webshare API returned {resp.status_code}")
         except Exception as e:
@@ -284,6 +321,9 @@ class ProxyPoolManager:
         with self._lock:
             if proxy_type == ProxyType.WEBSHARE:
                 pool = self._webshare_proxies
+                # Auto-fallback to free proxies if webshare is empty
+                if not pool:
+                    pool = self._free_proxies
             elif proxy_type == ProxyType.FREE_LIST:
                 pool = self._free_proxies
             elif proxy_type == ProxyType.CLOUDFLARE:
@@ -804,6 +844,7 @@ class StealthHTTPClient:
 
     def get(self, url: str, site: str = "",
             headers: Optional[Dict[str, str]] = None,
+            params: Optional[Dict[str, str]] = None,
             proxy_type: Optional[ProxyType] = None,
             use_curl_cffi: bool = True,
             impersonate: Optional[str] = None,
@@ -817,6 +858,7 @@ class StealthHTTPClient:
             url: Target URL
             site: Site name for profile lookup
             headers: Custom headers (merged with generated ones)
+            params: URL query parameters to append
             proxy_type: Override proxy layer
             use_curl_cffi: Use curl_cffi for TLS fingerprinting
             impersonate: TLS impersonation profile
@@ -827,6 +869,20 @@ class StealthHTTPClient:
         Returns:
             Dict with {status_code, text, headers, url, latency_ms} or None
         """
+        # Append query params to URL if provided
+        if params:
+            from urllib.parse import urlencode, urlparse, parse_qs, urlunparse
+            parsed = urlparse(url)
+            existing_params = parse_qs(parsed.query)
+            # Merge existing and new params (new params take priority)
+            for k, v in params.items():
+                existing_params[k] = [v] if isinstance(v, str) else v
+            new_query = urlencode(
+                {k: v[0] if isinstance(v, list) and len(v) == 1 else v
+                 for k, v in existing_params.items()},
+                doseq=True
+            )
+            url = urlunparse(parsed._replace(query=new_query))
         # Check hourly limit
         if site and not self._check_hourly_limit(site):
             logger.warning(f"Hourly limit reached for {site}")
