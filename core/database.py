@@ -1996,13 +1996,16 @@ class DatabaseManager:
             # Dark channel finds
             dark_finds = self.get_recent_dark_listings(days=1, limit=5)
 
-            # Urgent deadlines (listings with high PPO posted >5 days ago)
+            # Urgent deadlines (listings created >5 days ago with high PPO — may be closing soon)
             cur.execute(
-                """SELECT * FROM clean_listings
-                   WHERE status = 'active' AND is_ghost = 0
-                     AND posted_days_ago IS NOT NULL
-                     AND (7 - COALESCE(posted_days_ago, 0)) <= 2
-                   ORDER BY ppo_score DESC LIMIT 5"""
+                """SELECT cl.*, r.posted_days_ago FROM clean_listings cl
+                   LEFT JOIN raw_listings r ON cl.raw_id = r.id
+                   WHERE cl.status = 'active' AND cl.is_ghost = 0
+                     AND (
+                       (r.posted_days_ago IS NOT NULL AND (7 - COALESCE(r.posted_days_ago, 0)) <= 2)
+                       OR (cl.created_at <= datetime('now', '-5 days'))
+                     )
+                   ORDER BY cl.ppo_score DESC LIMIT 5"""
             )
             urgent = [dict(row) for row in cur.fetchall()]
 
@@ -2188,6 +2191,177 @@ class DatabaseManager:
                     (agent['agent_id'], agent['agent_name'])
                 )
         logger.info("Agent heartbeats seeded (A-01 to A-12)")
+
+    # ----------------------------------------------------------
+    # MISSING METHODS REQUIRED BY AGENTS
+    # ----------------------------------------------------------
+
+    def get_all_companies_basic(self) -> List[Dict]:
+        """Get all companies with basic fields (id, name, tier, sector).
+        Used by A-01 Intent Scanner for company matching."""
+        with self.get_cursor() as cur:
+            cur.execute(
+                "SELECT id, name, normalized_name, tier, sector, hq_city, "
+                "ats_platform, ats_board_id, cirs FROM companies ORDER BY tier, name"
+            )
+            return [dict(row) for row in cur.fetchall()]
+
+    def get_all_listing_urls(self) -> List[Dict]:
+        """Get all listing URLs from both raw and clean tables.
+        Used by A-06 Dedup Engine for URL-based dedup (L1, L6)."""
+        with self.get_cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, url FROM clean_listings WHERE url IS NOT NULL AND url != ''
+                UNION ALL
+                SELECT id, url FROM raw_listings WHERE url IS NOT NULL AND url != ''
+                """
+            )
+            return [dict(row) for row in cur.fetchall()]
+
+    def get_all_clean_listing_basics(self) -> List[Dict]:
+        """Get basic fields from all clean listings for dedup fingerprinting.
+        Used by A-06 Dedup Engine (L2, L3)."""
+        with self.get_cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, title, company, location, url, stipend_monthly,
+                       duration_months, source, description_text
+                FROM clean_listings
+                WHERE status = 'active'
+                ORDER BY created_at DESC
+                """
+            )
+            return [dict(row) for row in cur.fetchall()]
+
+    def get_recent_clean_listings(self, days: int = 14,
+                                    limit: int = 1000) -> List[Dict]:
+        """Get recent clean listings within N days.
+        Used by A-06 Dedup Engine (L4 semantic, L5 metadata),
+        and A-07 Intelligence Enricher."""
+        with self.get_cursor() as cur:
+            cur.execute(
+                """
+                SELECT cl.*, c.tier, c.sector, c.cirs
+                FROM clean_listings cl
+                LEFT JOIN companies c ON cl.company_id = c.id
+                WHERE cl.created_at >= datetime('now', ?)
+                  AND cl.status = 'active'
+                ORDER BY cl.created_at DESC
+                LIMIT ?
+                """,
+                (f"-{days} days", limit)
+            )
+            return [dict(row) for row in cur.fetchall()]
+
+    def cleanup_expired_signals(self) -> int:
+        """Remove expired or zero-score intent signals.
+        Used by A-01 Intent Scanner."""
+        with self.get_cursor() as cur:
+            cur.execute(
+                """
+                DELETE FROM intent_signals
+                WHERE signal_score <= 0
+                   OR (expires_at IS NOT NULL AND expires_at < datetime('now'))
+                """
+            )
+            count = cur.rowcount
+            logger.info(f"Cleaned up {count} expired signals")
+            return count
+
+    def get_listings_needing_enrichment(self, hours: int = 48,
+                                          limit: int = 200) -> List[Dict]:
+        """Get clean listings that need enrichment (no competition_ratio set).
+        Used by A-07 Intelligence Enricher."""
+        with self.get_cursor() as cur:
+            cur.execute(
+                """
+                SELECT cl.*, c.tier, c.sector, c.cirs, c.name as company_name
+                FROM clean_listings cl
+                LEFT JOIN companies c ON cl.company_id = c.id
+                WHERE cl.status = 'active'
+                  AND cl.is_ghost = 0
+                  AND cl.competition_ratio = 0.0
+                  AND cl.created_at >= datetime('now', ?)
+                ORDER BY cl.created_at DESC
+                LIMIT ?
+                """,
+                (f"-{hours} hours", limit)
+            )
+            return [dict(row) for row in cur.fetchall()]
+
+    def update_clean_listing_enrichment(self, listing_id: int,
+                                          competition_ratio: float = None,
+                                          is_blue_ocean: bool = None,
+                                          sector_momentum: float = None):
+        """Update enrichment fields on a clean listing.
+        Used by A-07 Intelligence Enricher."""
+        updates = []
+        params = []
+        if competition_ratio is not None:
+            updates.append("competition_ratio = ?")
+            params.append(competition_ratio)
+        if is_blue_ocean is not None:
+            updates.append("is_blue_ocean = ?")
+            params.append(int(is_blue_ocean))
+        # sector_momentum is not a column; store in description or ignore
+        if not updates:
+            return
+        updates.append("updated_at = CURRENT_TIMESTAMP")
+        params.append(listing_id)
+        with self.get_cursor() as cur:
+            cur.execute(
+                f"UPDATE clean_listings SET {', '.join(updates)} WHERE id = ?",
+                params
+            )
+
+    def count_outcomes_today(self) -> int:
+        """Count outcomes recorded today.
+        Used by A-12 Telegram Reporter evening summary."""
+        with self.get_cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*) FROM outcomes
+                WHERE date(created_at) = date('now')
+                """
+            )
+            return cur.fetchone()[0]
+
+    def count_dark_listings_today(self) -> int:
+        """Count dark channel job listings found today.
+        Used by A-12 Telegram Reporter evening summary."""
+        with self.get_cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*) FROM dark_channel_listings
+                WHERE is_job = 1
+                  AND date(detected_at) = date('now')
+                """
+            )
+            return cur.fetchone()[0]
+
+    def get_hourly_usage(self, provider: str,
+                          date_str: Optional[str] = None,
+                          hour: Optional[int] = None) -> Dict[str, int]:
+        """Get hourly API usage for a provider."""
+        if date_str is None:
+            date_str = datetime.now(IST).strftime("%Y-%m-%d")
+        if hour is None:
+            hour = datetime.now(IST).hour
+        with self.get_cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    COALESCE(requests_made, 0) as requests,
+                    COALESCE(tokens_used, 0) as tokens,
+                    COALESCE(errors, 0) as errors
+                FROM api_quotas
+                WHERE provider = ? AND date = ? AND hour = ?
+                """,
+                (provider, date_str, hour)
+            )
+            row = cur.fetchone()
+            return dict(row) if row else {'requests': 0, 'tokens': 0, 'errors': 0}
 
     def get_health_report(self) -> Dict[str, Any]:
         """Generate a comprehensive database health report."""
