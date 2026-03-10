@@ -15,7 +15,7 @@ Startup Sequence:
     6.  Stealth engine: lazy-load mode
     7.  Start aiohttp Web Server (port from $PORT env)
     8.  Start Self-Ping keep-alive loop (Layer 1)
-    9.  Start Telegram bot (22 commands, polling mode)
+    9.  Start Telegram bot (26 commands, polling mode)
     10. Start APScheduler (24-hour IST schedule)
     11. Enter main event loop
     12. Handle graceful shutdown (SIGTERM/SIGINT)
@@ -48,8 +48,13 @@ import time
 import signal
 import asyncio
 import gc
+import warnings
 from datetime import datetime
 from pathlib import Path
+
+# Suppress ResourceWarning about unclosed sockets during shutdown
+# These are harmless and caused by HTTP client cleanup timing
+warnings.filterwarnings('ignore', category=ResourceWarning)
 
 # ============================================================
 # RENDER DEPLOYMENT OVERLAP PROTECTION
@@ -386,6 +391,17 @@ class Application:
             logger.info("  [4/4] Database: CLOSED")
         except Exception as e:
             logger.error(f"  [4/4] Database close error: {e}")
+
+        # ---- CLEANUP: Close AI router HTTP clients ----
+        try:
+            from core.ai_router import get_ai_router
+            router = get_ai_router()
+            if hasattr(router, '_groq_client') and router._groq_client:
+                router._groq_client.close()
+            if hasattr(router, '_cerebras_client') and router._cerebras_client:
+                router._cerebras_client.close()
+        except Exception:
+            pass  # Best-effort cleanup
 
         self._running = False
         logger.info("  Shutdown complete. Goodbye!")

@@ -665,13 +665,21 @@ class CloudflareRelayClient:
             body: Request body for POST
 
         Returns:
-            Dict with {status, body, headers} or None on failure
+            Dict with {status_code, text, headers} or None on failure.
+            Response format matches stealth engine's expected format.
         """
         worker_url = self.config.cloudflare_relay.worker_url
         relay_secret = self.config.cloudflare_relay.relay_secret
 
         if not worker_url or not relay_secret:
-            logger.warning("Cloudflare relay not configured")
+            # Only warn once per session to avoid log spam
+            if not hasattr(self, '_warned_no_config'):
+                logger.warning(
+                    "Cloudflare relay not configured. "
+                    "Set CF_WORKER_URL and CF_RELAY_SECRET env vars. "
+                    "Falling back to direct/Webshare proxies."
+                )
+                self._warned_no_config = True
             return None
 
         try:
@@ -684,8 +692,13 @@ class CloudflareRelayClient:
             if body:
                 payload['body'] = body
 
+            # Send to worker's /relay endpoint (or root for backwards compat)
+            relay_endpoint = worker_url.rstrip('/')
+            if not relay_endpoint.endswith('/relay'):
+                relay_endpoint += '/relay'
+
             resp = session.post(
-                worker_url,
+                relay_endpoint,
                 json=payload,
                 headers={
                     'Content-Type': 'application/json',
@@ -696,14 +709,38 @@ class CloudflareRelayClient:
 
             if resp.status_code == 200:
                 data = resp.json()
-                logger.debug(f"CF Relay: {url} -> {data.get('status', 'unknown')}")
-                return data
+                # Normalize response to match stealth engine format
+                # Worker returns {status, statusText, body, headers}
+                result = {
+                    'status_code': data.get('status', 0),
+                    'text': data.get('body', ''),
+                    'headers': data.get('headers', {}),
+                    'method': 'cf_relay',
+                }
+                logger.debug(
+                    f"CF Relay: {url} -> HTTP {result['status_code']}"
+                )
+                return result
+            elif resp.status_code == 429:
+                logger.warning("CF Relay rate limited (100/min). Backing off.")
+                return None
+            elif resp.status_code == 403:
+                logger.error(
+                    "CF Relay auth failed (403). Check CF_RELAY_SECRET matches."
+                )
+                return None
+            elif resp.status_code == 504:
+                logger.warning(f"CF Relay timeout for {url}")
+                return None
             else:
-                logger.warning(f"CF Relay error: {resp.status_code}")
+                logger.warning(
+                    f"CF Relay error: HTTP {resp.status_code} "
+                    f"for {url}: {resp.text[:200]}"
+                )
                 return None
 
         except Exception as e:
-            logger.error(f"CF Relay request failed: {e}")
+            logger.error(f"CF Relay request failed for {url}: {e}")
             return None
 
 
@@ -1038,13 +1075,10 @@ class StealthHTTPClient:
         """Route request through Cloudflare Worker relay."""
         result = self.cf_relay.relay_request(url, headers, method)
         if result:
-            return {
-                'status_code': result.get('status', 0),
-                'text': result.get('body', ''),
-                'headers': result.get('headers', {}),
-                'url': url,
-                'method': 'cf_relay',
-            }
+            # relay_request already returns normalized format
+            # {status_code, text, headers, method}
+            result['url'] = url
+            return result
         return None
 
     def post(self, url: str, site: str = "",
