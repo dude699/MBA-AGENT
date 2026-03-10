@@ -678,7 +678,6 @@ class TelegramReporter:
                     drop_pending_updates=True,
                     allowed_updates=["message", "callback_query"],
                     poll_interval=1.0,
-                    read_timeout=10,
                 )
                 self._running = True
                 logger.info(

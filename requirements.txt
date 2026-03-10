@@ -19,7 +19,7 @@ lxml>=5.0
 # playwright-stealth>=1.0   # Heavy - lazy install on Render
 
 # === Telegram ===
-python-telegram-bot>=21.0
+python-telegram-bot>=21.0,<23.0
 telethon>=1.36
 
 # === Twitter/X ===
