@@ -917,7 +917,14 @@ class StealthHTTPClient:
 
         # Handle Cloudflare relay
         if proxy_type == ProxyType.CLOUDFLARE:
-            return self._request_via_cf_relay(url, built_headers, "GET")
+            result = self._request_via_cf_relay(url, built_headers, "GET")
+            if result is not None:
+                return result
+            # CF relay not configured or failed — fall back to Webshare proxies
+            logger.debug(
+                f"CF relay unavailable for {site}, falling back to Webshare proxy"
+            )
+            proxy_type = ProxyType.WEBSHARE
 
         # Get proxy
         proxy_url = self.proxy_pool.get_proxy(proxy_type) if proxy_type != ProxyType.DIRECT else None

@@ -189,7 +189,7 @@ class GroqConfig:
 class CerebrasConfig:
     """Configuration for Cerebras AI provider (fast tasks)."""
     api_key: str
-    model: str = "llama-3.3-70b"
+    model: str = "llama3.1-8b"
     base_url: str = "https://api.cerebras.ai/v1"
     max_tokens_default: int = 500
     max_tokens_classify: int = 200
@@ -1614,7 +1614,7 @@ class Config:
         self.cerebras = CerebrasConfig(
             api_key=_get_env(
                 'CEREBRAS_API_KEY', default='',
-                description='Cerebras API key for llama-3.3-70b'
+                description='Cerebras API key for llama3.1-8b'
             ),
         )
 

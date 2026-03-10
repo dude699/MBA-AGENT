@@ -19,7 +19,7 @@ Architecture:
     - Structured JSON output parsing
 
 Providers:
-    Cerebras (llama-3.3-70b):
+    Cerebras (llama3.1-8b):
         - ghost_classify, intent_classify, extract_basics
         - dedup_score, internshala_parse, sector_tag
         - naukri_parse, iimjobs_parse, ats_extract
@@ -1506,11 +1506,11 @@ class AIRouter:
         report = (
             f"📊 <b>API Quota Report</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"🤖 <b>Groq</b> (llama-3.3-70b-versatile)\n"
+            f"🤖 <b>Groq</b> ({self.config.groq.model})\n"
             f"  Day: {groq_usage['day']}/{groq_usage['day_limit']} ({groq_usage['day_pct']}%)\n"
             f"  Hour: {groq_usage['hour']}/{groq_usage['hour_limit']} ({groq_usage['hour_pct']}%)\n"
             f"  Circuit: {health['groq']['circuit_breaker']['state']}\n\n"
-            f"⚡ <b>Cerebras</b> (llama-3.3-70b)\n"
+            f"⚡ <b>Cerebras</b> ({self.config.cerebras.model})\n"
             f"  Day: {cerebras_usage['day']}/{cerebras_usage['day_limit']} ({cerebras_usage['day_pct']}%)\n"
             f"  Hour: {cerebras_usage['hour']}/{cerebras_usage['hour_limit']} ({cerebras_usage['hour_pct']}%)\n"
             f"  Circuit: {health['cerebras']['circuit_breaker']['state']}\n\n"

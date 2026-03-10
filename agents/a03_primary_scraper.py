@@ -674,11 +674,32 @@ class NaukriScraper:
                 auto_delay=True,
             )
 
-            if not response or response.get('status_code') != 200:
+            if not response:
+                logger.warning(
+                    f"[{AGENT_ID}] Naukri '{query}' page {page_no+1}: "
+                    f"no response (stealth engine returned None)"
+                )
+                break
+
+            status_code = response.get('status_code', 0)
+            if status_code != 200:
+                logger.warning(
+                    f"[{AGENT_ID}] Naukri '{query}' page {page_no+1}: "
+                    f"HTTP {status_code}"
+                )
                 break
 
             try:
                 text = response.get('text', '')
+
+                # Detect Cloudflare challenge page
+                if '<html' in text[:500].lower() and 'cloudflare' in text.lower():
+                    logger.warning(
+                        f"[{AGENT_ID}] Naukri blocked by Cloudflare for '{query}'. "
+                        f"Set CF_WORKER_URL and CF_RELAY_SECRET to fix."
+                    )
+                    break
+
                 data = json.loads(text)
                 job_details = data.get('jobDetails', [])
 
@@ -691,7 +712,12 @@ class NaukriScraper:
                         listings.append(listing)
 
             except (json.JSONDecodeError, KeyError) as e:
-                logger.debug(f"Naukri parse error: {e}")
+                # Log enough of the response to diagnose issues
+                text_preview = response.get('text', '')[:200]
+                logger.warning(
+                    f"[{AGENT_ID}] Naukri parse error for '{query}': {e}. "
+                    f"Response preview: {text_preview}"
+                )
                 break
 
         return listings
@@ -906,10 +932,14 @@ class LinkedInDorkScraper:
         """Lazy-load DuckDuckGo search."""
         if self._ddg is None:
             try:
-                from duckduckgo_search import DDGS
+                from ddgs import DDGS
                 self._ddg = DDGS()
             except ImportError:
-                logger.warning("duckduckgo_search not installed")
+                try:
+                    from duckduckgo_search import DDGS
+                    self._ddg = DDGS()
+                except ImportError:
+                    logger.warning(f"[{AGENT_ID}] ddgs not installed (pip install ddgs)")
         return self._ddg
 
     def search_jobs(self, categories: Optional[List[str]] = None,

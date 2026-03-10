@@ -414,11 +414,13 @@ def setup_signal_handlers(app: Application, loop: asyncio.AbstractEventLoop):
     """
     def handle_signal(signum, frame):
         sig_name = signal.Signals(signum).name
-        logger.info(f"Received {sig_name} — EMERGENCY TELEGRAM SHUTDOWN")
+        logger.info(f"Received {sig_name} — GRACEFUL SHUTDOWN INITIATED")
 
         # PRIORITY: Stop Telegram polling AND call /close API to release
         # the server-side session. This is THE critical step for Render
         # redeployments — the new instance needs the polling lock ASAP.
+        # But we do NOT kill running scrape jobs — we let them finish
+        # their current batch commit before the full shutdown.
         if app._telegram:
             async def _emergency_stop_telegram():
                 """Emergency: release polling lock + /close API on SIGTERM."""
@@ -436,8 +438,6 @@ def setup_signal_handlers(app: Application, loop: asyncio.AbstractEventLoop):
                             logger.info("[SIGTERM] Telegram updater STOPPED")
 
                     # Step 2: Call /close API to release server-side session
-                    # This is what actually prevents the Conflict error
-                    # on the new instance.
                     try:
                         import aiohttp
                         token = app._telegram.config.telegram.bot_token
@@ -471,6 +471,17 @@ def setup_signal_handlers(app: Application, loop: asyncio.AbstractEventLoop):
                         get_health_tracker().set_telegram_status(False)
                     except Exception:
                         pass
+
+                    # Step 3: Give running scrape/crawl jobs 10s to finish
+                    # their current batch commit before full shutdown.
+                    # Render gives 30s total grace period — Telegram takes ~5s,
+                    # so we have ~15s for scrapes to commit partial results.
+                    logger.info(
+                        "[SIGTERM] Waiting 8s for running jobs to finish "
+                        "current batch commit..."
+                    )
+                    await asyncio.sleep(8)
+
                     # Now trigger the full graceful shutdown
                     app.request_shutdown()
 

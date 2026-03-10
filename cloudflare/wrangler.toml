@@ -1,0 +1,15 @@
+# ============================================================
+# OPERATION FIRST MOVER v5 — CLOUDFLARE WORKER CONFIG
+# ============================================================
+# Deploy with: cd cloudflare && npx wrangler deploy
+# ============================================================
+
+name = "firstmover-relay"
+main = "relay_worker.js"
+compatibility_date = "2024-01-01"
+
+# Free tier: 100,000 requests/day
+# More than enough for Naukri + other scrapers
+[vars]
+# Set RELAY_SECRET via dashboard or `wrangler secret put RELAY_SECRET`
+# Do NOT put the actual secret here — use the command below instead
