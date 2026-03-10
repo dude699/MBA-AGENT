@@ -173,6 +173,8 @@ class CleanListing:
     ppo_score: float = 0.0
     is_blue_ocean: bool = False
     competition_ratio: float = 0.0
+    category: str = ""
+    posted_days_ago: int = 0
     source: str = ""
     url: str = ""
     description_text: str = ""
@@ -404,6 +406,8 @@ CREATE_TABLES_SQL: List[str] = [
         ppo_score REAL DEFAULT 0.0,
         is_blue_ocean BOOLEAN DEFAULT 0,
         competition_ratio REAL DEFAULT 0.0,
+        category TEXT DEFAULT '',
+        posted_days_ago INTEGER DEFAULT 0,
         source TEXT DEFAULT '',
         url TEXT UNIQUE,
         description_text TEXT DEFAULT '',
@@ -1000,8 +1004,9 @@ class DatabaseManager:
                      stipend_monthly, duration_months, applicants,
                      is_ppo, is_wfh, ghost_score, is_ghost,
                      ppo_score, is_blue_ocean, competition_ratio,
+                     category, posted_days_ago,
                      source, url, description_text, status)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         listing.raw_id, listing.title, listing.company,
@@ -1010,7 +1015,8 @@ class DatabaseManager:
                         listing.applicants, int(listing.is_ppo), int(listing.is_wfh),
                         listing.ghost_score, int(listing.is_ghost),
                         listing.ppo_score, int(listing.is_blue_ocean),
-                        listing.competition_ratio, listing.source,
+                        listing.competition_ratio, listing.category,
+                        listing.posted_days_ago, listing.source,
                         listing.url, listing.description_text, listing.status
                     )
                 )

@@ -79,11 +79,95 @@ TG_MAX_LEN = 4096
 # ============================================================
 
 class ReportFormatter:
-    """Formats data for Telegram HTML display."""
+    """Formats data for Telegram HTML display with rich, professional formatting."""
 
-    @staticmethod
-    def morning_brief(data: Dict) -> str:
-        """Format morning brief report."""
+    # Source emoji mapping
+    SOURCE_EMOJI = {
+        'internshala': '🟢', 'naukri': '🔵', 'linkedin': '🟤',
+        'greenhouse': '🌿', 'lever': '⚙️', 'indeed': '🟠',
+        'iimjobs': '🟡', 'wellfound': '🔶', 'dark_channel': '🌑',
+        'glassdoor': '🟩', 'workday': '🔷', 'smartrecruiters': '💼',
+        'ashby': '🔘', 'twitter_x': '🐦',
+    }
+
+    # Tier label mapping
+    TIER_LABELS = {
+        1: 'T1 Elite', 2: 'T2 MNC', 3: 'T3 Unicorn',
+        4: 'T4 Startup', 5: 'T5 Niche',
+    }
+
+    @classmethod
+    def _format_listing_line(cls, i: int, l: Dict, detailed: bool = False) -> str:
+        """Format a single listing line with all professional details."""
+        title = l.get('title', 'Unknown')
+        company = l.get('company', 'Unknown')
+        ppo = l.get('ppo_score', 0) or 0
+        stipend = l.get('stipend_monthly', 0) or 0
+        location = l.get('location', '') or ''
+        source = l.get('source', '') or ''
+        url = l.get('url', '') or ''
+        lid = l.get('id', 0)
+        applicants = l.get('applicants', 0) or 0
+        duration = l.get('duration_months', 0) or 0
+        is_ppo = l.get('is_ppo', False)
+        is_wfh = l.get('is_wfh', False)
+        is_bo = l.get('is_blue_ocean', False)
+        tier = l.get('tier')
+        category = l.get('category', '') or ''
+
+        # Tags
+        tags = []
+        if is_ppo: tags.append('PPO')
+        if is_wfh: tags.append('WFH')
+        if is_bo: tags.append('Blue Ocean')
+        tag_str = ' | '.join(tags) if tags else ''
+
+        # Source emoji
+        src_emoji = cls.SOURCE_EMOJI.get(source, '📡')
+
+        # Tier label
+        tier_label = cls.TIER_LABELS.get(tier, '') if tier else ''
+
+        # Build main line
+        line = f"<b>{i}. {title}</b>\n"
+        line += f"   🏢 {company}"
+        if tier_label:
+            line += f" [{tier_label}]"
+        line += "\n"
+
+        # Details row
+        details = []
+        if location:
+            details.append(f"📍 {location[:30]}")
+        if stipend > 0:
+            details.append(f"💰 {stipend:,.0f}/mo")
+        elif stipend == 0 and source not in ('greenhouse', 'lever', 'ashby'):
+            details.append(f"💰 Unpaid/TBD")
+        if duration > 0:
+            details.append(f"⏱ {duration}mo")
+        if applicants > 0:
+            details.append(f"👥 {applicants}")
+        if details:
+            line += f"   {' | '.join(details)}\n"
+
+        # Score + source row
+        score_parts = [f"📊 PPO: {ppo:.1f}"]
+        if tag_str:
+            score_parts.append(tag_str)
+        score_parts.append(f"{src_emoji} {source}")
+        line += f"   {' | '.join(score_parts)}\n"
+
+        # URL row
+        if url:
+            line += f"   🔗 <a href=\"{url}\">Apply Link</a> | /package {lid}\n"
+        else:
+            line += f"   /package {lid} | /cover {lid}\n"
+
+        return line
+
+    @classmethod
+    def morning_brief(cls, data: Dict) -> str:
+        """Format morning brief report with professional details."""
         total_new = data.get('total_new', 0)
         after_ghost = data.get('after_ghost_filter', 0)
         blue_ocean = data.get('blue_ocean_count', 0)
@@ -93,39 +177,37 @@ class ReportFormatter:
         urgent = data.get('urgent_deadlines', [])
 
         lines = [
-            f"🌅 <b>MORNING BRIEF — {datetime.now(IST).strftime('%d %b %Y')}</b>",
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+            f"🌅 <b>MORNING BRIEF — {datetime.now(IST).strftime('%d %b %Y, %I:%M %p IST')}</b>",
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
             f"",
-            f"📊 Total New: {total_new} | After Ghost Filter: {after_ghost}",
-            f"🌊 Blue Ocean Alerts: {blue_ocean}",
-            f"📡 Intent Signals Fired: {signals}",
+            f"📊 <b>Pipeline Summary</b>",
+            f"  New listings (24h): <b>{total_new}</b>",
+            f"  After ghost filter: <b>{after_ghost}</b>",
+            f"  Blue Ocean alerts: <b>{blue_ocean}</b> 🌊",
+            f"  Intent signals: <b>{signals}</b> 📡",
             f"",
-            f"🏆 <b>TOP 10 BY PPO SCORE:</b>",
         ]
 
-        for i, listing in enumerate(top_10[:10], 1):
-            title = listing.get('title', 'Unknown')[:40]
-            company = listing.get('company', 'Unknown')[:25]
-            ppo = listing.get('ppo_score', 0)
-            bo = " 🌊" if listing.get('is_blue_ocean') else ""
-            ppo_tag = " 🎯" if listing.get('is_ppo') else ""
-            stipend = listing.get('stipend_monthly', 0) or 0
-            lines.append(
-                f"{i}. <b>{title}</b> @ {company}\n"
-                f"   PPO: {ppo:.1f}{bo}{ppo_tag} | ₹{stipend:,.0f}/mo"
-            )
+        if top_10:
+            lines.append(f"🏆 <b>TOP {len(top_10[:10])} BY PPO SCORE</b>")
+            lines.append(f"")
+            for i, listing in enumerate(top_10[:10], 1):
+                lines.append(cls._format_listing_line(i, listing))
+        else:
+            lines.append("📭 No scored listings yet. Run /run pipeline to start.")
 
         if dark:
-            lines.append(f"\n🌑 <b>Dark Channel:</b> {len(dark)} new finds")
+            lines.append(f"🌑 <b>Dark Channel:</b> {len(dark)} new finds")
 
         if urgent:
-            lines.append(f"\n⏰ <b>Urgent Deadlines (48h):</b> {len(urgent)}")
+            lines.append(f"⏰ <b>Urgent (closing soon):</b> {len(urgent)} listings")
 
-        lines.append(f"\n💡 Use /top 25 for extended list | /ocean for Blue Ocean")
+        lines.append(f"")
+        lines.append(f"💡 /top 25 for more | /ocean for Blue Ocean | /export for Excel")
         return '\n'.join(lines)
 
-    @staticmethod
-    def evening_summary(data: Dict) -> str:
+    @classmethod
+    def evening_summary(cls, data: Dict) -> str:
         """Format evening summary report."""
         today_total = data.get('today_total', 0)
         afternoon_new = data.get('afternoon_new', 0)
@@ -133,20 +215,21 @@ class ReportFormatter:
         dark_finds = data.get('dark_finds', 0)
 
         return (
-            f"🌆 <b>EVENING SUMMARY — {datetime.now(IST).strftime('%d %b %Y')}</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🌆 <b>EVENING SUMMARY — {datetime.now(IST).strftime('%d %b %Y, %I:%M %p IST')}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             f"\n"
-            f"📊 Today's Total: {today_total}\n"
-            f"🆕 Afternoon New: {afternoon_new}\n"
-            f"📝 Applied Today: {applied_today}\n"
-            f"🌑 Dark Channel: {dark_finds}\n"
+            f"📊 <b>Today's Numbers</b>\n"
+            f"  Total clean listings: <b>{today_total}</b>\n"
+            f"  Afternoon new: <b>{afternoon_new}</b>\n"
+            f"  Applied today: <b>{applied_today}</b> 📝\n"
+            f"  Dark channel finds: <b>{dark_finds}</b>\n"
             f"\n"
-            f"💡 Use /stats for weekly funnel | /health for system status"
+            f"💡 /stats for weekly funnel | /health for system status"
         )
 
-    @staticmethod
-    def listing_detail(listing: Dict) -> str:
-        """Format a single listing for detailed view."""
+    @classmethod
+    def listing_detail(cls, listing: Dict) -> str:
+        """Format a single listing for detailed view with all information."""
         title = listing.get('title', 'Unknown')
         company = listing.get('company', 'Unknown')
         location = listing.get('location', 'N/A')
@@ -161,32 +244,56 @@ class ReportFormatter:
         source = listing.get('source', 'Unknown')
         url = listing.get('url', '')
         lid = listing.get('id', 0)
+        category = listing.get('category', '')
+        tier = listing.get('tier')
+        sector = listing.get('sector', '')
+        description = listing.get('description_text', '')
 
+        # Tags
         tags = []
-        if is_ppo: tags.append("🎯PPO")
-        if is_wfh: tags.append("🏠WFH")
-        if is_bo: tags.append("🌊Blue Ocean")
-        tag_str = ' '.join(tags) if tags else "—"
+        if is_ppo: tags.append("🎯 PPO Possible")
+        if is_wfh: tags.append("🏠 Work From Home")
+        if is_bo: tags.append("🌊 Blue Ocean")
+        tag_str = '\n'.join(f"  {t}" for t in tags) if tags else "  None"
+
+        # Tier info
+        tier_label = cls.TIER_LABELS.get(tier, 'Unknown') if tier else 'Unknown'
+        src_emoji = cls.SOURCE_EMOJI.get(source, '📡')
+
+        # Brief JD snippet
+        jd_snippet = ''
+        if description:
+            clean_desc = description.replace('\n', ' ').strip()[:300]
+            jd_snippet = f"\n📝 <b>Description</b>\n<i>{clean_desc}...</i>\n"
 
         return (
-            f"📋 <b>Listing #{lid}</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"📋 <b>LISTING #{lid} — FULL DETAILS</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             f"\n"
             f"<b>{title}</b>\n"
-            f"🏢 {company}\n"
+            f"🏢 {company} [{tier_label}]\n"
             f"📍 {location}\n"
-            f"💰 ₹{stipend:,.0f}/month\n"
-            f"⏱ {duration} months\n"
-            f"👥 {applicants} applicants\n"
+            f"🏭 Sector: {sector or 'N/A'} | Category: {category or 'N/A'}\n"
             f"\n"
-            f"📊 PPO Score: {ppo_score:.1f}/100\n"
-            f"👻 Ghost Score: {ghost_score:.0f}/100\n"
-            f"🏷 Tags: {tag_str}\n"
-            f"📡 Source: {source}\n"
+            f"💰 Stipend: {'₹{:,.0f}/month'.format(stipend) if stipend > 0 else 'Not specified'}\n"
+            f"⏱ Duration: {f'{duration} months' if duration > 0 else 'Not specified'}\n"
+            f"👥 Applicants: {applicants if applicants > 0 else 'Not available'}\n"
             f"\n"
-            f"🔗 {url[:80] if url else 'No URL'}\n"
+            f"📊 <b>Scores</b>\n"
+            f"  PPO Score: <b>{ppo_score:.1f}</b>/100\n"
+            f"  Ghost Score: {ghost_score:.0f}/100\n"
             f"\n"
-            f"Commands: /ats {lid} | /cover {lid} | /apply {lid}"
+            f"🏷 <b>Tags</b>\n{tag_str}\n"
+            f"\n"
+            f"📡 Source: {src_emoji} {source}\n"
+            f"🔗 {f'<a href=\"{url}\">Open Listing</a>' if url else 'No URL available'}\n"
+            f"{jd_snippet}"
+            f"\n"
+            f"⚡ <b>Actions</b>\n"
+            f"  /ats {lid} — ATS simulation\n"
+            f"  /cover {lid} — Generate cover letter\n"
+            f"  /package {lid} — Full application package\n"
+            f"  /apply {lid} — Mark as applied"
         )
 
     @staticmethod
@@ -594,6 +701,9 @@ class TelegramReporter:
             'schedule': self._cmd_schedule,
             'status': self._cmd_status,
             'cancel': self._cmd_cancel,
+            'queue': self._cmd_queue,
+            'autoapply': self._cmd_autoapply,
+            'appstatus': self._cmd_appstatus,
         }
 
         for cmd_name, handler_fn in commands.items():
@@ -950,8 +1060,8 @@ class TelegramReporter:
     async def _cmd_help(self, update, context):
         """Full command reference."""
         msg = (
-            "📖 <b>Command Reference (26 Commands)</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "📖 <b>Command Reference (29 Commands)</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
             "📊 <b>Reports</b>\n"
             "/morning — Full morning brief\n"
             "/top [N] — Top N by PPO score (default 10)\n"
@@ -961,26 +1071,31 @@ class TelegramReporter:
             "/stats — Weekly funnel stats\n\n"
             "🔍 <b>Search</b>\n"
             "/internshala [query] — Live search\n"
-            "/refresh — Force re-scrape all sources\n\n"
+            "/refresh — Force re-scrape all sources\n"
+            "/export [N] — Export to Excel\n\n"
             "📝 <b>Application</b>\n"
             "/package [id] — Full app package\n"
             "/ats [id] — ATS keyword simulation\n"
-            "/cover [id] — Tailored cover letter\n"
+            "/cover [id] — AI cover letter (no AI markers)\n"
             "/network [company] — Alumni map\n"
             "/apply [id] — Mark as applied\n"
             "/outcome [id] [result] — Log result\n\n"
+            "🤖 <b>Auto-Apply (A-13)</b>\n"
+            "/queue [id] — Add to auto-apply queue\n"
+            "/queue top [N] — Queue top N listings\n"
+            "/autoapply [N] — Run auto-apply (max N)\n"
+            "/appstatus — Application history\n\n"
             "🏢 <b>Company Intel</b>\n"
             "/cirs [company] — CIRS breakdown\n"
             "/research [company] — Full research\n\n"
-            "🚀 <b>Manual Agent Control</b>\n"
+            "🚀 <b>Agent Control</b>\n"
             "/run — Run agents NOW (see /run for options)\n"
-            "/schedule — Full 24h schedule + next runs\n"
-            "/status — Currently running background tasks\n"
-            "/cancel [task] — Cancel a running task\n\n"
+            "/schedule — Full 24h schedule\n"
+            "/status — Running tasks\n"
+            "/cancel [task] — Cancel task\n\n"
             "⚙️ <b>System</b>\n"
             "/health — Agent heartbeats\n"
             "/quota — API usage\n"
-            "/export — Export listings\n"
             "/settings — Preferences"
         )
         await update.message.reply_text(msg, parse_mode='HTML')
@@ -993,7 +1108,7 @@ class TelegramReporter:
         await self._send_long_message(update, msg)
 
     async def _cmd_top(self, update, context):
-        """Top N listings by PPO score."""
+        """Top N listings by PPO score with professional formatting."""
         n = 10
         if context.args:
             try:
@@ -1004,58 +1119,47 @@ class TelegramReporter:
 
         listings = self.db.get_top_listings(n=n)
         if not listings:
-            await update.message.reply_text("📊 No listings available yet.")
+            await update.message.reply_text(
+                "📊 No listings available yet.\n"
+                "Run /run pipeline to scrape and process listings."
+            )
             return
 
         lines = [
             f"🏆 <b>Top {len(listings)} by PPO Score</b>",
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━", "",
+            f"<i>{datetime.now(IST).strftime('%d %b %Y, %I:%M %p IST')}</i>",
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "",
         ]
 
         for i, l in enumerate(listings, 1):
-            ppo = l.get('ppo_score', 0)
-            bo = " 🌊" if l.get('is_blue_ocean') else ""
-            ppo_tag = " 🎯" if l.get('is_ppo') else ""
-            stipend = l.get('stipend_monthly', 0) or 0
-            lid = l.get('id', 0)
-            title = l.get('title', '')[:40]
-            company = l.get('company', '')[:25]
-            location = l.get('location', '')[:20]
+            lines.append(self.formatter._format_listing_line(i, l))
 
-            lines.append(
-                f"{i}. <b>{title}</b> @ {company}\n"
-                f"   PPO: {ppo:.1f}{bo}{ppo_tag} | ₹{stipend:,.0f} | "
-                f"{location} | #{lid}"
-            )
-
+        lines.append(f"💡 /export {n} for Excel | /ocean for Blue Ocean")
         await self._send_long_message(update, '\n'.join(lines))
 
     async def _cmd_ocean(self, update, context):
-        """Blue Ocean listings."""
+        """Blue Ocean listings with professional formatting."""
         listings = self.db.get_blue_ocean_listings(limit=15)
         if not listings:
-            await update.message.reply_text("🌊 No Blue Ocean listings found yet.\nCriteria: Prestige ≥ 60 AND Applicants ≤ 35")
+            await update.message.reply_text(
+                "🌊 No Blue Ocean listings found yet.\n"
+                "Criteria: High prestige company + Low applicants (<35)\n"
+                "Run /run pipeline to discover new opportunities."
+            )
             return
 
         lines = [
             "🌊 <b>Blue Ocean Listings</b>",
-            "<i>High prestige + Low competition</i>",
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━", "",
+            "<i>High prestige companies + Low competition</i>",
+            f"<i>{datetime.now(IST).strftime('%d %b %Y, %I:%M %p IST')}</i>",
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "",
         ]
 
         for i, l in enumerate(listings, 1):
-            lid = l.get('id', 0)
-            title = l.get('title', '')[:40]
-            company = l.get('company', '')[:25]
-            applicants = l.get('applicants', 0) or 0
-            ppo = l.get('ppo_score', 0)
-            stipend = l.get('stipend_monthly', 0) or 0
+            lines.append(self.formatter._format_listing_line(i, l))
 
-            lines.append(
-                f"{i}. <b>{title}</b> @ {company}\n"
-                f"   👥 {applicants} applicants | PPO: {ppo:.1f} | ₹{stipend:,.0f} | #{lid}"
-            )
-
+        lines.append("💡 These have the best effort-to-reward ratio. Apply NOW!")
+        lines.append("/export for Excel with all details")
         await self._send_long_message(update, '\n'.join(lines))
 
     async def _cmd_internshala(self, update, context):
@@ -1174,7 +1278,7 @@ class TelegramReporter:
             await update.message.reply_text(f"❌ Error: {e}")
 
     async def _cmd_cover(self, update, context):
-        """Generate cover letter."""
+        """Generate cover letter using A-13 engine."""
         lid = self._parse_listing_id(context.args)
         if lid is None:
             await update.message.reply_text("Usage: /cover <listing_id>")
@@ -1185,19 +1289,23 @@ class TelegramReporter:
             await update.message.reply_text(f"❌ Listing #{lid} not found")
             return
 
-        await update.message.reply_text(f"✍️ Generating cover letter...")
+        await update.message.reply_text(f"✍️ Generating cover letter for #{lid}...")
 
         try:
-            profile = {'college': self.db.get_setting('college', 'a top MBA program')}
-            response = self.router.generate_cover_letter(listing, profile)
-            if response.success:
-                company = listing.get('company', '')
-                msg = (
-                    f"✍️ <b>Cover Letter — {company}</b>\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-                    f"{response.content[:3800]}"
-                )
-                await self._send_long_message(update, msg)
+            from agents.a13_auto_apply import get_auto_apply_orchestrator
+            orchestrator = get_auto_apply_orchestrator()
+            cover_letter = orchestrator.generate_cover_letter_only(lid)
+
+            company = listing.get('company', '')
+            title = listing.get('title', '')
+            msg = (
+                f"✍️ <b>Cover Letter</b>\n"
+                f"<b>{title}</b> @ {company}\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"{cover_letter[:3800]}\n\n"
+                f"💡 /queue {lid} to add to auto-apply queue"
+            )
+            await self._send_long_message(update, msg)
             else:
                 await update.message.reply_text(f"❌ Failed: {response.error}")
         except Exception as e:
@@ -1385,7 +1493,7 @@ class TelegramReporter:
             await update.message.reply_text(f"❌ Error: {e}")
 
     async def _cmd_export(self, update, context):
-        """Export top listings."""
+        """Export top listings as Excel file sent via Telegram."""
         n = 50
         if context.args:
             try:
@@ -1393,25 +1501,135 @@ class TelegramReporter:
             except ValueError:
                 pass
 
-        listings = self.db.get_top_listings(n=min(n, 100))
+        listings = self.db.get_top_listings(n=min(n, 200))
         if not listings:
             await update.message.reply_text("📤 No listings to export")
             return
 
-        lines = ["RANK | TITLE | COMPANY | PPO | STIPEND | LOCATION | SOURCE | URL"]
-        lines.append("-" * 100)
+        await update.message.reply_text(f"📊 Generating Excel report with {len(listings)} listings...")
 
-        for i, l in enumerate(listings, 1):
-            lines.append(
-                f"{i} | {l.get('title', '')[:30]} | {l.get('company', '')[:20]} | "
-                f"{l.get('ppo_score', 0):.1f} | ₹{l.get('stipend_monthly', 0) or 0:,.0f} | "
-                f"{l.get('location', '')[:15]} | {l.get('source', '')} | {l.get('url', '')[:50]}"
+        try:
+            import openpyxl
+            from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+            from openpyxl.utils import get_column_letter
+            import tempfile
+
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "MBA Internship Listings"
+
+            # Styles
+            header_font = Font(name='Calibri', bold=True, size=11, color='FFFFFF')
+            header_fill = PatternFill(start_color='1F4E79', end_color='1F4E79', fill_type='solid')
+            header_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+            thin_border = Border(
+                left=Side(style='thin'), right=Side(style='thin'),
+                top=Side(style='thin'), bottom=Side(style='thin')
             )
+            ppo_fill = PatternFill(start_color='E6F3E6', end_color='E6F3E6', fill_type='solid')
+            bo_fill = PatternFill(start_color='E6F0FF', end_color='E6F0FF', fill_type='solid')
 
-        text = '\n'.join(lines)
-        # Split into chunks for Telegram
-        for i in range(0, len(text), TG_MAX_LEN):
-            await update.message.reply_text(text[i:i + TG_MAX_LEN])
+            # Headers
+            headers = [
+                'Rank', 'Title', 'Company', 'Location', 'PPO Score',
+                'Stipend (INR/mo)', 'Duration (mo)', 'Applicants',
+                'PPO?', 'WFH?', 'Blue Ocean?', 'Source', 'Category',
+                'Company Tier', 'Sector', 'URL'
+            ]
+            for col_idx, header in enumerate(headers, 1):
+                cell = ws.cell(row=1, column=col_idx, value=header)
+                cell.font = header_font
+                cell.fill = header_fill
+                cell.alignment = header_align
+                cell.border = thin_border
+
+            # Data rows
+            tier_labels = {1: 'T1 Elite', 2: 'T2 MNC', 3: 'T3 Unicorn', 4: 'T4 Startup', 5: 'T5 Niche'}
+            for row_idx, l in enumerate(listings, 2):
+                tier = l.get('tier')
+                is_bo = l.get('is_blue_ocean', False)
+                ppo_score = l.get('ppo_score', 0)
+
+                row_data = [
+                    row_idx - 1,
+                    l.get('title', ''),
+                    l.get('company', ''),
+                    l.get('location', ''),
+                    round(ppo_score, 1),
+                    l.get('stipend_monthly', 0) or 0,
+                    l.get('duration_months', 0) or 0,
+                    l.get('applicants', 0) or 0,
+                    'Yes' if l.get('is_ppo') else 'No',
+                    'Yes' if l.get('is_wfh') else 'No',
+                    'Yes' if is_bo else 'No',
+                    l.get('source', ''),
+                    l.get('category', ''),
+                    tier_labels.get(tier, 'Unknown') if tier else 'Unknown',
+                    l.get('sector', ''),
+                    l.get('url', ''),
+                ]
+
+                for col_idx, value in enumerate(row_data, 1):
+                    cell = ws.cell(row=row_idx, column=col_idx, value=value)
+                    cell.border = thin_border
+                    if col_idx == 5 and ppo_score >= 70:  # High PPO highlight
+                        cell.fill = ppo_fill
+                    if is_bo:
+                        cell.fill = bo_fill
+
+            # Auto-fit column widths
+            col_widths = [6, 40, 25, 20, 10, 14, 12, 12, 6, 6, 10, 14, 18, 14, 14, 50]
+            for i, width in enumerate(col_widths, 1):
+                ws.column_dimensions[get_column_letter(i)].width = width
+
+            # Freeze header row
+            ws.freeze_panes = 'A2'
+
+            # Auto-filter
+            ws.auto_filter.ref = ws.dimensions
+
+            # Save to temp file
+            date_str = datetime.now(IST).strftime('%Y-%m-%d_%H%M')
+            filename = f"MBA_Listings_Top{len(listings)}_{date_str}.xlsx"
+
+            with tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False) as tmp:
+                wb.save(tmp.name)
+                tmp_path = tmp.name
+
+            # Send file via Telegram
+            with open(tmp_path, 'rb') as f:
+                await update.message.reply_document(
+                    document=f,
+                    filename=filename,
+                    caption=(
+                        f"📊 <b>MBA Internship Report</b>\n"
+                        f"Generated: {datetime.now(IST).strftime('%d %b %Y %I:%M %p IST')}\n"
+                        f"Listings: {len(listings)} | Sorted by PPO Score"
+                    ),
+                    parse_mode='HTML'
+                )
+
+            # Cleanup
+            import os as _os
+            _os.unlink(tmp_path)
+
+        except ImportError:
+            # openpyxl not available, fall back to text export
+            lines = ["RANK | TITLE | COMPANY | PPO | STIPEND | LOCATION | SOURCE | URL"]
+            lines.append("-" * 100)
+            for i, l in enumerate(listings, 1):
+                lines.append(
+                    f"{i} | {l.get('title', '')[:30]} | {l.get('company', '')[:20]} | "
+                    f"{l.get('ppo_score', 0):.1f} | {l.get('stipend_monthly', 0) or 0:,.0f} | "
+                    f"{l.get('location', '')[:15]} | {l.get('source', '')} | {l.get('url', '')[:50]}"
+                )
+            text = '\n'.join(lines)
+            for i in range(0, len(text), TG_MAX_LEN):
+                await update.message.reply_text(text[i:i + TG_MAX_LEN])
+
+        except Exception as e:
+            logger.error(f"[{AGENT_ID}] Export error: {e}")
+            await update.message.reply_text(f"❌ Export failed: {e}")
 
     async def _cmd_settings(self, update, context):
         """User preferences."""
@@ -1884,6 +2102,141 @@ class TelegramReporter:
                 await update.message.reply_text(
                     f"Task '{task_name}' already finished."
                 )
+
+    # ================================================================
+    # /queue COMMAND — ADD TO AUTO-APPLY QUEUE
+    # ================================================================
+
+    async def _cmd_queue(self, update, context):
+        """Queue a listing for auto-apply or queue top N."""
+        try:
+            from agents.a13_auto_apply import get_auto_apply_orchestrator
+            orchestrator = get_auto_apply_orchestrator()
+
+            if not context.args:
+                # Show queue status
+                status_msg = orchestrator.get_queue_status()
+                await self._send_long_message(update, status_msg)
+                return
+
+            arg = context.args[0].lower()
+
+            if arg == 'top':
+                # Queue top N by PPO score
+                n = 10
+                if len(context.args) > 1:
+                    try:
+                        n = int(context.args[1])
+                    except ValueError:
+                        pass
+                queued = orchestrator.queue_manager.queue_top_listings(n=n)
+                await update.message.reply_text(
+                    f"📬 Queued {queued} top listings for auto-apply.\n"
+                    f"Use /autoapply to start processing."
+                )
+            else:
+                # Queue specific listing
+                try:
+                    lid = int(arg)
+                except ValueError:
+                    await update.message.reply_text("Usage: /queue <listing_id> or /queue top [N]")
+                    return
+
+                result = orchestrator.queue_and_confirm(lid)
+                if 'error' in result:
+                    await update.message.reply_text(f"❌ {result['error']}")
+                    return
+
+                msg = (
+                    f"📬 <b>Queued for Auto-Apply</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                    f"<b>{result['title']}</b>\n"
+                    f"🏢 {result['company']}\n"
+                    f"📡 Platform: {result['platform']}\n\n"
+                    f"📝 <b>Cover Letter Preview:</b>\n"
+                    f"<i>{result['cover_letter_preview'][:300]}...</i>\n\n"
+                    f"Use /autoapply to submit queued applications."
+                )
+                await self._send_long_message(update, msg)
+
+        except Exception as e:
+            logger.error(f"[{AGENT_ID}] Queue error: {e}")
+            await update.message.reply_text(f"❌ Error: {e}")
+
+    # ================================================================
+    # /autoapply COMMAND — RUN AUTO-APPLY SESSION
+    # ================================================================
+
+    async def _cmd_autoapply(self, update, context):
+        """Run auto-apply on queued applications."""
+        try:
+            from agents.a13_auto_apply import get_auto_apply_orchestrator
+            orchestrator = get_auto_apply_orchestrator()
+
+            max_apps = 5
+            if context.args:
+                try:
+                    max_apps = min(int(context.args[0]), 15)
+                except ValueError:
+                    pass
+
+            await update.message.reply_text(
+                f"🚀 Starting auto-apply (max {max_apps} applications)...\n"
+                f"This may take a few minutes."
+            )
+
+            # Run in background
+            import asyncio
+            loop = asyncio.get_event_loop()
+            stats = await loop.run_in_executor(
+                None, lambda: orchestrator.run_auto_apply(max_apps=max_apps)
+            )
+
+            await self._send_long_message(update, stats.to_telegram_msg())
+
+        except Exception as e:
+            logger.error(f"[{AGENT_ID}] Auto-apply error: {e}")
+            await update.message.reply_text(f"❌ Auto-apply error: {e}")
+
+    # ================================================================
+    # /appstatus COMMAND — APPLICATION HISTORY
+    # ================================================================
+
+    async def _cmd_appstatus(self, update, context):
+        """Show application history and stats."""
+        try:
+            history = self.db.get_application_history(limit=15)
+            stats = self.db.get_application_stats()
+
+            lines = [
+                f"📝 <b>Application History</b>",
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+                f"",
+                f"✅ Applied: {stats.get('applied', 0)}",
+                f"❌ Failed: {stats.get('failed', 0)}",
+                f"📬 Queued: {stats.get('queued', 0)}",
+                f"📊 Today: {stats.get('applied_today', 0)}",
+                f"",
+            ]
+
+            if history:
+                lines.append("<b>Recent Applications:</b>")
+                for i, app in enumerate(history[:10], 1):
+                    status_emoji = '✅' if app.get('status') == 'applied' else '❌'
+                    title = app.get('title', '')[:35]
+                    company = app.get('company', '')[:20]
+                    applied_at = app.get('applied_at', '')[:10]
+                    lines.append(
+                        f"{i}. {status_emoji} {title} @ {company}"
+                    )
+                    if applied_at:
+                        lines.append(f"   📅 {applied_at}")
+
+            lines.append(f"\n💡 /queue to add | /autoapply to run")
+            await self._send_long_message(update, '\n'.join(lines))
+
+        except Exception as e:
+            await update.message.reply_text(f"❌ Error: {e}")
 
     # ================================================================
     # /schedule COMMAND — SHOW SCHEDULE
