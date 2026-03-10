@@ -1,6 +1,6 @@
 """
 ============================================================
-AGENT A-12: TELEGRAM REPORTER / COMMAND CENTER — INDUSTRIAL GRADE
+AGENT A-12: TELEGRAM REPORTER / COMMAND CENTER — INDUSTRIAL GRADE v5.1
 ============================================================
 The user-facing interface — handles 26 Telegram commands,
 morning/evening reports, real-time alerts, inline keyboards,
@@ -45,6 +45,7 @@ import time
 import asyncio
 import signal
 import traceback
+import functools
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 
@@ -72,6 +73,38 @@ VALID_OUTCOMES = ['applied', 'shortlisted', 'interview', 'rejected', 'offer', 'p
 
 # Message length limit for Telegram
 TG_MAX_LEN = 4096
+
+
+# ============================================================
+# ERROR BOUNDARY DECORATOR
+# ============================================================
+
+def command_error_boundary(func):
+    """
+    Industrial-grade error boundary for Telegram command handlers.
+    Catches ALL exceptions and sends a user-friendly error message
+    instead of silently failing or crashing the bot.
+    """
+    @functools.wraps(func)
+    async def wrapper(self, update, context):
+        try:
+            return await func(self, update, context)
+        except Exception as e:
+            cmd_name = func.__name__.replace('_cmd_', '/')
+            error_msg = str(e)[:200]
+            logger.error(
+                f"[{AGENT_ID}] Command {cmd_name} failed: "
+                f"{type(e).__name__}: {error_msg}"
+            )
+            logger.debug(f"[{AGENT_ID}] {cmd_name} traceback:\n{traceback.format_exc()[-500:]}")
+            try:
+                await update.message.reply_text(
+                    f"❌ Error in {cmd_name}: {error_msg}\n\n"
+                    f"This has been logged. Try again or use /health to check system status."
+                )
+            except Exception:
+                pass  # Can't even send error message — Telegram might be down
+    return wrapper
 
 
 # ============================================================
@@ -1037,6 +1070,7 @@ class TelegramReporter:
     # COMMAND HANDLERS — 22 Commands
     # ================================================================
 
+    @command_error_boundary
     async def _cmd_start(self, update, context):
         """Welcome message and setup wizard."""
         msg = (
@@ -1057,6 +1091,7 @@ class TelegramReporter:
         )
         await update.message.reply_text(msg, parse_mode='HTML')
 
+    @command_error_boundary
     async def _cmd_help(self, update, context):
         """Full command reference."""
         msg = (
@@ -1100,6 +1135,7 @@ class TelegramReporter:
         )
         await update.message.reply_text(msg, parse_mode='HTML')
 
+    @command_error_boundary
     async def _cmd_morning(self, update, context):
         """Morning brief report."""
         await update.message.reply_text("🌅 Generating morning brief...")
@@ -1107,6 +1143,7 @@ class TelegramReporter:
         msg = self.formatter.morning_brief(data)
         await self._send_long_message(update, msg)
 
+    @command_error_boundary
     async def _cmd_top(self, update, context):
         """Top N listings by PPO score with professional formatting."""
         n = 10
@@ -1137,6 +1174,7 @@ class TelegramReporter:
         lines.append(f"💡 /export {n} for Excel | /ocean for Blue Ocean")
         await self._send_long_message(update, '\n'.join(lines))
 
+    @command_error_boundary
     async def _cmd_ocean(self, update, context):
         """Blue Ocean listings with professional formatting."""
         listings = self.db.get_blue_ocean_listings(limit=15)
@@ -1162,6 +1200,7 @@ class TelegramReporter:
         lines.append("/export for Excel with all details")
         await self._send_long_message(update, '\n'.join(lines))
 
+    @command_error_boundary
     async def _cmd_internshala(self, update, context):
         """Live Internshala search."""
         if not context.args:
@@ -1195,6 +1234,7 @@ class TelegramReporter:
         except Exception as e:
             await update.message.reply_text(f"❌ Search failed: {e}")
 
+    @command_error_boundary
     async def _cmd_dark(self, update, context):
         """Dark channel finds."""
         try:
@@ -1206,6 +1246,7 @@ class TelegramReporter:
         except Exception as e:
             await update.message.reply_text(f"❌ Error: {e}")
 
+    @command_error_boundary
     async def _cmd_signals(self, update, context):
         """Active intent signals."""
         try:
@@ -1216,6 +1257,7 @@ class TelegramReporter:
         except Exception as e:
             await update.message.reply_text(f"❌ Error: {e}")
 
+    @command_error_boundary
     async def _cmd_package(self, update, context):
         """Generate full application package."""
         lid = self._parse_listing_id(context.args)
@@ -1252,6 +1294,7 @@ class TelegramReporter:
         except Exception as e:
             await update.message.reply_text(f"❌ Error: {e}")
 
+    @command_error_boundary
     async def _cmd_ats(self, update, context):
         """ATS keyword simulation."""
         lid = self._parse_listing_id(context.args)
@@ -1277,6 +1320,7 @@ class TelegramReporter:
         except Exception as e:
             await update.message.reply_text(f"❌ Error: {e}")
 
+    @command_error_boundary
     async def _cmd_cover(self, update, context):
         """Generate cover letter using A-13 engine."""
         lid = self._parse_listing_id(context.args)
@@ -1296,21 +1340,27 @@ class TelegramReporter:
             orchestrator = get_auto_apply_orchestrator()
             cover_letter = orchestrator.generate_cover_letter_only(lid)
 
-            company = listing.get('company', '')
-            title = listing.get('title', '')
-            msg = (
-                f"✍️ <b>Cover Letter</b>\n"
-                f"<b>{title}</b> @ {company}\n"
-                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"{cover_letter[:3800]}\n\n"
-                f"💡 /queue {lid} to add to auto-apply queue"
-            )
-            await self._send_long_message(update, msg)
+            if cover_letter:
+                company = listing.get('company', '')
+                title = listing.get('title', '')
+                msg = (
+                    f"✍️ <b>Cover Letter</b>\n"
+                    f"<b>{title}</b> @ {company}\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                    f"{cover_letter[:3800]}\n\n"
+                    f"💡 /queue {lid} to add to auto-apply queue"
+                )
+                await self._send_long_message(update, msg)
             else:
-                await update.message.reply_text(f"❌ Failed: {response.error}")
+                await update.message.reply_text(
+                    f"❌ Failed to generate cover letter for #{lid}. "
+                    f"Check AI router quota with /quota."
+                )
         except Exception as e:
-            await update.message.reply_text(f"❌ Error: {e}")
+            logger.error(f"[{AGENT_ID}] Cover letter generation error for #{lid}: {e}")
+            await update.message.reply_text(f"❌ Error generating cover letter: {e}")
 
+    @command_error_boundary
     async def _cmd_network(self, update, context):
         """Alumni/network mapping."""
         if not context.args:
@@ -1336,6 +1386,7 @@ class TelegramReporter:
         except Exception as e:
             await update.message.reply_text(f"❌ Error: {e}")
 
+    @command_error_boundary
     async def _cmd_apply(self, update, context):
         """Mark listing as applied."""
         lid = self._parse_listing_id(context.args)
@@ -1367,6 +1418,7 @@ class TelegramReporter:
             parse_mode='HTML'
         )
 
+    @command_error_boundary
     async def _cmd_outcome(self, update, context):
         """Log application outcome."""
         if len(context.args) < 2:
@@ -1405,6 +1457,7 @@ class TelegramReporter:
             parse_mode='HTML'
         )
 
+    @command_error_boundary
     async def _cmd_cirs(self, update, context):
         """Company Intern Readiness Score."""
         if not context.args:
@@ -1446,6 +1499,7 @@ class TelegramReporter:
         )
         await update.message.reply_text(msg, parse_mode='HTML')
 
+    @command_error_boundary
     async def _cmd_research(self, update, context):
         """Full company research brief."""
         if not context.args:
@@ -1469,6 +1523,7 @@ class TelegramReporter:
         except Exception as e:
             await update.message.reply_text(f"❌ Error: {e}")
 
+    @command_error_boundary
     async def _cmd_stats(self, update, context):
         """Weekly funnel stats."""
         try:
@@ -1478,12 +1533,14 @@ class TelegramReporter:
         except Exception as e:
             await update.message.reply_text(f"❌ Error: {e}")
 
+    @command_error_boundary
     async def _cmd_health(self, update, context):
         """Agent health dashboard."""
         heartbeats = self.db.get_all_heartbeats()
         msg = self.formatter.health_report(heartbeats)
         await self._send_long_message(update, msg)
 
+    @command_error_boundary
     async def _cmd_quota(self, update, context):
         """API quota usage including SerpAPI, Groq, Cerebras, DDG."""
         try:
@@ -1492,6 +1549,7 @@ class TelegramReporter:
         except Exception as e:
             await update.message.reply_text(f"❌ Error: {e}")
 
+    @command_error_boundary
     async def _cmd_export(self, update, context):
         """Export top listings as Excel file sent via Telegram."""
         n = 50
@@ -1631,6 +1689,7 @@ class TelegramReporter:
             logger.error(f"[{AGENT_ID}] Export error: {e}")
             await update.message.reply_text(f"❌ Export failed: {e}")
 
+    @command_error_boundary
     async def _cmd_settings(self, update, context):
         """User preferences."""
         if not context.args:
@@ -1677,6 +1736,7 @@ class TelegramReporter:
         self.db.set_setting(db_key, value)
         await update.message.reply_text(f"✅ <b>{key}</b> updated!", parse_mode='HTML')
 
+    @command_error_boundary
     async def _cmd_refresh(self, update, context):
         """Force re-scrape. Delegates to /run pipeline for non-blocking execution."""
         await update.message.reply_text(
@@ -1740,6 +1800,7 @@ class TelegramReporter:
         },
     }
 
+    @command_error_boundary
     async def _cmd_run(self, update, context):
         """
         Run an agent or the full pipeline manually.
@@ -2035,6 +2096,7 @@ class TelegramReporter:
     # /status COMMAND — SHOW RUNNING BACKGROUND TASKS
     # ================================================================
 
+    @command_error_boundary
     async def _cmd_status(self, update, context):
         """Show currently running background tasks."""
         async with self._task_lock:
@@ -2065,6 +2127,7 @@ class TelegramReporter:
     # /cancel COMMAND — CANCEL A RUNNING TASK
     # ================================================================
 
+    @command_error_boundary
     async def _cmd_cancel(self, update, context):
         """Cancel a running background task."""
         if not context.args:
@@ -2107,6 +2170,7 @@ class TelegramReporter:
     # /queue COMMAND — ADD TO AUTO-APPLY QUEUE
     # ================================================================
 
+    @command_error_boundary
     async def _cmd_queue(self, update, context):
         """Queue a listing for auto-apply or queue top N."""
         try:
@@ -2167,6 +2231,7 @@ class TelegramReporter:
     # /autoapply COMMAND — RUN AUTO-APPLY SESSION
     # ================================================================
 
+    @command_error_boundary
     async def _cmd_autoapply(self, update, context):
         """Run auto-apply on queued applications."""
         try:
@@ -2202,6 +2267,7 @@ class TelegramReporter:
     # /appstatus COMMAND — APPLICATION HISTORY
     # ================================================================
 
+    @command_error_boundary
     async def _cmd_appstatus(self, update, context):
         """Show application history and stats."""
         try:
@@ -2242,6 +2308,7 @@ class TelegramReporter:
     # /schedule COMMAND — SHOW SCHEDULE
     # ================================================================
 
+    @command_error_boundary
     async def _cmd_schedule(self, update, context):
         """Show the full 24-hour schedule with next run times."""
         try:
