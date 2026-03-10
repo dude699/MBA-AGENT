@@ -1461,21 +1461,15 @@ class TelegramReporter:
         await update.message.reply_text(f"✅ <b>{key}</b> updated!", parse_mode='HTML')
 
     async def _cmd_refresh(self, update, context):
-        """Force re-scrape."""
-        await update.message.reply_text("🔄 Triggering refresh scrape... This may take 2-5 minutes.")
-
-        try:
-            from agents.a03_primary_scraper import get_primary_scraper
-            scraper = get_primary_scraper()
-            result = scraper.run_morning_scrape()
-
-            total = result.get('total', 0) if isinstance(result, dict) else 0
-            await update.message.reply_text(
-                f"🔄 Refresh complete! {total} listings scraped.\n"
-                f"Use /top to see latest rankings."
-            )
-        except Exception as e:
-            await update.message.reply_text(f"❌ Refresh failed: {e}")
+        """Force re-scrape. Delegates to /run pipeline for non-blocking execution."""
+        await update.message.reply_text(
+            "🔄 Starting full pipeline refresh in background...\n"
+            "Use /status to monitor progress."
+        )
+        # Delegate to the /run pipeline system which handles
+        # async/sync properly and streams progress
+        context.args = ['pipeline']
+        await self._cmd_run(update, context)
 
     # ================================================================
     # /run COMMAND — MANUAL AGENT TRIGGER WITH STREAMING PROGRESS
@@ -1756,7 +1750,7 @@ class TelegramReporter:
         Execute a specific agent and return its result.
         Handles both sync and async agent methods seamlessly.
         """
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         if agent_name == 'scrape':
             from agents.a03_primary_scraper import get_primary_scraper

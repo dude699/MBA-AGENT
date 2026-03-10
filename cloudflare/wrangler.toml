@@ -1,15 +1,34 @@
 # ============================================================
 # OPERATION FIRST MOVER v5 — CLOUDFLARE WORKER CONFIG
 # ============================================================
-# Deploy with: cd cloudflare && npx wrangler deploy
+# Deploy with: cd cloudflare && wrangler deploy
+#
+# Free tier limits:
+#   - 100,000 requests/day
+#   - 10ms CPU time per request
+#   - 128MB memory per worker
 # ============================================================
 
 name = "firstmover-relay"
 main = "relay_worker.js"
-compatibility_date = "2024-01-01"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
 
-# Free tier: 100,000 requests/day
-# More than enough for Naukri + other scrapers
+# Worker limits
+[limits]
+cpu_ms = 50
+
+# Set RELAY_SECRET via:
+#   wrangler secret put RELAY_SECRET
+# Then enter a strong random string when prompted.
+# Do NOT put secrets in this file.
 [vars]
-# Set RELAY_SECRET via dashboard or `wrangler secret put RELAY_SECRET`
-# Do NOT put the actual secret here — use the command below instead
+ENVIRONMENT = "production"
+
+# Route configuration (optional — only needed if using custom domain)
+# [routes]
+# route = "relay.yourdomain.com/*"
+
+# Observability
+[observability]
+enabled = true
