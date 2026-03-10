@@ -141,25 +141,33 @@ GREENHOUSE_JOB_DETAIL = "https://boards-api.greenhouse.io/v1/boards/{board_id}/j
 # Lever job detail endpoint
 LEVER_JOB_DETAIL = "https://api.lever.co/v0/postings/{board_id}/{job_id}"
 
-# MBA/Intern relevance keywords — comprehensive list for filtering
-MBA_TITLE_KEYWORDS = [
-    # Direct intern keywords
+# MBA/Intern relevance keywords — STRICT list for intern/entry-level only
+# Split into tiers: HIGH_CONFIDENCE keywords match standalone,
+# CONTEXT_REQUIRED keywords only match with India location or other context
+MBA_TITLE_KEYWORDS_HIGH = [
+    # Direct intern keywords (always match)
     'intern', 'internship', 'trainee', 'apprentice', 'fellow',
     'summer associate', 'winter intern', 'co-op', 'coop',
-    # MBA-specific
+    'summer analyst', 'summer intern',
+    # MBA-specific (always match)
     'mba', 'management trainee', 'leadership program',
     'graduate program', 'rotational program', 'associate program',
     'management associate', 'future leaders', 'emerging leaders',
     'leadership development', 'accelerated program',
-    # Entry-level MBA roles
-    'associate', 'analyst', 'consultant', 'strategist',
+    'campus hire', 'campus recruit', 'fresher',
+]
+
+# These keywords ONLY match if the job is India-based
+MBA_TITLE_KEYWORDS_INDIA_ONLY = [
     'business analyst', 'strategy analyst', 'product analyst',
     'marketing analyst', 'financial analyst', 'research analyst',
-    'data analyst', 'operations analyst', 'supply chain analyst',
-    # Function-specific
-    'brand manager', 'product manager', 'project manager',
-    'category manager', 'area sales', 'territory manager',
+    'operations analyst', 'supply chain analyst',
+    'brand manager', 'category manager',
+    'area sales manager', 'territory manager',
 ]
+
+# Legacy combined list (kept for compatibility but NOT used for primary filtering)
+MBA_TITLE_KEYWORDS = MBA_TITLE_KEYWORDS_HIGH + MBA_TITLE_KEYWORDS_INDIA_ONLY
 
 # Keywords that indicate the role is NOT relevant
 EXCLUSION_KEYWORDS = [
@@ -650,7 +658,14 @@ class GreenhouseCrawler:
 
     @staticmethod
     def _check_mba_relevance(job: ATSJob) -> bool:
-        """Check if a job is relevant for MBA internship search."""
+        """
+        Check if a job is relevant for MBA internship search.
+        
+        Two-tier keyword matching:
+        - HIGH confidence keywords (intern, trainee, MBA, etc.) match globally
+        - CONTEXT_REQUIRED keywords (analyst, associate, etc.) only match
+          for India-based roles to avoid flooding with global senior positions
+        """
         title_lower = job.title.lower()
         full_text = f"{job.title} {job.description_text} {job.department}".lower()
 
@@ -659,22 +674,36 @@ class GreenhouseCrawler:
             if kw in title_lower:
                 return False
 
-        # Check title for MBA keywords
-        for kw in MBA_TITLE_KEYWORDS:
+        # Determine if India-based
+        location_lower = job.location.lower()
+        is_india = (
+            any(city in location_lower for city in INDIA_CITIES)
+            or 'india' in location_lower
+        )
+
+        # Tier 1: HIGH confidence keywords match regardless of location
+        for kw in MBA_TITLE_KEYWORDS_HIGH:
             if kw in title_lower:
                 return True
 
-        # Check JD body for MBA keywords (need at least 2 matches)
+        # Tier 2: INDIA_ONLY keywords match only for India-based jobs
+        if is_india:
+            for kw in MBA_TITLE_KEYWORDS_INDIA_ONLY:
+                if kw in title_lower:
+                    return True
+
+        # Check JD body for MBA keywords — require India location + 3 matches
         jd_matches = sum(1 for kw in MBA_JD_KEYWORDS if kw in full_text)
-        if jd_matches >= 2:
+        if is_india and jd_matches >= 2:
+            return True
+        elif jd_matches >= 4:
             return True
 
-        # Check if India-based (location relevance)
-        location_lower = job.location.lower()
-        is_india = any(city in location_lower for city in INDIA_CITIES) or 'india' in location_lower
-
-        # If India-based and has some intern indicators
-        if is_india and any(kw in full_text for kw in ['intern', 'fresher', '0-2 years', 'campus']):
+        # If India-based and has strong intern indicators in body
+        if is_india and any(kw in full_text for kw in [
+            'intern', 'fresher', '0-2 years', 'campus', 'stipend',
+            'management trainee', 'graduate program'
+        ]):
             return True
 
         return False

@@ -1243,6 +1243,8 @@ class DedupEngine:
                 applicants=raw.get('applicants', 0) or 0,
                 is_ppo=bool(raw.get('is_ppo', False)),
                 is_wfh=bool(raw.get('is_wfh', False)),
+                category=raw.get('category', '') or '',
+                posted_days_ago=raw.get('posted_days_ago', 0) or 0,
                 source=raw.get('source', ''),
                 url=raw.get('url', ''),
                 description_text=raw.get('description_text', '')[:10000],

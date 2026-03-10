@@ -74,7 +74,7 @@ TIER_1_ELITE = [
     # Global FMCG
     ("Hindustan Unilever", "fmcg", "enterprise", "mumbai", None, None),
     ("ITC Limited", "fmcg", "enterprise", "kolkata", None, None),
-    ("Procter & Gamble", "fmcg", "enterprise", "mumbai", "lever", "procter-and-gamble"),
+    ("Procter & Gamble", "fmcg", "enterprise", "mumbai", None, None),
     ("Nestle India", "fmcg", "enterprise", "gurugram", None, None),
     ("Coca-Cola India", "fmcg", "enterprise", "gurugram", None, None),
     ("PepsiCo India", "fmcg", "enterprise", "gurugram", None, None),
@@ -89,7 +89,7 @@ TIER_1_ELITE = [
 
     # Global Tech
     ("Amazon India", "ecommerce", "enterprise", "bengaluru", None, None),
-    ("Google India", "technology", "enterprise", "bengaluru", "lever", "google"),
+    ("Google India", "technology", "enterprise", "bengaluru", None, None),
     ("Microsoft India", "technology", "enterprise", "hyderabad", None, None),
     ("Apple India", "technology", "enterprise", "bengaluru", "greenhouse", "apple"),
     ("Meta India", "technology", "enterprise", "gurugram", "lever", "meta"),
@@ -162,7 +162,7 @@ TIER_2_STRONG_MNC = [
     ("KPMG India", "consulting", "enterprise", "mumbai", None, None),
     ("Accenture India", "consulting", "enterprise", "bengaluru", None, None),
     ("Capgemini India", "consulting", "enterprise", "mumbai", None, None),
-    ("ZS Associates", "consulting", "large", "pune", "greenhouse", "zs"),
+    ("ZS Associates", "consulting", "large", "pune", "greenhouse", "zsassociates"),
     ("Alvarez & Marsal", "consulting", "large", "mumbai", None, None),
     ("Everest Group", "consulting", "mid", "gurugram", None, None),
     ("Korn Ferry", "consulting", "large", "mumbai", None, None),
