@@ -2,14 +2,14 @@
 ============================================================
 AGENT A-12: TELEGRAM REPORTER / COMMAND CENTER — INDUSTRIAL GRADE
 ============================================================
-The user-facing interface — handles 22 Telegram commands,
+The user-facing interface — handles 26 Telegram commands,
 morning/evening reports, real-time alerts, inline keyboards,
 and full application lifecycle management.
 
 Framework: python-telegram-bot v21
 Schedule: 07:15 AM (morning brief) + 10:00 PM (evening summary)
 
-22 Commands:
+24 Commands:
     /start        — Welcome message + setup wizard
     /help         — Full command reference
     /morning      — Morning brief (top 10, ghost filter, signals)
@@ -32,6 +32,10 @@ Schedule: 07:15 AM (morning brief) + 10:00 PM (evening summary)
     /export       — Export top listings to formatted text
     /settings     — User preferences (college, specialization)
     /refresh      — Force re-scrape current sources
+    /run [agent]  — Run agent NOW (pipeline/scrape/dedup/ghost/enrich/ppo/intent/ats)
+    /schedule     — Show full 24-hour schedule + next run times
+    /status       — Show currently running background agents
+    /cancel       — Cancel a running background agent task
 ============================================================
 """
 
@@ -40,6 +44,7 @@ import json
 import time
 import asyncio
 import signal
+import traceback
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 
@@ -275,7 +280,7 @@ PREFLIGHT_OLD_INSTANCE_CHECK_INTERVAL = 5  # seconds
 
 class TelegramReporter:
     """
-    Telegram bot command center with 22 commands.
+    Telegram bot command center with 26 commands.
     Uses python-telegram-bot v21 with async handlers.
 
     ROBUSTNESS FEATURES:
@@ -300,6 +305,10 @@ class TelegramReporter:
         self._restart_lock = asyncio.Lock()
         self._restart_count = 0
         self._max_runtime_restarts = 10  # max auto-restarts during runtime
+
+        # Background task tracking for /run, /status, /cancel
+        self._running_tasks: Dict[str, Dict[str, Any]] = {}
+        self._task_lock = asyncio.Lock()
 
     # ================================================================
     # PRE-FLIGHT: CLEAN STALE SESSIONS
@@ -543,21 +552,21 @@ class TelegramReporter:
         app = (
             TGApplication.builder()
             .token(token)
-            .connect_timeout(30)
-            .read_timeout(30)
-            .write_timeout(30)
-            .pool_timeout(30)
-            .get_updates_connect_timeout(30)
-            .get_updates_read_timeout(30)
-            .get_updates_write_timeout(30)
-            .get_updates_pool_timeout(30)
+            .connect_timeout(20)
+            .read_timeout(20)
+            .write_timeout(20)
+            .pool_timeout(10)
+            .get_updates_connect_timeout(15)
+            .get_updates_read_timeout(15)
+            .get_updates_write_timeout(15)
+            .get_updates_pool_timeout(10)
             .build()
         )
 
         # Register custom error handler for runtime Conflict errors
         app.add_error_handler(self._on_telegram_error)
 
-        # Register all 22 command handlers
+        # Register all 26 command handlers
         commands = {
             'start': self._cmd_start,
             'help': self._cmd_help,
@@ -581,6 +590,10 @@ class TelegramReporter:
             'export': self._cmd_export,
             'settings': self._cmd_settings,
             'refresh': self._cmd_refresh,
+            'run': self._cmd_run,
+            'schedule': self._cmd_schedule,
+            'status': self._cmd_status,
+            'cancel': self._cmd_cancel,
         }
 
         for cmd_name, handler_fn in commands.items():
@@ -651,7 +664,7 @@ class TelegramReporter:
         self._app = self._build_app(token)
 
         logger.info(
-            f"[{AGENT_ID}] Bot starting with 22 commands "
+            f"[{AGENT_ID}] Bot starting with 26 commands "
             f"(max {BOT_START_MAX_RETRIES} attempts)..."
         )
 
@@ -664,6 +677,8 @@ class TelegramReporter:
                 await self._app.updater.start_polling(
                     drop_pending_updates=True,
                     allowed_updates=["message", "callback_query"],
+                    poll_interval=1.0,
+                    read_timeout=10,
                 )
                 self._running = True
                 logger.info(
@@ -926,14 +941,17 @@ class TelegramReporter:
             "🔧 <b>Quick Setup:</b>\n"
             "1. /settings college Your College Name\n"
             "2. /settings spec Marketing\n\n"
-            "Type /help for all 22 commands."
+            "🚀 <b>Run agents on demand:</b>\n"
+            "/run pipeline — Full scrape+process+report\n"
+            "/run scrape — Just scrape now\n\n"
+            "Type /help for all 26 commands."
         )
         await update.message.reply_text(msg, parse_mode='HTML')
 
     async def _cmd_help(self, update, context):
         """Full command reference."""
         msg = (
-            "📖 <b>Command Reference (22 Commands)</b>\n"
+            "📖 <b>Command Reference (26 Commands)</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
             "📊 <b>Reports</b>\n"
             "/morning — Full morning brief\n"
@@ -955,6 +973,11 @@ class TelegramReporter:
             "🏢 <b>Company Intel</b>\n"
             "/cirs [company] — CIRS breakdown\n"
             "/research [company] — Full research\n\n"
+            "🚀 <b>Manual Agent Control</b>\n"
+            "/run — Run agents NOW (see /run for options)\n"
+            "/schedule — Full 24h schedule + next runs\n"
+            "/status — Currently running background tasks\n"
+            "/cancel [task] — Cancel a running task\n\n"
             "⚙️ <b>System</b>\n"
             "/health — Agent heartbeats\n"
             "/quota — API usage\n"
@@ -1455,6 +1478,445 @@ class TelegramReporter:
             await update.message.reply_text(f"❌ Refresh failed: {e}")
 
     # ================================================================
+    # /run COMMAND — MANUAL AGENT TRIGGER WITH STREAMING PROGRESS
+    # ================================================================
+
+    # Map of runnable agent names to their runner info
+    _RUN_AGENTS = {
+        'pipeline': {
+            'desc': 'Full pipeline: scrape → dedup → ghost → enrich → PPO → brief',
+            'steps': ['scrape', 'dedup', 'ghost', 'enrich', 'ppo', 'brief'],
+        },
+        'scrape': {
+            'desc': 'A-03: Internshala full scrape (10 categories)',
+            'agent': 'A-03',
+        },
+        'afternoon': {
+            'desc': 'A-03: Naukri + IIMjobs afternoon scrape',
+            'agent': 'A-03',
+        },
+        'dedup': {
+            'desc': 'A-06: Deduplication engine',
+            'agent': 'A-06',
+        },
+        'ghost': {
+            'desc': 'A-05: Ghost job detection & scoring',
+            'agent': 'A-05',
+        },
+        'enrich': {
+            'desc': 'A-07: Intelligence enrichment + CIRS',
+            'agent': 'A-07',
+        },
+        'ppo': {
+            'desc': 'A-08: PPO scoring & ranking',
+            'agent': 'A-08',
+        },
+        'intent': {
+            'desc': 'A-01: Hiring intent signal scan',
+            'agent': 'A-01',
+        },
+        'ats_crawl': {
+            'desc': 'A-04: Company ATS career page crawl',
+            'agent': 'A-04',
+        },
+        'dark': {
+            'desc': 'A-02: Dark channel batch check',
+            'agent': 'A-02',
+        },
+        'brief': {
+            'desc': 'A-12: Generate & send morning brief',
+            'agent': 'A-12',
+        },
+    }
+
+    async def _cmd_run(self, update, context):
+        """
+        Run an agent or the full pipeline manually.
+        Runs in the BACKGROUND so Telegram stays responsive.
+        Streams real-time progress updates to the chat.
+        """
+        if not context.args:
+            lines = [
+                "🚀 <b>Manual Agent Runner</b>",
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+                "",
+                "Usage: <code>/run &lt;agent&gt;</code>",
+                "",
+                "⚡ <b>Full Pipeline:</b>",
+                "  <code>/run pipeline</code> — Runs ALL steps in order",
+                "",
+                "🔧 <b>Individual Agents:</b>",
+            ]
+            for name, info in self._RUN_AGENTS.items():
+                if name == 'pipeline':
+                    continue
+                lines.append(f"  <code>/run {name}</code> — {info['desc']}")
+
+            lines.append("")
+            lines.append("📊 <b>Background Task Control:</b>")
+            lines.append("  <code>/status</code> — See running tasks")
+            lines.append("  <code>/cancel &lt;task&gt;</code> — Cancel a task")
+            lines.append("")
+            lines.append("💡 Agents run in background. You'll get live progress updates.")
+            lines.append("💡 Scheduled cycles are NOT affected — they run at their normal times.")
+            await update.message.reply_text('\n'.join(lines), parse_mode='HTML')
+            return
+
+        agent_name = context.args[0].lower()
+
+        if agent_name not in self._RUN_AGENTS:
+            await update.message.reply_text(
+                f"❌ Unknown agent '{agent_name}'\n"
+                f"Available: {', '.join(self._RUN_AGENTS.keys())}\n"
+                f"Use /run for full list."
+            )
+            return
+
+        # Check if this agent is already running
+        async with self._task_lock:
+            if agent_name in self._running_tasks:
+                task_info = self._running_tasks[agent_name]
+                elapsed = time.time() - task_info['start_time']
+                await update.message.reply_text(
+                    f"⚠️ <b>{agent_name}</b> is already running "
+                    f"({elapsed:.0f}s elapsed)\n"
+                    f"Use /cancel {agent_name} to stop it first.",
+                    parse_mode='HTML'
+                )
+                return
+
+        info = self._RUN_AGENTS[agent_name]
+        chat_id = update.effective_chat.id
+
+        # Pipeline mode: run multiple agents in sequence
+        if 'steps' in info:
+            task = asyncio.create_task(
+                self._run_pipeline_bg(chat_id, agent_name, info['steps'])
+            )
+        else:
+            task = asyncio.create_task(
+                self._run_single_agent_bg(chat_id, agent_name, info)
+            )
+
+        async with self._task_lock:
+            self._running_tasks[agent_name] = {
+                'task': task,
+                'start_time': time.time(),
+                'desc': info['desc'],
+                'chat_id': chat_id,
+                'status': 'running',
+            }
+
+        await update.message.reply_text(
+            f"🏃 <b>{info['desc']}</b> — started in background\n"
+            f"You'll get live progress updates here.\n"
+            f"Use /status to check | /cancel {agent_name} to stop",
+            parse_mode='HTML'
+        )
+
+    async def _stream_msg(self, chat_id: int, text: str):
+        """Send a progress message to a specific chat."""
+        try:
+            if self._app and self._app.bot:
+                await self._app.bot.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                    parse_mode='HTML'
+                )
+        except Exception as e:
+            logger.debug(f"[{AGENT_ID}] Stream msg failed: {e}")
+
+    async def _run_single_agent_bg(self, chat_id: int, agent_name: str, info: Dict):
+        """Background task: Run a single agent with streaming updates."""
+        start_time = time.time()
+        try:
+            result = await self._execute_agent(agent_name)
+            duration = time.time() - start_time
+
+            # Format result
+            if isinstance(result, dict):
+                result_str = '\n'.join(
+                    f"  {k}: {v}" for k, v in result.items()
+                    if k not in ('raw', 'listings', 'html')
+                )
+            elif result is not None:
+                result_str = str(result)[:500]
+            else:
+                result_str = "  (completed, no detailed output)"
+
+            await self._stream_msg(
+                chat_id,
+                f"✅ <b>{info['desc']}</b> — DONE\n"
+                f"⏱ Duration: {duration:.1f}s\n\n"
+                f"📊 Results:\n{result_str}"
+            )
+
+        except asyncio.CancelledError:
+            duration = time.time() - start_time
+            await self._stream_msg(
+                chat_id,
+                f"🛑 <b>{info['desc']}</b> — CANCELLED\n"
+                f"⏱ Ran for: {duration:.1f}s"
+            )
+        except Exception as e:
+            duration = time.time() - start_time
+            logger.error(f"[{AGENT_ID}] /run {agent_name} failed: {e}")
+            tb_str = traceback.format_exc()[-300:]
+            await self._stream_msg(
+                chat_id,
+                f"❌ <b>{info['desc']}</b> — FAILED\n"
+                f"⏱ Duration: {duration:.1f}s\n"
+                f"Error: {str(e)[:200]}\n\n"
+                f"<code>{tb_str}</code>"
+            )
+        finally:
+            async with self._task_lock:
+                self._running_tasks.pop(agent_name, None)
+
+    async def _run_pipeline_bg(self, chat_id: int, task_name: str, steps: list):
+        """Background task: Run full pipeline with per-step streaming."""
+        total_start = time.time()
+        await self._stream_msg(
+            chat_id,
+            "🚀 <b>FULL PIPELINE STARTING</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"Steps: {' → '.join(steps)}\n\n"
+            "You'll get a progress update after each step."
+        )
+
+        results = {}
+        failed = []
+
+        for i, step in enumerate(steps, 1):
+            info = self._RUN_AGENTS.get(step, {})
+            desc = info.get('desc', step)
+            step_start = time.time()
+
+            await self._stream_msg(
+                chat_id,
+                f"⏳ [{i}/{len(steps)}] <b>{desc}</b>..."
+            )
+
+            try:
+                result = await self._execute_agent(step)
+                duration = time.time() - step_start
+
+                # Extract summary
+                if isinstance(result, dict):
+                    summary = ', '.join(
+                        f"{k}={v}" for k, v in result.items()
+                        if k in ('total', 'new', 'processed', 'enriched',
+                                 'scored', 'signals', 'duplicates', 'blue_ocean')
+                    ) or 'OK'
+                else:
+                    summary = 'OK'
+
+                results[step] = f"✅ {duration:.0f}s — {summary}"
+
+                # Stream per-step completion
+                await self._stream_msg(
+                    chat_id,
+                    f"  ✅ [{i}/{len(steps)}] {step}: {duration:.0f}s — {summary}"
+                )
+
+            except asyncio.CancelledError:
+                results[step] = f"🛑 CANCELLED"
+                failed.append(step)
+                break
+            except Exception as e:
+                duration = time.time() - step_start
+                results[step] = f"❌ {duration:.0f}s — {str(e)[:80]}"
+                failed.append(step)
+                logger.error(f"[{AGENT_ID}] Pipeline step '{step}' failed: {e}")
+                # Continue with next step — partial processing is better than none
+
+        # Final summary
+        total_duration = time.time() - total_start
+        lines = [
+            f"🏁 <b>PIPELINE COMPLETE</b> — {total_duration:.0f}s",
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+            "",
+        ]
+        for step, result_str in results.items():
+            lines.append(f"  {step}: {result_str}")
+
+        if failed:
+            lines.append(f"\n⚠️ {len(failed)} step(s) failed: {', '.join(failed)}")
+        else:
+            lines.append(f"\n🎉 All {len(steps)} steps completed!")
+
+        lines.append(f"\n💡 Use /top or /morning to see results.")
+        await self._stream_msg(chat_id, '\n'.join(lines))
+
+        async with self._task_lock:
+            self._running_tasks.pop(task_name, None)
+
+    async def _execute_agent(self, agent_name: str):
+        """
+        Execute a specific agent and return its result.
+        Handles both sync and async agent methods seamlessly.
+        """
+        loop = asyncio.get_event_loop()
+
+        if agent_name == 'scrape':
+            from agents.a03_primary_scraper import get_primary_scraper
+            # run_morning_scrape is SYNC — run in executor to not block
+            return await loop.run_in_executor(
+                None, get_primary_scraper().run_morning_scrape
+            )
+
+        elif agent_name == 'afternoon':
+            from agents.a03_primary_scraper import get_primary_scraper
+            return await loop.run_in_executor(
+                None, get_primary_scraper().run_afternoon_scrape
+            )
+
+        elif agent_name == 'dedup':
+            from agents.a06_dedup_engine import get_dedup_engine
+            return await loop.run_in_executor(
+                None, get_dedup_engine().run_dedup
+            )
+
+        elif agent_name == 'ghost':
+            from agents.a05_ghost_detector import get_ghost_detector
+            return await loop.run_in_executor(
+                None, get_ghost_detector().score_batch
+            )
+
+        elif agent_name == 'enrich':
+            from agents.a07_intelligence_enricher import get_intelligence_enricher
+            return await loop.run_in_executor(
+                None, get_intelligence_enricher().run_enrichment
+            )
+
+        elif agent_name == 'ppo':
+            from agents.a08_ppo_optimizer import get_ppo_optimizer
+            return await loop.run_in_executor(
+                None, get_ppo_optimizer().run_optimization
+            )
+
+        elif agent_name == 'intent':
+            from agents.a01_intent_scanner import get_intent_scanner
+            return await loop.run_in_executor(
+                None, get_intent_scanner().run_scan
+            )
+
+        elif agent_name == 'ats_crawl':
+            from agents.a04_ats_crawler import get_ats_crawler
+            return await loop.run_in_executor(
+                None, get_ats_crawler().run_crawl
+            )
+
+        elif agent_name == 'dark':
+            from agents.a02_dark_channel import get_dark_channel_listener
+            return await loop.run_in_executor(
+                None, get_dark_channel_listener().run_batch_check
+            )
+
+        elif agent_name == 'brief':
+            await self.send_morning_brief()
+            return {'status': 'sent'}
+
+        else:
+            raise ValueError(f"Unknown agent: {agent_name}")
+
+    # ================================================================
+    # /status COMMAND — SHOW RUNNING BACKGROUND TASKS
+    # ================================================================
+
+    async def _cmd_status(self, update, context):
+        """Show currently running background tasks."""
+        async with self._task_lock:
+            if not self._running_tasks:
+                await update.message.reply_text(
+                    "💤 No background tasks running.\n"
+                    "Use /run to start an agent."
+                )
+                return
+
+            lines = [
+                "🏃 <b>Running Background Tasks</b>",
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+                "",
+            ]
+            for name, info in self._running_tasks.items():
+                elapsed = time.time() - info['start_time']
+                desc = info.get('desc', name)
+                lines.append(
+                    f"  🔄 <b>{name}</b>: {desc}\n"
+                    f"     Running for {elapsed:.0f}s"
+                )
+            lines.append(f"\n💡 Use /cancel <task> to stop a task.")
+
+        await update.message.reply_text('\n'.join(lines), parse_mode='HTML')
+
+    # ================================================================
+    # /cancel COMMAND — CANCEL A RUNNING TASK
+    # ================================================================
+
+    async def _cmd_cancel(self, update, context):
+        """Cancel a running background task."""
+        if not context.args:
+            async with self._task_lock:
+                if not self._running_tasks:
+                    await update.message.reply_text("💤 No tasks running.")
+                    return
+                names = ', '.join(self._running_tasks.keys())
+            await update.message.reply_text(
+                f"Usage: /cancel <task_name>\n"
+                f"Running tasks: {names}"
+            )
+            return
+
+        task_name = context.args[0].lower()
+
+        async with self._task_lock:
+            task_info = self._running_tasks.get(task_name)
+            if not task_info:
+                await update.message.reply_text(
+                    f"❌ No task '{task_name}' is running.\n"
+                    f"Use /status to see running tasks."
+                )
+                return
+
+            task = task_info.get('task')
+            if task and not task.done():
+                task.cancel()
+                await update.message.reply_text(
+                    f"🛑 Cancelling <b>{task_name}</b>...",
+                    parse_mode='HTML'
+                )
+            else:
+                self._running_tasks.pop(task_name, None)
+                await update.message.reply_text(
+                    f"Task '{task_name}' already finished."
+                )
+
+    # ================================================================
+    # /schedule COMMAND — SHOW SCHEDULE
+    # ================================================================
+
+    async def _cmd_schedule(self, update, context):
+        """Show the full 24-hour schedule with next run times."""
+        try:
+            from core.scheduler import get_scheduler
+            scheduler = get_scheduler()
+            msg = scheduler.get_schedule_display()
+
+            # Also show next runs from APScheduler
+            jobs = scheduler.get_job_list()
+            if jobs:
+                msg += "\n\n📅 <b>Next Scheduled Runs:</b>\n"
+                for job in jobs[:15]:
+                    name = job.get('name', '')
+                    next_run = job.get('next_run', 'N/A')
+                    msg += f"  {name}\n    → {next_run}\n"
+
+            await self._send_long_message(update, msg)
+        except Exception as e:
+            await update.message.reply_text(f"❌ Error: {e}")
+
+    # ================================================================
     # SCHEDULED REPORTS
     # ================================================================
 
@@ -1577,7 +2039,7 @@ if __name__ == "__main__":
     print("\nMorning Brief Preview:")
     print(formatter.morning_brief(test_data)[:500])
 
-    print(f"\nCommands registered: 22")
+    print(f"\nCommands registered: 26")
     print(f"Message max length: {TG_MAX_LEN}")
     print(f"Valid outcomes: {', '.join(VALID_OUTCOMES)}")
     print(f"\n✅ {AGENT_NAME} ({AGENT_ID}) ready!")

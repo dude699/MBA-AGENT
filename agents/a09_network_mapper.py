@@ -213,10 +213,14 @@ class AlumniDiscovery:
     def _get_ddg(self):
         if self._ddg is None:
             try:
-                from duckduckgo_search import DDGS
+                from ddgs import DDGS
                 self._ddg = DDGS()
             except ImportError:
-                logger.warning("duckduckgo_search not installed")
+                try:
+                    from duckduckgo_search import DDGS
+                    self._ddg = DDGS()
+                except ImportError:
+                    logger.warning(f"[{AGENT_ID}] ddgs not installed (pip install ddgs)")
         return self._ddg
 
     def _reset_daily_counters_if_needed(self):

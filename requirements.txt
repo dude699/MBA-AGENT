@@ -27,6 +27,7 @@ tweepy>=4.14
 
 # === Search ===
 duckduckgo-search>=4.0
+ddgs>=6.0
 feedparser>=6.0
 
 # === NLP & ML ===

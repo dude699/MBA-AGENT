@@ -413,6 +413,10 @@ class AgentScheduler:
             'A-03 Morning Scrape',
             get_primary_scraper().run_morning_scrape
         )
+        # AUTO-PROCESS: If morning scrape ran late and overlapped with
+        # the scheduled dedup/ghost/enrich/PPO, this catches any
+        # unprocessed listings.
+        await self._auto_process_pipeline("after morning scrape")
 
     async def _run_afternoon_scrape(self):
         from agents.a03_primary_scraper import get_primary_scraper
@@ -420,6 +424,9 @@ class AgentScheduler:
             'A-03 Afternoon Scrape',
             get_primary_scraper().run_afternoon_scrape
         )
+        # AUTO-PROCESS: Run pipeline after afternoon scrape so data
+        # doesn't sit unprocessed until next morning
+        await self._auto_process_pipeline("after afternoon scrape")
 
     async def _run_dedup(self):
         from agents.a06_dedup_engine import get_dedup_engine
@@ -457,6 +464,8 @@ class AgentScheduler:
     async def _run_ats_crawl(self):
         from agents.a04_ats_crawler import get_ats_crawler
         await self._safe_run('A-04 ATS', get_ats_crawler().run_crawl)
+        # AUTO-PROCESS: ATS crawl produces raw listings that need processing
+        await self._auto_process_pipeline("after ATS crawl")
 
     async def _run_dark_channels(self):
         from agents.a02_dark_channel import get_dark_channel_listener
@@ -471,6 +480,61 @@ class AgentScheduler:
             'A-11 Retrain',
             get_outcome_learner().run_weekly_retrain
         )
+
+    async def _auto_process_pipeline(self, trigger_reason: str = ""):
+        """
+        Auto-run dedup → ghost → enrich → PPO after any scrape/crawl job.
+        This ensures raw listings are always processed into clean listings
+        even if the next scheduled pipeline run is hours away.
+        """
+        logger.info(
+            f"[SCHEDULER] Auto-processing pipeline ({trigger_reason})..."
+        )
+
+        # Check if there are unprocessed raw listings first
+        try:
+            from core.database import get_db
+            db = get_db()
+            unprocessed = db.count_unprocessed_raw_listings()
+            if unprocessed == 0:
+                logger.info(
+                    "[SCHEDULER] Auto-process: 0 unprocessed raw listings, skipping"
+                )
+                return
+            logger.info(
+                f"[SCHEDULER] Auto-process: {unprocessed} unprocessed raw listings found"
+            )
+        except Exception as e:
+            logger.warning(f"[SCHEDULER] Auto-process check failed: {e}")
+            # Continue anyway — better to try than skip
+
+        # Run each step directly via _safe_run (not via the wrapper methods
+        # which would double-wrap). Each step gets its own error handling.
+        try:
+            from agents.a06_dedup_engine import get_dedup_engine
+            await self._safe_run('A-06 Auto-Dedup', get_dedup_engine().run_dedup)
+        except Exception as e:
+            logger.error(f"[SCHEDULER] Auto-Dedup failed: {e}")
+
+        try:
+            from agents.a05_ghost_detector import get_ghost_detector
+            await self._safe_run('A-05 Auto-Ghost', get_ghost_detector().score_batch)
+        except Exception as e:
+            logger.error(f"[SCHEDULER] Auto-Ghost failed: {e}")
+
+        try:
+            from agents.a07_intelligence_enricher import get_intelligence_enricher
+            await self._safe_run('A-07 Auto-Enrich', get_intelligence_enricher().run_enrichment)
+        except Exception as e:
+            logger.error(f"[SCHEDULER] Auto-Enrich failed: {e}")
+
+        try:
+            from agents.a08_ppo_optimizer import get_ppo_optimizer
+            await self._safe_run('A-08 Auto-PPO', get_ppo_optimizer().run_optimization)
+        except Exception as e:
+            logger.error(f"[SCHEDULER] Auto-PPO failed: {e}")
+
+        logger.info(f"[SCHEDULER] Auto-processing pipeline complete")
 
     async def _keep_alive(self):
         """

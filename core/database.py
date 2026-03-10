@@ -973,6 +973,18 @@ class DatabaseManager:
             cur.execute(query, params)
             return cur.fetchone()[0]
 
+    def count_unprocessed_raw_listings(self) -> int:
+        """Count raw listings that haven't been processed into clean listings yet."""
+        with self.get_cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*) FROM raw_listings r
+                LEFT JOIN clean_listings c ON c.raw_id = r.id
+                WHERE c.id IS NULL
+                """
+            )
+            return cur.fetchone()[0]
+
     # ----------------------------------------------------------
     # CLEAN LISTINGS CRUD
     # ----------------------------------------------------------
