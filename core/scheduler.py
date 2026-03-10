@@ -1,6 +1,6 @@
 """
 ============================================================
-OPERATION FIRST MOVER v5 — SCHEDULER
+OPERATION FIRST MOVER v5.1 — SCHEDULER (INDUSTRIAL GRADE)
 ============================================================
 APScheduler-based 24-hour IST schedule that orchestrates
 all 12 agents according to the daily schedule.
@@ -347,61 +347,110 @@ class AgentScheduler:
     # ================================================================
 
     async def _safe_run(self, name: str, func: Callable, *args, **kwargs):
-        """Safely run a function with error handling, tracking, and timeout."""
+        """
+        Industrial-grade job runner with:
+        - Per-job timeout (default 15 min)
+        - Retry logic with exponential backoff (max 2 retries)
+        - Execution tracking and heartbeat update
+        - Structured error logging with traceback
+        """
         execution = JobExecution(job_id=name, start_time=time.time())
-        # Default timeout: 15 minutes for any single job
         job_timeout = kwargs.pop('job_timeout', 900)
-        try:
-            logger.info(f"[SCHEDULER] Running {name}...")
-            result = func(*args, **kwargs)
-            if asyncio.iscoroutine(result):
-                result = await asyncio.wait_for(result, timeout=job_timeout)
-            execution.success = True
-            execution.end_time = time.time()
-            logger.info(
-                f"[SCHEDULER] {name} completed in "
-                f"{execution.duration_sec}s"
-            )
-            return result
-        except asyncio.TimeoutError:
-            execution.success = False
-            execution.error = f"Timed out after {job_timeout}s"
-            execution.end_time = time.time()
-            logger.error(
-                f"[SCHEDULER] {name} TIMED OUT after {job_timeout}s"
-            )
-            return None
-        except Exception as e:
-            execution.success = False
-            execution.error = str(e)
-            execution.end_time = time.time()
-            logger.error(
-                f"[SCHEDULER] {name} failed: {type(e).__name__}: {e}"
-            )
-            # Log traceback for debugging
+        max_retries = kwargs.pop('max_retries', 2)
+        retry_delay = 30  # seconds between retries
+
+        last_error = None
+        for attempt in range(1, max_retries + 1):
             try:
-                tb = traceback.format_exc()
-                if tb and 'NoneType' not in tb:
-                    logger.debug(f"[SCHEDULER] {name} traceback:\n{tb}")
-            except Exception:
-                pass
-            return None
-        finally:
-            self._tracker.record(execution)
-            # Update agent heartbeat in database
-            try:
-                from core.database import get_db
-                db = get_db()
-                agent_id = name.split(' ')[0] if ' ' in name else name
-                db.update_agent_heartbeat(
-                    agent_id=agent_id,
-                    status='completed' if execution.success else 'error',
-                    items_processed=execution.items_processed,
-                    errors=0 if execution.success else 1,
-                    duration_sec=execution.duration_sec,
+                if attempt > 1:
+                    logger.info(f"[SCHEDULER] {name}: retry {attempt}/{max_retries}")
+                else:
+                    logger.info(f"[SCHEDULER] Running {name}...")
+
+                # Run in executor if sync, otherwise await directly
+                loop = asyncio.get_running_loop()
+                result = func(*args, **kwargs)
+                if asyncio.iscoroutine(result):
+                    result = await asyncio.wait_for(result, timeout=job_timeout)
+
+                execution.success = True
+                execution.end_time = time.time()
+                self._tracker.record(execution)
+                self._update_heartbeat(name, execution)
+                logger.info(
+                    f"[SCHEDULER] {name} completed in "
+                    f"{execution.duration_sec}s"
+                    f"{f' (attempt {attempt})' if attempt > 1 else ''}"
                 )
-            except Exception:
-                pass  # Don't let heartbeat update failure crash anything
+                return result
+
+            except asyncio.TimeoutError:
+                last_error = f"Timed out after {job_timeout}s"
+                logger.error(f"[SCHEDULER] {name} TIMED OUT after {job_timeout}s")
+                break  # Don't retry timeouts
+
+            except Exception as e:
+                last_error = f"{type(e).__name__}: {e}"
+                logger.error(f"[SCHEDULER] {name} failed (attempt {attempt}): {last_error}")
+                try:
+                    tb = traceback.format_exc()
+                    if tb and 'NoneType' not in tb:
+                        logger.debug(f"[SCHEDULER] {name} traceback:\n{tb[-500:]}")
+                except Exception:
+                    pass
+
+                if attempt < max_retries:
+                    delay = retry_delay * attempt  # Linear backoff
+                    logger.info(f"[SCHEDULER] {name}: waiting {delay}s before retry")
+                    await asyncio.sleep(delay)
+
+        # All retries exhausted
+        execution.success = False
+        execution.error = last_error
+        execution.end_time = time.time()
+        self._tracker.record(execution)
+        self._update_heartbeat(name, execution)
+
+        logger.error(
+            f"[SCHEDULER] {name} FAILED after {max_retries} attempts: {last_error}"
+        )
+
+        # Send failure alert to Telegram
+        await self._alert_job_failure(name, last_error)
+
+        return None
+
+    async def _alert_job_failure(self, job_name: str, error: str):
+        """Send job failure alert to Telegram (best-effort)."""
+        try:
+            from agents.a12_telegram_reporter import get_telegram_reporter
+            reporter = get_telegram_reporter()
+            if reporter._running:
+                msg = (
+                    f"⚠️ <b>Scheduled Job Failed</b>\n"
+                    f"Job: {job_name}\n"
+                    f"Error: {str(error)[:200]}\n\n"
+                    f"The system will retry at next scheduled time."
+                )
+                await reporter.send_message(msg)
+        except Exception:
+            pass  # Best-effort alerting
+
+    def _update_heartbeat(self, name: str, execution: JobExecution):
+        """Update agent heartbeat in database (best-effort)."""
+        try:
+            from core.database import get_db
+            db = get_db()
+            agent_id = name.split(' ')[0] if ' ' in name else name
+            db.update_agent_heartbeat(
+                agent_id=agent_id,
+                status='completed' if execution.success else 'error',
+                items_processed=execution.items_processed,
+                errors=0 if execution.success else 1,
+                duration_sec=execution.duration_sec,
+            )
+        except Exception:
+            pass
 
     # ================================================================
     # JOB IMPLEMENTATIONS

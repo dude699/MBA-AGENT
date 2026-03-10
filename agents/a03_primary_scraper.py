@@ -1225,7 +1225,7 @@ def get_primary_scraper() -> PrimaryScraper:
 
 if __name__ == "__main__":
     print("=" * 60)
-    print(f"OPERATION FIRST MOVER v5 — {AGENT_NAME} Test")
+    print(f"OPERATION FIRST MOVER v5.1 — {AGENT_NAME} Test")
     print("=" * 60)
     print(f"Agent ID: {AGENT_ID}")
     print(f"MBA Categories: {len(MBA_CATEGORIES)}")

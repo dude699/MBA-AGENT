@@ -1,6 +1,6 @@
 """
 ============================================================
-OPERATION FIRST MOVER v5 — STEALTH ENGINE
+OPERATION FIRST MOVER v5.1 — STEALTH ENGINE (INDUSTRIAL GRADE)
 ============================================================
 4-layer zero-detection system that makes all scraping look
 like normal human browser behavior.

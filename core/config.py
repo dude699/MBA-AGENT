@@ -1,6 +1,6 @@
 """
 ============================================================
-OPERATION FIRST MOVER v5 — CORE CONFIGURATION MODULE
+OPERATION FIRST MOVER v5.1 — CORE CONFIGURATION MODULE (INDUSTRIAL GRADE)
 ============================================================
 Complete configuration management system for the zero-cost
 MBA Hunt Agent. Handles all environment variables, constants,

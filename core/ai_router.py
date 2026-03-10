@@ -1,6 +1,6 @@
 """
 ============================================================
-OPERATION FIRST MOVER v5 — AI ROUTING ENGINE
+OPERATION FIRST MOVER v5.1 — AI ROUTING ENGINE (INDUSTRIAL GRADE)
 ============================================================
 Dual-brain AI routing system that intelligently distributes
 tasks between Groq (heavy/creative) and Cerebras (fast/classify)

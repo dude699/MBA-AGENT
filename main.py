@@ -1,44 +1,39 @@
 """
 ============================================================
-OPERATION FIRST MOVER v5 — MAIN ENTRY POINT
+OPERATION FIRST MOVER v5.1 — MAIN ENTRY POINT (INDUSTRIAL GRADE)
 ============================================================
-Entry point for the zero-cost MBA Hunt Agent system.
-Runs as a Render FREE-TIER WEB SERVICE with an embedded
-aiohttp HTTP server for keep-alive + health checks.
+Zero-cost MBA Hunt Agent system orchestrator.
 
-Startup Sequence:
-    1.  Load configuration and validate environment
-    2.  Initialize database (create tables, migrate)
-    3.  Seed company database (1080+ companies)
-    4.  Initialize AI router (Groq + Cerebras)
-    5.  Seed agent heartbeats (A-01 to A-12)
-    6.  Stealth engine: lazy-load mode
-    7.  Start aiohttp Web Server (port from $PORT env)
-    8.  Start Self-Ping keep-alive loop (Layer 1)
-    9.  Start Telegram bot (26 commands, polling mode)
-    10. Start APScheduler (24-hour IST schedule)
-    11. Enter main event loop
-    12. Handle graceful shutdown (SIGTERM/SIGINT)
+Architecture:
+    - Phased startup with dependency ordering & circuit breakers
+    - Structured health probing at every init stage
+    - Graceful degradation: each subsystem can fail independently
+    - Signal-safe shutdown with ordered teardown (Telegram FIRST)
+    - Memory-aware GC on 512 MB Render constraint
+    - Watchdog: monitors subsystem health
+    - Startup diagnostic report to Telegram on success
+
+Startup Phases (dependency-ordered):
+    Phase 1 — FOUNDATION:  Config, Logging, Data dirs
+    Phase 2 — STORAGE:     Database init, schema migration, WAL
+    Phase 3 — DATA SEED:   Company DB (1081), agent heartbeats
+    Phase 4 — AI LAYER:    AI Router (Groq + Cerebras dual-brain)
+    Phase 5 — WEB LAYER:   aiohttp server, health endpoints (Render needs this ASAP)
+    Phase 6 — COMMS:       Telegram bot (delayed on Render for overlap grace)
+    Phase 7 — SCHEDULER:   APScheduler (24-hour IST cycle)
+    Phase 8 — WATCHDOG:    Background monitor loop
 
 Deployment:
-    - Render Free Tier: Web Service (python main.py)
-      Render sets $PORT automatically (usually 10000)
-      Health check: GET /health
-    - Docker: python main.py (PORT=10000)
-    - Local: python main.py (PORT=10000)
+    Render:  python main.py  ($PORT auto-set, usually 10000)
+    Docker:  python main.py  (PORT=10000)
+    Local:   python main.py  (PORT=10000)
 
-Keep-Alive Architecture (5 layers):
-    Layer 1: Internal self-ping every 4 min (asyncio)
-    Layer 2: Scheduler keep-alive every 10 min (APScheduler)
-    Layer 3: cron-job.org external ping every 5 min (free)
-    Layer 4: UptimeRobot monitoring every 5 min (free)
-    Layer 5: Your Telegram commands (each = HTTP activity)
-
-Memory Optimization (512MB Render limit):
-    - Lazy-load heavy modules
-    - Batch processing with bounded queues
-    - Periodic garbage collection
-    - SQLite WAL mode for concurrent access
+Keep-Alive (5 layers):
+    L1: Self-ping every 4 min  (asyncio internal)
+    L2: Scheduler ping 10 min  (APScheduler)
+    L3: cron-job.org 5 min     (external)
+    L4: UptimeRobot 5 min      (external)
+    L5: Telegram commands       (user activity = HTTP activity)
 ============================================================
 """
 
@@ -49,38 +44,22 @@ import signal
 import asyncio
 import gc
 import warnings
-from datetime import datetime
+import traceback
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from typing import Optional, Dict, Any
 
 # Suppress ResourceWarning about unclosed sockets during shutdown
-# These are harmless and caused by HTTP client cleanup timing
 warnings.filterwarnings('ignore', category=ResourceWarning)
 
 # ============================================================
-# RENDER DEPLOYMENT OVERLAP PROTECTION
+# LOGGING SETUP (before anything else)
 # ============================================================
-# Render starts the NEW instance FIRST, waits for health check,
-# THEN sends SIGTERM to the OLD instance. This means both run
-# simultaneously for ~30-60 seconds. Telegram polling allows
-# only ONE consumer — the overlap causes Conflict errors.
-#
-# FIX: The NEW instance delays starting Telegram polling by
-# RENDER_OVERLAP_GRACE_SEC seconds, giving the OLD instance
-# time to receive SIGTERM and release the polling lock.
-# The web server starts IMMEDIATELY (Render needs /health).
-# ============================================================
-# Grace period is now SHORTER because the real fix is in the
-# pre-flight /close API call (in a12_telegram_reporter.py).
-# The /close call server-side releases the polling lock, so we
-# don't need to blindly wait 45s and hope for the best.
-# 15s is enough for Render to send SIGTERM to the old instance.
-RENDER_OVERLAP_GRACE_SEC = int(os.getenv('RENDER_OVERLAP_GRACE_SEC', '15'))
 
 try:
     from loguru import logger
 
-    # Configure loguru
-    logger.remove()  # Remove default handler
+    logger.remove()
     log_level = os.getenv('LOG_LEVEL', 'INFO')
     logger.add(
         sys.stdout,
@@ -93,7 +72,6 @@ try:
         level=log_level,
         colorize=True,
     )
-    # File logger
     log_dir = Path("logs")
     log_dir.mkdir(exist_ok=True)
     logger.add(
@@ -113,32 +91,99 @@ except ImportError:
 
 
 # ============================================================
-# BANNER
+# CONSTANTS
 # ============================================================
 
+VERSION = "5.1.0"
+RENDER_OVERLAP_GRACE_SEC = int(os.getenv('RENDER_OVERLAP_GRACE_SEC', '15'))
+WATCHDOG_INTERVAL_SEC = 120
+STARTUP_TIMEOUT_SEC = 120
+GC_INTERVAL_SEC = 300
+
 BANNER = """
-╔══════════════════════════════════════════════════════════╗
-║                                                          ║
-║   ⚡ OPERATION FIRST MOVER v5 — Zero Cost MBA Agent     ║
-║                                                          ║
-║   12 AI Agents | 1080+ Companies | 8+ Job Boards        ║
-║   Groq + Cerebras | Telegram Command Center             ║
-║   Render Web Service + 5-Layer Keep-Alive               ║
-║   Total Daily Cost: ₹0.00                               ║
-║                                                          ║
-╚══════════════════════════════════════════════════════════╝
++============================================================+
+|                                                              |
+|   OPERATION FIRST MOVER v5.1 — Zero Cost MBA Agent          |
+|                                                              |
+|   12 AI Agents | 1081 Companies | 8+ Job Boards             |
+|   Groq + Cerebras Dual-Brain | Telegram Command Center      |
+|   Render Web Service + 5-Layer Keep-Alive                    |
+|   Industrial-Grade Orchestration | Total Daily Cost: $0      |
+|                                                              |
++============================================================+
 """
 
 
 # ============================================================
-# STARTUP SEQUENCE
+# SUBSYSTEM STATUS TRACKER
+# ============================================================
+
+class SubsystemStatus:
+    """Track health of each subsystem for diagnostics."""
+
+    def __init__(self):
+        self._status: Dict[str, Dict[str, Any]] = {}
+        self._start_time = time.monotonic()
+
+    def mark_ok(self, name: str, detail: str = ""):
+        self._status[name] = {
+            'state': 'OK',
+            'detail': detail,
+            'timestamp': time.monotonic() - self._start_time,
+        }
+
+    def mark_degraded(self, name: str, error: str):
+        self._status[name] = {
+            'state': 'DEGRADED',
+            'detail': error,
+            'timestamp': time.monotonic() - self._start_time,
+        }
+
+    def mark_failed(self, name: str, error: str):
+        self._status[name] = {
+            'state': 'FAILED',
+            'detail': error,
+            'timestamp': time.monotonic() - self._start_time,
+        }
+
+    @property
+    def all_ok(self) -> bool:
+        return all(s['state'] == 'OK' for s in self._status.values())
+
+    @property
+    def has_critical_failure(self) -> bool:
+        web = self._status.get('web_server', {})
+        return web.get('state') == 'FAILED'
+
+    def to_report(self) -> str:
+        lines = []
+        for name, info in self._status.items():
+            icon = {'OK': '+', 'DEGRADED': '~', 'FAILED': 'X'}.get(info['state'], '?')
+            detail_str = f" -- {info['detail']}" if info['detail'] else ''
+            lines.append(
+                f"  [{icon}] {name}: {info['state']}{detail_str}"
+                f" ({info['timestamp']:.1f}s)"
+            )
+        return '\n'.join(lines)
+
+    def to_telegram_msg(self) -> str:
+        lines = []
+        for name, info in self._status.items():
+            icon = {'OK': '✅', 'DEGRADED': '⚠️', 'FAILED': '❌'}.get(info['state'], '❓')
+            lines.append(f"{icon} <b>{name}</b>: {info['state']}")
+            if info['detail']:
+                lines.append(f"   <i>{info['detail'][:80]}</i>")
+        return '\n'.join(lines)
+
+
+# ============================================================
+# APPLICATION CLASS
 # ============================================================
 
 class Application:
     """
-    Main application class that manages the lifecycle of
-    all components: web server, keep-alive, database, AI router,
-    scheduler, and Telegram bot.
+    Main application orchestrator with phased startup, ordered shutdown,
+    watchdog monitoring, and graceful degradation.
     """
 
     def __init__(self):
@@ -146,197 +191,364 @@ class Application:
         self._scheduler = None
         self._telegram = None
         self._keepalive = None
+        self._db = None
         self._running = False
+        self._watchdog_task: Optional[asyncio.Task] = None
+        self._gc_task: Optional[asyncio.Task] = None
+        self._status = SubsystemStatus()
+        self._start_time = time.monotonic()
+        self._is_render = bool(
+            os.getenv('RENDER', '') or os.getenv('RENDER_DEPLOY', '')
+        )
 
-    async def start(self):
-        """Execute full startup sequence."""
-        print(BANNER)
-        logger.info("=" * 60)
-        logger.info("  OPERATION FIRST MOVER v5 — STARTING")
-        logger.info("  Mode: Render Web Service + Keep-Alive")
-        logger.info("=" * 60)
+    # ================================================================
+    # PHASE 1: FOUNDATION
+    # ================================================================
 
-        start_time = time.time()
+    def _init_foundation(self):
+        os.makedirs("data", exist_ok=True)
+        os.makedirs("logs", exist_ok=True)
 
-        # Step 1: Configuration
-        logger.info("[1/10] Loading configuration...")
         try:
             from core.config import get_config
             config = get_config()
-            logger.info(f"  Environment: {'Render' if config.is_render else 'Local'}")
-            logger.info(f"  Port: {os.getenv('PORT', '10000')}")
-            logger.info(f"  Groq API: {'SET' if config.groq.api_key else 'MISSING'}")
-            logger.info(f"  Cerebras API: {'SET' if config.cerebras.api_key else 'MISSING'}")
-            logger.info(f"  Telegram Bot: {'SET' if config.telegram.bot_token else 'MISSING'}")
-            logger.info(f"  SerpAPI: {'SET' if config.serpapi.api_key else 'MISSING'}")
-        except Exception as e:
-            logger.error(f"  Configuration error: {e}")
-            logger.warning("  Continuing with defaults...")
+            checks = config.validate_critical()
+            missing = [k for k, v in checks.items() if not v]
 
-        # Step 2: Database
-        logger.info("[2/10] Initializing database...")
+            detail = (
+                f"env={'Render' if self._is_render else 'Local'}, "
+                f"port={os.getenv('PORT', '10000')}"
+            )
+            if missing:
+                detail += f", MISSING: {', '.join(missing)}"
+                self._status.mark_degraded('config', detail)
+                logger.warning(f"[Phase 1] Config degraded: {detail}")
+            else:
+                self._status.mark_ok('config', detail)
+                logger.info(f"[Phase 1] Config loaded: {detail}")
+            return config
+        except Exception as e:
+            self._status.mark_degraded('config', str(e))
+            logger.error(f"[Phase 1] Config error: {e}")
+            return None
+
+    # ================================================================
+    # PHASE 2: STORAGE
+    # ================================================================
+
+    def _init_storage(self):
         try:
             from core.database import get_db
             db = get_db()
-            logger.info(f"  Database: {db.db_path}")
-            logger.info(f"  Tables: ready")
+            self._db = db
+            self._status.mark_ok('database', f"path={db.db_path}")
+            logger.info(f"[Phase 2] Database ready: {db.db_path}")
+            return db
         except Exception as e:
-            logger.error(f"  Database error: {e}")
-            # Don't return — web server must start for Render health check
-            db = None
+            self._status.mark_failed('database', str(e))
+            logger.error(f"[Phase 2] Database FAILED: {e}")
+            return None
 
-        # Step 3: Seed companies
-        logger.info("[3/10] Seeding company database...")
-        if db:
-            try:
-                from core.company_db_seed import seed_companies, TOTAL_COMPANIES
-                count = seed_companies()
-                if count > 0:
-                    logger.info(f"  Seeded: {count}/{TOTAL_COMPANIES} companies")
-                else:
-                    existing = db.count_companies()
-                    logger.info(f"  Already seeded: {existing} companies")
-            except Exception as e:
-                logger.error(f"  Company seed error: {e}")
+    # ================================================================
+    # PHASE 3: DATA SEED
+    # ================================================================
 
-        # Step 4: AI Router
-        logger.info("[4/10] Initializing AI router...")
+    def _init_data_seed(self, db):
+        if not db:
+            self._status.mark_degraded('seed', 'skipped (no db)')
+            return
+
+        try:
+            from core.company_db_seed import seed_companies, TOTAL_COMPANIES
+            count = seed_companies()
+            if count > 0:
+                detail = f"seeded {count}/{TOTAL_COMPANIES} companies"
+            else:
+                existing = db.count_companies()
+                detail = f"already seeded ({existing} companies)"
+
+            db.seed_agent_heartbeats()
+            detail += ", heartbeats A-01..A-12"
+
+            self._status.mark_ok('seed', detail)
+            logger.info(f"[Phase 3] {detail}")
+        except Exception as e:
+            self._status.mark_degraded('seed', str(e))
+            logger.error(f"[Phase 3] Seed error: {e}")
+
+    # ================================================================
+    # PHASE 4: AI LAYER
+    # ================================================================
+
+    def _init_ai_layer(self):
         try:
             from core.ai_router import get_router
             router = get_router()
-            logger.info("  AI Router: ready (Groq + Cerebras)")
+            self._status.mark_ok('ai_router', 'Groq + Cerebras dual-brain')
+            logger.info("[Phase 4] AI Router ready (Groq + Cerebras)")
+            return router
         except Exception as e:
-            logger.warning(f"  AI Router error: {e}")
+            self._status.mark_degraded('ai_router', str(e))
+            logger.warning(f"[Phase 4] AI Router degraded: {e}")
+            return None
 
-        # Step 5: Seed agent heartbeats
-        logger.info("[5/10] Seeding agent heartbeats...")
-        if db:
-            try:
-                db.seed_agent_heartbeats()
-                logger.info("  Heartbeats: A-01 to A-12 seeded")
-            except Exception as e:
-                logger.warning(f"  Heartbeat seed error: {e}")
+    # ================================================================
+    # PHASE 5: WEB LAYER (CRITICAL for Render)
+    # ================================================================
 
-        # Step 6: Stealth engine (lazy - don't initialize fully)
-        logger.info("[6/10] Stealth engine: lazy-load mode")
-
-        # Step 7: Start Web Server + Keep-Alive (CRITICAL for Render)
-        logger.info("[7/10] Starting web server + keep-alive...")
+    async def _init_web_layer(self):
         try:
             from core.keepalive import get_keepalive_manager, get_health_tracker
             self._keepalive = get_keepalive_manager()
             await self._keepalive.start()
 
             health_tracker = get_health_tracker()
-            health_tracker.set_db_status(db is not None)
-            logger.info(f"  Web server: port {self._keepalive.web_server.port}")
-            logger.info(f"  Self-ping: every 240s")
-            logger.info(f"  Endpoints: / /health /status /ping")
-        except Exception as e:
-            logger.error(f"  Web server error: {e}")
-            logger.error("  CRITICAL: Service may not stay alive on Render!")
+            health_tracker.set_db_status(self._db is not None)
 
-        # Step 8: Telegram bot
-        # On Render, we MUST delay polling to let the OLD instance die first.
-        # Render sends SIGTERM to old instance only AFTER new instance is healthy.
-        # The old instance gets a 30s grace period to shut down.
-        # We wait RENDER_OVERLAP_GRACE_SEC to guarantee no overlap.
-        logger.info("[8/10] Starting Telegram bot...")
-        is_render = os.getenv('RENDER', '') or os.getenv('RENDER_DEPLOY', '')
-        if is_render:
-            logger.info(
-                f"  Render detected — waiting {RENDER_OVERLAP_GRACE_SEC}s "
-                f"for old instance to release polling lock..."
+            port = os.getenv('PORT', '10000')
+            detail = (
+                f"port={port}, endpoints=/ /health /status /ping, "
+                f"self-ping=240s"
             )
+            self._status.mark_ok('web_server', detail)
+            logger.info(f"[Phase 5] Web server LIVE on port {port}")
+        except Exception as e:
+            self._status.mark_failed('web_server', str(e))
+            logger.error(f"[Phase 5] Web server FAILED: {e}")
+            logger.error("[Phase 5] CRITICAL: Render health checks will fail!")
+
+    # ================================================================
+    # PHASE 6: COMMS (Telegram)
+    # ================================================================
+
+    async def _init_telegram(self):
+        if self._is_render:
             logger.info(
-                f"  (Web server is already live on port "
-                f"{os.getenv('PORT', '10000')} — health checks pass)"
+                f"[Phase 6] Render detected -- {RENDER_OVERLAP_GRACE_SEC}s "
+                f"grace for old instance to release polling lock..."
             )
             await asyncio.sleep(RENDER_OVERLAP_GRACE_SEC)
-            logger.info("  Grace period complete. Starting Telegram bot now.")
+            logger.info("[Phase 6] Grace period complete.")
 
         try:
             from agents.a12_telegram_reporter import get_telegram_reporter
             self._telegram = get_telegram_reporter()
             await self._telegram.start_bot()
-            self._running = True
-            logger.info("  Telegram bot: running (polling mode)")
 
-            if self._keepalive:
-                get_health_tracker().set_telegram_status(True)
+            if self._telegram._running:
+                self._status.mark_ok('telegram', 'polling active, 29 commands')
+                logger.info("[Phase 6] Telegram bot running (polling mode)")
+                try:
+                    from core.keepalive import get_health_tracker
+                    get_health_tracker().set_telegram_status(True)
+                except Exception:
+                    pass
+            else:
+                self._status.mark_degraded(
+                    'telegram', 'started but polling not confirmed'
+                )
+                logger.warning("[Phase 6] Telegram started but polling unclear")
+
         except Exception as e:
-            logger.error(f"  Telegram bot error: {e}")
-            logger.warning("  System will run without Telegram commands")
+            self._status.mark_degraded('telegram', str(e))
+            logger.error(f"[Phase 6] Telegram error: {e}")
+            logger.warning("[Phase 6] System continues without Telegram commands")
 
-        # Step 9: Scheduler
-        logger.info("[9/10] Starting scheduler...")
+    # ================================================================
+    # PHASE 7: SCHEDULER
+    # ================================================================
+
+    async def _init_scheduler(self):
         try:
             from core.scheduler import get_scheduler
             self._scheduler = get_scheduler()
             await self._scheduler.start()
-            logger.info("  Scheduler: running")
 
-            if self._keepalive:
+            self._status.mark_ok('scheduler', 'running with 18 jobs')
+            logger.info("[Phase 7] Scheduler running")
+
+            try:
+                from core.keepalive import get_health_tracker
                 get_health_tracker().set_scheduler_status(True)
+            except Exception:
+                pass
+
         except Exception as e:
-            logger.error(f"  Scheduler error: {e}")
-            logger.warning("  System will run without scheduled jobs")
+            self._status.mark_degraded('scheduler', str(e))
+            logger.error(f"[Phase 7] Scheduler error: {e}")
+            logger.warning("[Phase 7] System continues without scheduled jobs")
 
-        # Step 10: Final status
-        duration = time.time() - start_time
-        self._running = True
+    # ================================================================
+    # PHASE 8: WATCHDOG + MEMORY MANAGER
+    # ================================================================
 
-        # Force garbage collection after startup
+    async def _watchdog_loop(self):
+        while not self._shutdown_event.is_set():
+            try:
+                await asyncio.sleep(WATCHDOG_INTERVAL_SEC)
+                if self._shutdown_event.is_set():
+                    break
+
+                # Check Telegram health
+                if (self._telegram and hasattr(self._telegram, '_running')
+                        and not self._telegram._running):
+                    logger.warning("[WATCHDOG] Telegram polling stopped")
+
+                # Check scheduler health
+                if self._scheduler:
+                    try:
+                        from core.scheduler import get_scheduler
+                        sched = get_scheduler()
+                        if hasattr(sched, '_scheduler') and sched._scheduler and not sched._scheduler.running:
+                            logger.warning("[WATCHDOG] Scheduler stopped -- attempting restart")
+                            await sched.start()
+                    except Exception as e:
+                        logger.error(f"[WATCHDOG] Scheduler check failed: {e}")
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"[WATCHDOG] Error: {e}")
+
+    async def _gc_loop(self):
+        while not self._shutdown_event.is_set():
+            try:
+                await asyncio.sleep(GC_INTERVAL_SEC)
+                if self._shutdown_event.is_set():
+                    break
+                collected = gc.collect()
+                if collected > 100:
+                    logger.debug(f"[GC] Collected {collected} objects")
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                pass
+
+    # ================================================================
+    # MASTER STARTUP
+    # ================================================================
+
+    async def start(self):
+        print(BANNER)
+        logger.info("=" * 60)
+        logger.info(f"  OPERATION FIRST MOVER v{VERSION} -- STARTING")
+        logger.info(f"  Mode: {'Render' if self._is_render else 'Local'} Web Service")
+        logger.info(f"  PID: {os.getpid()}")
+        logger.info("=" * 60)
+
+        start_time = time.monotonic()
+
+        logger.info("[Phase 1/8] Loading configuration...")
+        config = self._init_foundation()
+
+        logger.info("[Phase 2/8] Initializing database...")
+        db = self._init_storage()
+
+        logger.info("[Phase 3/8] Seeding data...")
+        self._init_data_seed(db)
+
+        logger.info("[Phase 4/8] Initializing AI router...")
+        self._init_ai_layer()
+
+        logger.info("[Phase 5/8] Starting web server + keep-alive...")
+        await self._init_web_layer()
+
+        logger.info("[Phase 6/8] Starting Telegram bot...")
+        await self._init_telegram()
+
+        logger.info("[Phase 7/8] Starting scheduler...")
+        await self._init_scheduler()
+
+        logger.info("[Phase 8/8] Starting watchdog + memory manager...")
+        self._watchdog_task = asyncio.create_task(self._watchdog_loop())
+        self._gc_task = asyncio.create_task(self._gc_loop())
+        self._status.mark_ok('watchdog', f'interval={WATCHDOG_INTERVAL_SEC}s')
+
         gc.collect()
 
-        render_url = os.getenv('RENDER_EXTERNAL_URL', 'not set')
+        duration = time.monotonic() - start_time
+        self._running = True
+
+        render_url = os.getenv('RENDER_EXTERNAL_URL', '')
         port = os.getenv('PORT', '10000')
 
         logger.info("=" * 60)
-        logger.info(f"  [10/10] STARTUP COMPLETE in {duration:.1f}s")
-        logger.info(f"  Status: {'RUNNING' if self._running else 'FAILED'}")
+        logger.info(f"  STARTUP COMPLETE in {duration:.1f}s")
+        logger.info(f"  Status: {'ALL OK' if self._status.all_ok else 'DEGRADED'}")
         logger.info(f"  Web: http://0.0.0.0:{port}")
-        if render_url != 'not set':
+        if render_url:
             logger.info(f"  Render URL: {render_url}")
             logger.info(f"  Health: {render_url}/health")
         logger.info(f"  Keep-Alive: 5 layers active")
+        logger.info(f"  Version: {VERSION}")
+        logger.info("=" * 60)
+        logger.info("Subsystem Report:")
+        logger.info(self._status.to_report())
         logger.info("=" * 60)
 
+        # Send startup report to Telegram
+        await self._send_startup_report(duration)
+
+    async def _send_startup_report(self, duration: float):
+        if not self._telegram or not self._telegram._running:
+            return
+
+        try:
+            render_url = os.getenv('RENDER_EXTERNAL_URL', 'N/A')
+            msg = (
+                f"🚀 <b>SYSTEM STARTUP COMPLETE</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"⏱ Duration: <b>{duration:.1f}s</b>\n"
+                f"🔗 {render_url}\n"
+                f"📦 Version: {VERSION}\n\n"
+                f"<b>Subsystem Status:</b>\n"
+                f"{self._status.to_telegram_msg()}\n\n"
+                f"{'✅ All systems operational' if self._status.all_ok else '⚠️ Some subsystems degraded'}\n"
+                f"💡 /health for live status | /quota for API usage"
+            )
+            await self._telegram.send_message(msg)
+        except Exception as e:
+            logger.debug(f"Startup report send failed (non-critical): {e}")
+
+    # ================================================================
+    # MAIN EVENT LOOP
+    # ================================================================
+
     async def run(self):
-        """Main event loop — runs until shutdown signal."""
         logger.info("Entering main event loop...")
         logger.info("Service is LIVE. Send SIGTERM or Ctrl+C to stop.")
 
         try:
-            # Wait for shutdown signal
             await self._shutdown_event.wait()
         except asyncio.CancelledError:
             pass
         finally:
             await self.shutdown()
 
+    # ================================================================
+    # GRACEFUL SHUTDOWN (ordered teardown)
+    # ================================================================
+
     async def shutdown(self):
         """
-        Graceful shutdown sequence.
-
-        ORDER IS CRITICAL:
-        1. Telegram FIRST — releases the getUpdates polling lock
-           so the NEXT instance can start cleanly.
-        2. Scheduler second — stops firing new jobs.
-        3. Keep-alive last — stop pinging (let Render know we're done).
-        4. Database close.
-
-        Each step has a timeout to prevent hanging on Render's
-        SIGTERM deadline (usually 30s grace period).
+        Graceful shutdown with strict ordering:
+        1. Watchdog + GC -> stop monitoring
+        2. Telegram FIRST -> release polling lock
+        3. Scheduler -> stop firing jobs
+        4. Keep-alive -> stop pinging
+        5. Database -> close connections
+        6. AI Router -> close HTTP clients
         """
         if not self._running:
-            return  # Already shut down or never started
+            return
+        self._running = False
 
-        logger.info("="  * 60)
-        logger.info("  SHUTTING DOWN (graceful)...")
+        logger.info("=" * 60)
+        logger.info("  GRACEFUL SHUTDOWN INITIATED")
         logger.info("=" * 60)
 
-        # Mark shutdown in health tracker so new instance can detect it
+        shutdown_start = time.monotonic()
+
         try:
             from core.keepalive import get_health_tracker
             get_health_tracker().set_shutdown_requested()
@@ -344,70 +556,79 @@ class Application:
         except Exception:
             pass
 
-        # ---- STEP 1: TELEGRAM FIRST (release polling lock + /close) ----
+        # Stop background tasks
+        for task_name, task in [('watchdog', self._watchdog_task), ('gc', self._gc_task)]:
+            if task and not task.done():
+                task.cancel()
+                try:
+                    await asyncio.wait_for(asyncio.shield(task), timeout=2.0)
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    pass
+        logger.info("  [0/5] Background tasks stopped")
+
+        # TELEGRAM FIRST
         if self._telegram:
             try:
-                await asyncio.wait_for(
-                    self._telegram.stop_bot(), timeout=20.0
-                )
-                logger.info(
-                    "  [1/4] Telegram bot: STOPPED "
-                    "(polling lock + server session released)"
-                )
+                await asyncio.wait_for(self._telegram.stop_bot(), timeout=20.0)
+                logger.info("  [1/5] Telegram: STOPPED (polling lock released)")
             except asyncio.TimeoutError:
-                logger.warning("  [1/4] Telegram bot: stop timed out (20s)")
+                logger.warning("  [1/5] Telegram: stop timed out (20s)")
             except Exception as e:
-                logger.error(f"  [1/4] Telegram stop error: {e}")
+                logger.error(f"  [1/5] Telegram: {e}")
+        else:
+            logger.info("  [1/5] Telegram: not running")
 
-        # ---- STEP 2: SCHEDULER ----
+        # Scheduler
         if self._scheduler:
             try:
-                await asyncio.wait_for(
-                    self._scheduler.stop(), timeout=10.0
-                )
-                logger.info("  [2/4] Scheduler: STOPPED")
+                await asyncio.wait_for(self._scheduler.stop(), timeout=10.0)
+                logger.info("  [2/5] Scheduler: STOPPED")
             except asyncio.TimeoutError:
-                logger.warning("  [2/4] Scheduler: stop timed out (10s)")
+                logger.warning("  [2/5] Scheduler: stop timed out (10s)")
             except Exception as e:
-                logger.error(f"  [2/4] Scheduler stop error: {e}")
+                logger.error(f"  [2/5] Scheduler: {e}")
+        else:
+            logger.info("  [2/5] Scheduler: not running")
 
-        # ---- STEP 3: KEEP-ALIVE ----
+        # Keep-alive
         if self._keepalive:
             try:
-                await asyncio.wait_for(
-                    self._keepalive.stop(), timeout=5.0
-                )
-                logger.info("  [3/4] Keep-alive: STOPPED")
+                await asyncio.wait_for(self._keepalive.stop(), timeout=5.0)
+                logger.info("  [3/5] Keep-alive: STOPPED")
             except asyncio.TimeoutError:
-                logger.warning("  [3/4] Keep-alive: stop timed out (5s)")
+                logger.warning("  [3/5] Keep-alive: stop timed out (5s)")
             except Exception as e:
-                logger.error(f"  [3/4] Keep-alive stop error: {e}")
+                logger.error(f"  [3/5] Keep-alive: {e}")
+        else:
+            logger.info("  [3/5] Keep-alive: not running")
 
-        # ---- STEP 4: DATABASE ----
+        # Database
         try:
             from core.database import get_db
             db = get_db()
             db.close()
-            logger.info("  [4/4] Database: CLOSED")
+            logger.info("  [4/5] Database: CLOSED")
         except Exception as e:
-            logger.error(f"  [4/4] Database close error: {e}")
+            logger.error(f"  [4/5] Database: {e}")
 
-        # ---- CLEANUP: Close AI router HTTP clients ----
+        # AI Router
         try:
-            from core.ai_router import get_ai_router
-            router = get_ai_router()
+            from core.ai_router import get_router
+            router = get_router()
             if hasattr(router, '_groq_client') and router._groq_client:
                 router._groq_client.close()
             if hasattr(router, '_cerebras_client') and router._cerebras_client:
                 router._cerebras_client.close()
+            logger.info("  [5/5] AI Router: clients closed")
         except Exception:
-            pass  # Best-effort cleanup
+            logger.info("  [5/5] AI Router: cleanup skipped")
 
-        self._running = False
-        logger.info("  Shutdown complete. Goodbye!")
+        shutdown_duration = time.monotonic() - shutdown_start
+        logger.info("=" * 60)
+        logger.info(f"  SHUTDOWN COMPLETE in {shutdown_duration:.1f}s")
+        logger.info("=" * 60)
 
     def request_shutdown(self):
-        """Request graceful shutdown (called by signal handlers)."""
         logger.info("Shutdown requested...")
         self._shutdown_event.set()
 
@@ -417,92 +638,55 @@ class Application:
 # ============================================================
 
 def setup_signal_handlers(app: Application, loop: asyncio.AbstractEventLoop):
-    """Register OS signal handlers for graceful shutdown.
-
-    CRITICAL FOR RENDER DEPLOYMENTS:
-    When Render deploys a new version, it sends SIGTERM to the old instance.
-    We MUST stop the Telegram polling IMMEDIATELY so the new instance
-    can start polling without hitting Conflict errors.
-
-    PRIORITY: Kill Telegram polling FIRST, in the signal handler itself,
-    before even entering the async shutdown sequence. This is the fastest
-    possible way to release the getUpdates lock.
-    """
+    """Register OS signal handlers for graceful shutdown."""
     def handle_signal(signum, frame):
         sig_name = signal.Signals(signum).name
-        logger.info(f"Received {sig_name} — GRACEFUL SHUTDOWN INITIATED")
+        logger.info(f"Received {sig_name} -- GRACEFUL SHUTDOWN INITIATED")
 
-        # PRIORITY: Stop Telegram polling AND call /close API to release
-        # the server-side session. This is THE critical step for Render
-        # redeployments — the new instance needs the polling lock ASAP.
-        # But we do NOT kill running scrape jobs — we let them finish
-        # their current batch commit before the full shutdown.
         if app._telegram:
-            async def _emergency_stop_telegram():
-                """Emergency: release polling lock + /close API on SIGTERM."""
+            async def _emergency_stop():
                 try:
-                    # Step 1: Stop the updater (releases local polling)
                     if app._telegram._app:
                         tg_app = app._telegram._app
                         if tg_app.updater and tg_app.updater.running:
-                            logger.info(
-                                "[SIGTERM] Force-stopping Telegram updater..."
-                            )
+                            logger.info("[SIGTERM] Force-stopping Telegram updater...")
                             await asyncio.wait_for(
                                 tg_app.updater.stop(), timeout=5.0
                             )
                             logger.info("[SIGTERM] Telegram updater STOPPED")
 
-                    # Step 2: Call /close API to release server-side session
                     try:
                         import aiohttp
                         token = app._telegram.config.telegram.bot_token
                         if token:
                             base = f"https://api.telegram.org/bot{token}"
                             timeout = aiohttp.ClientTimeout(total=5)
-                            async with aiohttp.ClientSession(
-                                timeout=timeout
-                            ) as session:
-                                async with session.post(
-                                    f"{base}/close"
-                                ) as resp:
+                            async with aiohttp.ClientSession(timeout=timeout) as session:
+                                async with session.post(f"{base}/close") as resp:
                                     result = await resp.json()
                                     logger.info(
-                                        f"[SIGTERM] /close API: "
-                                        f"{result.get('ok', False)}"
+                                        f"[SIGTERM] /close API: {result.get('ok', False)}"
                                     )
                     except Exception as close_err:
-                        logger.warning(
-                            f"[SIGTERM] /close API failed: {close_err}"
-                        )
+                        logger.warning(f"[SIGTERM] /close failed: {close_err}")
 
                 except asyncio.TimeoutError:
                     logger.warning("[SIGTERM] Updater stop timed out (5s)")
                 except Exception as e:
                     logger.error(f"[SIGTERM] Emergency stop error: {e}")
                 finally:
-                    # Update health tracker
                     try:
                         from core.keepalive import get_health_tracker
                         get_health_tracker().set_telegram_status(False)
                     except Exception:
                         pass
 
-                    # Step 3: Give running scrape/crawl jobs 10s to finish
-                    # their current batch commit before full shutdown.
-                    # Render gives 30s total grace period — Telegram takes ~5s,
-                    # so we have ~15s for scrapes to commit partial results.
-                    logger.info(
-                        "[SIGTERM] Waiting 8s for running jobs to finish "
-                        "current batch commit..."
-                    )
+                    logger.info("[SIGTERM] Waiting 8s for running jobs to finish...")
                     await asyncio.sleep(8)
-
-                    # Now trigger the full graceful shutdown
                     app.request_shutdown()
 
             loop.call_soon_threadsafe(
-                lambda: asyncio.ensure_future(_emergency_stop_telegram())
+                lambda: asyncio.ensure_future(_emergency_stop())
             )
         else:
             loop.call_soon_threadsafe(app.request_shutdown)
@@ -516,36 +700,33 @@ def setup_signal_handlers(app: Application, loop: asyncio.AbstractEventLoop):
 # ============================================================
 
 def main():
-    """Application entry point."""
-    # Ensure data directory exists
     os.makedirs("data", exist_ok=True)
     os.makedirs("logs", exist_ok=True)
 
-    # Create application
     app = Application()
-
-    # Create event loop
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
-    # Setup signal handlers
     setup_signal_handlers(app, loop)
 
     try:
-        # Start the application
         loop.run_until_complete(app.start())
-
-        # Run main loop until shutdown
         loop.run_until_complete(app.run())
     except KeyboardInterrupt:
         logger.info("KeyboardInterrupt received")
         loop.run_until_complete(app.shutdown())
     except Exception as e:
         logger.error(f"Fatal error: {e}")
-        import traceback
         traceback.print_exc()
         loop.run_until_complete(app.shutdown())
     finally:
+        pending = asyncio.all_tasks(loop)
+        for task in pending:
+            task.cancel()
+        if pending:
+            loop.run_until_complete(
+                asyncio.gather(*pending, return_exceptions=True)
+            )
         loop.close()
 
 

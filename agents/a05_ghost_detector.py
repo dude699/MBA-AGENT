@@ -693,7 +693,7 @@ def get_ghost_detector() -> GhostDetector:
 
 if __name__ == "__main__":
     print("=" * 60)
-    print(f"OPERATION FIRST MOVER v5 — {AGENT_NAME} Test")
+    print(f"OPERATION FIRST MOVER v5.1 — {AGENT_NAME} Test")
     print("=" * 60)
 
     detector = get_ghost_detector()
