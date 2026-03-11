@@ -669,9 +669,22 @@ class NaukriScraper:
 
             url = f"{NAUKRI_API_URL}?{urlencode(params)}"
 
+            # Naukri API requires specific headers to avoid 406
+            naukri_headers = {
+                'Accept': 'application/json',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'appid': '109',
+                'systemid': 'Jenga',
+                'Content-Type': 'application/json',
+                'gid': 'LOCATION,INDUSTRY,EDUCATION,FAREA_ROLE',
+                'Referer': 'https://www.naukri.com/',
+                'Origin': 'https://www.naukri.com',
+            }
+
             response = self.stealth.get(
                 url,
                 site='naukri',
+                headers=naukri_headers,
                 auto_delay=True,
             )
 
@@ -1111,6 +1124,9 @@ class PrimaryScraper:
         start_time = time.time()
         results = {'source': {}, 'total': 0, 'new': 0, 'errors': []}
 
+        # Count DB state before scraping so we can calculate net new
+        pre_count = self.db.count_raw_listings()
+
         # Update heartbeat
         self.db.update_agent_heartbeat(AGENT_ID, "running")
 
@@ -1145,20 +1161,25 @@ class PrimaryScraper:
         except Exception as e:
             results['errors'].append(f"General: {str(e)}")
 
+        # Calculate net new insertions
+        post_count = self.db.count_raw_listings()
+        results['new'] = max(0, post_count - pre_count)
+
         duration = time.time() - start_time
         results['duration_sec'] = round(duration, 1)
 
         # Update heartbeat
         self.db.update_agent_heartbeat(
             AGENT_ID, "completed",
-            items_processed=results['total'],
+            items_processed=results['new'],
             errors=len(results['errors']),
             duration_sec=duration
         )
 
         logger.info(
             f"[{AGENT_ID}] === MORNING SCRAPE COMPLETE === "
-            f"Total: {results['total']} | Duration: {duration:.1f}s"
+            f"Total: {results['total']} | New: {results['new']} | "
+            f"Duration: {duration:.1f}s"
         )
         return results
 
@@ -1170,6 +1191,9 @@ class PrimaryScraper:
         logger.info(f"[{AGENT_ID}] === AFTERNOON SCRAPE START ===")
         start_time = time.time()
         results = {'source': {}, 'total': 0, 'new': 0, 'errors': []}
+
+        # Count DB state before scraping
+        pre_count = self.db.count_raw_listings()
 
         self.db.update_agent_heartbeat(AGENT_ID, "running")
 
@@ -1193,19 +1217,24 @@ class PrimaryScraper:
         except Exception as e:
             results['errors'].append(f"General: {str(e)}")
 
+        # Calculate net new insertions
+        post_count = self.db.count_raw_listings()
+        results['new'] = max(0, post_count - pre_count)
+
         duration = time.time() - start_time
         results['duration_sec'] = round(duration, 1)
 
         self.db.update_agent_heartbeat(
             AGENT_ID, "completed",
-            items_processed=results['total'],
+            items_processed=results['new'],
             errors=len(results['errors']),
             duration_sec=duration
         )
 
         logger.info(
             f"[{AGENT_ID}] === AFTERNOON SCRAPE COMPLETE === "
-            f"Total: {results['total']} | Duration: {duration:.1f}s"
+            f"Total: {results['total']} | New: {results['new']} | "
+            f"Duration: {duration:.1f}s"
         )
         return results
 

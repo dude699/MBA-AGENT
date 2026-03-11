@@ -1029,7 +1029,7 @@ class DedupEngine:
         # Statistics
         self._stats = DedupStats()
 
-    def run_dedup(self, batch_size: int = 500, use_semantic: bool = False) -> DedupStats:
+    def run_dedup(self, batch_size: int = 2000, use_semantic: bool = False) -> DedupStats:
         """
         Run the full 6-layer deduplication pipeline.
         

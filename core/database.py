@@ -1977,6 +1977,13 @@ class DatabaseManager:
     def get_morning_brief_data(self) -> Dict[str, Any]:
         """Get all data needed for the morning Telegram brief."""
         with self.get_cursor() as cur:
+            # Total active clean listings (all time)
+            cur.execute(
+                """SELECT COUNT(*) FROM clean_listings
+                   WHERE status = 'active' AND is_ghost = 0"""
+            )
+            total_active = cur.fetchone()[0]
+
             # New listings in last 24h
             cur.execute(
                 """SELECT COUNT(*) FROM clean_listings
@@ -1992,11 +1999,11 @@ class DatabaseManager:
             )
             after_ghost = cur.fetchone()[0]
 
-            # Blue ocean count
+            # Blue ocean count (all active, not just 24h)
             cur.execute(
                 """SELECT COUNT(*) FROM clean_listings
-                   WHERE created_at >= datetime('now', '-24 hours')
-                     AND is_blue_ocean = 1 AND is_ghost = 0"""
+                   WHERE is_blue_ocean = 1 AND is_ghost = 0
+                     AND status = 'active'"""
             )
             blue_ocean_count = cur.fetchone()[0]
 
@@ -2007,6 +2014,13 @@ class DatabaseManager:
                      AND signal_score >= 50"""
             )
             signals_count = cur.fetchone()[0]
+
+            # Total raw listings (for diagnostics)
+            cur.execute("SELECT COUNT(*) FROM raw_listings")
+            total_raw = cur.fetchone()[0]
+
+            # Unprocessed raw listings
+            unprocessed = self.count_unprocessed_raw_listings()
 
             # Top 10 by PPO
             top_10 = self.get_top_listings(n=10)
@@ -2029,6 +2043,9 @@ class DatabaseManager:
 
             return {
                 'total_new': total_new,
+                'total_active': total_active,
+                'total_raw': total_raw,
+                'unprocessed_raw': unprocessed,
                 'after_ghost_filter': after_ghost,
                 'blue_ocean_count': blue_ocean_count,
                 'signals_fired': signals_count,
@@ -2357,6 +2374,63 @@ class DatabaseManager:
                 """
             )
             return cur.fetchone()[0]
+
+    def get_application_history(self, limit: int = 15) -> List[Dict]:
+        """Get recent application history.
+        Used by A-12 Telegram Reporter /appstatus command."""
+        with self.get_cursor() as cur:
+            cur.execute(
+                """
+                SELECT o.*, cl.title, cl.company, cl.url
+                FROM outcomes o
+                LEFT JOIN clean_listings cl ON o.listing_id = cl.id
+                ORDER BY o.applied_at DESC
+                LIMIT ?
+                """,
+                (limit,)
+            )
+            return [dict(row) for row in cur.fetchall()]
+
+    def get_application_stats(self) -> Dict[str, Any]:
+        """Get application statistics summary.
+        Used by A-12 Telegram Reporter /appstatus command."""
+        with self.get_cursor() as cur:
+            stats = {}
+
+            # Count by status
+            cur.execute(
+                """
+                SELECT status, COUNT(*) as cnt
+                FROM outcomes
+                GROUP BY status
+                """
+            )
+            for row in cur.fetchall():
+                stats[row[0]] = row[1]
+
+            # Applied today
+            cur.execute(
+                """
+                SELECT COUNT(*) FROM outcomes
+                WHERE date(applied_at) = date('now')
+                  AND status = 'applied'
+                """
+            )
+            stats['applied_today'] = cur.fetchone()[0]
+
+            # Queued (from auto_apply_queue if it exists)
+            try:
+                cur.execute(
+                    """
+                    SELECT COUNT(*) FROM auto_apply_queue
+                    WHERE status = 'queued'
+                    """
+                )
+                stats['queued'] = cur.fetchone()[0]
+            except Exception:
+                stats['queued'] = 0
+
+            return stats
 
     def get_hourly_usage(self, provider: str,
                           date_str: Optional[str] = None,

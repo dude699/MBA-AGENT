@@ -202,6 +202,9 @@ class ReportFormatter:
     def morning_brief(cls, data: Dict) -> str:
         """Format morning brief report with professional details."""
         total_new = data.get('total_new', 0)
+        total_active = data.get('total_active', 0)
+        total_raw = data.get('total_raw', 0)
+        unprocessed_raw = data.get('unprocessed_raw', 0)
         after_ghost = data.get('after_ghost_filter', 0)
         blue_ocean = data.get('blue_ocean_count', 0)
         signals = data.get('signals_fired', 0)
@@ -216,18 +219,32 @@ class ReportFormatter:
             f"📊 <b>Pipeline Summary</b>",
             f"  New listings (24h): <b>{total_new}</b>",
             f"  After ghost filter: <b>{after_ghost}</b>",
+            f"  Total active: <b>{total_active}</b>",
             f"  Blue Ocean alerts: <b>{blue_ocean}</b> 🌊",
             f"  Intent signals: <b>{signals}</b> 📡",
-            f"",
         ]
+
+        # Show pipeline health diagnostics if there are unprocessed items
+        if unprocessed_raw > 0:
+            lines.append(f"  ⚠️ Unprocessed raw: <b>{unprocessed_raw}</b> (run /run pipeline)")
+        if total_raw > 0 and total_active == 0:
+            lines.append(f"  📦 Raw scraped: <b>{total_raw}</b> (needs dedup processing)")
+        lines.append(f"")
 
         if top_10:
             lines.append(f"🏆 <b>TOP {len(top_10[:10])} BY PPO SCORE</b>")
             lines.append(f"")
             for i, listing in enumerate(top_10[:10], 1):
                 lines.append(cls._format_listing_line(i, listing))
+        elif total_active == 0 and total_raw > 0:
+            lines.append(
+                f"📭 {total_raw} raw listings scraped but not yet processed.\n"
+                f"Run /run pipeline to dedup, score, and rank them."
+            )
+        elif total_active == 0:
+            lines.append("📭 No listings yet. Run /run pipeline to start scraping.")
         else:
-            lines.append("📭 No scored listings yet. Run /run pipeline to start.")
+            lines.append(f"📭 No scored listings. {total_active} active listings need PPO scoring.")
 
         if dark:
             lines.append(f"🌑 <b>Dark Channel:</b> {len(dark)} new finds")
@@ -692,14 +709,14 @@ class TelegramReporter:
         app = (
             TGApplication.builder()
             .token(token)
-            .connect_timeout(20)
-            .read_timeout(20)
-            .write_timeout(20)
-            .pool_timeout(10)
-            .get_updates_connect_timeout(15)
-            .get_updates_read_timeout(15)
-            .get_updates_write_timeout(15)
-            .get_updates_pool_timeout(10)
+            .connect_timeout(30)
+            .read_timeout(30)
+            .write_timeout(30)
+            .pool_timeout(15)
+            .get_updates_connect_timeout(20)
+            .get_updates_read_timeout(45)
+            .get_updates_write_timeout(20)
+            .get_updates_pool_timeout(15)
             .build()
         )
 
@@ -1042,7 +1059,7 @@ class TelegramReporter:
         logger.info(f"[{AGENT_ID}] Bot fully stopped (session released)")
 
     async def send_message(self, text: str, chat_id: str = None):
-        """Send a message to configured chat, with auto-splitting."""
+        """Send a message to configured chat, with auto-splitting on newlines."""
         if chat_id is None:
             chat_id = self.config.telegram.chat_id
         if not chat_id:
@@ -1053,16 +1070,32 @@ class TelegramReporter:
             from telegram import Bot
             bot = Bot(token=self.config.telegram.bot_token)
 
-            # Split long messages
-            for i in range(0, len(text), TG_MAX_LEN):
-                chunk = text[i:i + TG_MAX_LEN]
+            # Smart split on newlines for long messages
+            chunks = []
+            remaining = text
+            while remaining:
+                if len(remaining) <= TG_MAX_LEN:
+                    chunks.append(remaining)
+                    break
+                split_pos = remaining.rfind('\n', 0, TG_MAX_LEN)
+                if split_pos == -1 or split_pos < TG_MAX_LEN // 2:
+                    split_pos = TG_MAX_LEN
+                chunks.append(remaining[:split_pos])
+                remaining = remaining[split_pos:].lstrip('\n')
+
+            for chunk in chunks:
+                if not chunk.strip():
+                    continue
                 try:
                     await bot.send_message(
                         chat_id=chat_id, text=chunk, parse_mode='HTML'
                     )
                 except Exception:
                     # Fallback without HTML parse mode
-                    await bot.send_message(chat_id=chat_id, text=chunk)
+                    try:
+                        await bot.send_message(chat_id=chat_id, text=chunk)
+                    except Exception as e2:
+                        logger.error(f"[{AGENT_ID}] Send fallback also failed: {e2}")
         except Exception as e:
             logger.error(f"[{AGENT_ID}] Send message failed: {e}")
 
@@ -1812,7 +1845,7 @@ class TelegramReporter:
                 "🚀 <b>Manual Agent Runner</b>",
                 "━━━━━━━━━━━━━━━━━━━━━━━━━━━",
                 "",
-                "Usage: <code>/run &lt;agent&gt;</code>",
+                "Usage: <code>/run agent_name</code>",
                 "",
                 "⚡ <b>Full Pipeline:</b>",
                 "  <code>/run pipeline</code> — Runs ALL steps in order",
@@ -1827,7 +1860,7 @@ class TelegramReporter:
             lines.append("")
             lines.append("📊 <b>Background Task Control:</b>")
             lines.append("  <code>/status</code> — See running tasks")
-            lines.append("  <code>/cancel &lt;task&gt;</code> — Cancel a task")
+            lines.append("  <code>/cancel task_name</code> — Cancel a task")
             lines.append("")
             lines.append("💡 Agents run in background. You'll get live progress updates.")
             lines.append("💡 Scheduled cycles are NOT affected — they run at their normal times.")
@@ -1882,19 +1915,31 @@ class TelegramReporter:
         await update.message.reply_text(
             f"🏃 <b>{info['desc']}</b> — started in background\n"
             f"You'll get live progress updates here.\n"
-            f"Use /status to check | /cancel {agent_name} to stop",
+            f"Use /status to check | <code>/cancel {agent_name}</code> to stop",
             parse_mode='HTML'
         )
 
     async def _stream_msg(self, chat_id: int, text: str):
-        """Send a progress message to a specific chat."""
+        """Send a progress message to a specific chat. Falls back to plain text."""
         try:
             if self._app and self._app.bot:
-                await self._app.bot.send_message(
-                    chat_id=chat_id,
-                    text=text,
-                    parse_mode='HTML'
-                )
+                try:
+                    await self._app.bot.send_message(
+                        chat_id=chat_id,
+                        text=text,
+                        parse_mode='HTML'
+                    )
+                except Exception:
+                    # Fallback: strip HTML and send as plain text
+                    import re
+                    plain = re.sub(r'<[^>]+>', '', text)
+                    try:
+                        await self._app.bot.send_message(
+                            chat_id=chat_id,
+                            text=plain,
+                        )
+                    except Exception as e2:
+                        logger.debug(f"[{AGENT_ID}] Stream msg fallback failed: {e2}")
         except Exception as e:
             logger.debug(f"[{AGENT_ID}] Stream msg failed: {e}")
 
@@ -2119,7 +2164,7 @@ class TelegramReporter:
                     f"  🔄 <b>{name}</b>: {desc}\n"
                     f"     Running for {elapsed:.0f}s"
                 )
-            lines.append(f"\n💡 Use /cancel <task> to stop a task.")
+            lines.append(f"\n💡 Use <code>/cancel task_name</code> to stop a task.")
 
         await update.message.reply_text('\n'.join(lines), parse_mode='HTML')
 
@@ -2386,9 +2431,37 @@ class TelegramReporter:
     # ================================================================
 
     async def _send_long_message(self, update, text: str):
-        """Send a message, splitting if too long."""
-        for i in range(0, len(text), TG_MAX_LEN):
-            chunk = text[i:i + TG_MAX_LEN]
+        """Send a message, splitting if too long. Smart split on newlines."""
+        if len(text) <= TG_MAX_LEN:
+            try:
+                await update.message.reply_text(text, parse_mode='HTML')
+            except Exception:
+                try:
+                    await update.message.reply_text(text)
+                except Exception as e:
+                    logger.error(f"[{AGENT_ID}] Message send error: {e}")
+            return
+
+        # Smart split: try to break on newlines to avoid cutting HTML tags
+        chunks = []
+        remaining = text
+        while remaining:
+            if len(remaining) <= TG_MAX_LEN:
+                chunks.append(remaining)
+                break
+
+            # Find the last newline within the limit
+            split_pos = remaining.rfind('\n', 0, TG_MAX_LEN)
+            if split_pos == -1 or split_pos < TG_MAX_LEN // 2:
+                # No good newline split point, hard split at limit
+                split_pos = TG_MAX_LEN
+
+            chunks.append(remaining[:split_pos])
+            remaining = remaining[split_pos:].lstrip('\n')
+
+        for chunk in chunks:
+            if not chunk.strip():
+                continue
             try:
                 await update.message.reply_text(chunk, parse_mode='HTML')
             except Exception:
