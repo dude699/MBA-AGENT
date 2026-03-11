@@ -383,16 +383,19 @@ class Application:
     # ================================================================
 
     async def _watchdog_loop(self):
+        check_count = 0
         while not self._shutdown_event.is_set():
             try:
                 await asyncio.sleep(WATCHDOG_INTERVAL_SEC)
                 if self._shutdown_event.is_set():
                     break
 
+                check_count += 1
+
                 # Check Telegram health
                 if (self._telegram and hasattr(self._telegram, '_running')
                         and not self._telegram._running):
-                    logger.warning("[WATCHDOG] Telegram polling stopped")
+                    logger.warning("[WATCHDOG] Telegram polling stopped — may need restart")
 
                 # Check scheduler health
                 if self._scheduler:
@@ -404,6 +407,29 @@ class Application:
                             await sched.start()
                     except Exception as e:
                         logger.error(f"[WATCHDOG] Scheduler check failed: {e}")
+
+                # Every 10 checks (~20 min), log database health summary
+                if check_count % 10 == 0 and self._db:
+                    try:
+                        from core.database import get_db
+                        db = get_db()
+                        raw_count = db.count_raw_listings()
+                        unprocessed = db.count_unprocessed_raw_listings()
+                        with db.get_cursor() as cur:
+                            cur.execute("SELECT COUNT(*) FROM clean_listings WHERE status = 'active'")
+                            clean_count = cur.fetchone()[0]
+                        logger.info(
+                            f"[WATCHDOG] DB health: raw={raw_count}, "
+                            f"unprocessed={unprocessed}, clean_active={clean_count}"
+                        )
+                        # Alert if there are many unprocessed listings
+                        if unprocessed > 100:
+                            logger.warning(
+                                f"[WATCHDOG] {unprocessed} unprocessed raw listings! "
+                                f"Pipeline may be stalled."
+                            )
+                    except Exception as e:
+                        logger.debug(f"[WATCHDOG] DB health check error: {e}")
 
             except asyncio.CancelledError:
                 break

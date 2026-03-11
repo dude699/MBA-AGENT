@@ -225,6 +225,8 @@ class AgentScheduler:
             IntervalTrigger(minutes=10),
             id='keep_alive',
             name='[SYS] Keep-Alive Ping',
+            misfire_grace_time=600,  # 10 min grace — don't warn if slightly late
+            coalesce=True,  # If multiple missed, only run once
         )
         self._job_count += 1
 
@@ -353,11 +355,19 @@ class AgentScheduler:
         - Retry logic with exponential backoff (max 2 retries)
         - Execution tracking and heartbeat update
         - Structured error logging with traceback
+        
+        NOTE: Agents that self-manage heartbeats (A-03, A-04, A-05, A-06, A-07, A-08)
+        should NOT have their heartbeats overwritten here. The scheduler only updates
+        heartbeats for agents that don't self-manage (brief/summary jobs).
         """
         execution = JobExecution(job_id=name, start_time=time.time())
         job_timeout = kwargs.pop('job_timeout', 900)
         max_retries = kwargs.pop('max_retries', 2)
         retry_delay = 30  # seconds between retries
+
+        # Agents that self-manage their own heartbeats
+        # These agents call db.update_agent_heartbeat() internally
+        self_managed_agents = {'A-01', 'A-02', 'A-03', 'A-04', 'A-05', 'A-06', 'A-07', 'A-08', 'A-11'}
 
         last_error = None
         for attempt in range(1, max_retries + 1):
@@ -367,16 +377,40 @@ class AgentScheduler:
                 else:
                     logger.info(f"[SCHEDULER] Running {name}...")
 
-                # Run in executor if sync, otherwise await directly
+                # Determine if function is sync or async
                 loop = asyncio.get_running_loop()
-                result = func(*args, **kwargs)
-                if asyncio.iscoroutine(result):
-                    result = await asyncio.wait_for(result, timeout=job_timeout)
+                import inspect
+                if inspect.iscoroutinefunction(func):
+                    # Async function — await it directly
+                    result = await asyncio.wait_for(func(*args, **kwargs), timeout=job_timeout)
+                else:
+                    # Sync function — run in executor to avoid blocking event loop
+                    # This is critical: long-running sync agents (A-01, A-03, A-04)
+                    # can take 10-30 minutes. Running them in the main thread blocks
+                    # APScheduler, keep-alive pings, and Telegram polling.
+                    result = await asyncio.wait_for(
+                        loop.run_in_executor(None, lambda: func(*args, **kwargs)),
+                        timeout=job_timeout
+                    )
 
                 execution.success = True
                 execution.end_time = time.time()
+
+                # Extract items_processed from result if possible
+                if isinstance(result, dict):
+                    execution.items_processed = result.get('new', 0) or result.get('total', 0) or result.get('processed', 0)
+                elif hasattr(result, 'total_processed'):
+                    execution.items_processed = getattr(result, 'total_processed', 0)
+                elif hasattr(result, 'new_clean_listings'):
+                    execution.items_processed = getattr(result, 'new_clean_listings', 0)
+
                 self._tracker.record(execution)
-                self._update_heartbeat(name, execution)
+
+                # Only update heartbeat for agents that DON'T self-manage
+                agent_id = name.split(' ')[0] if ' ' in name else name
+                if agent_id not in self_managed_agents:
+                    self._update_heartbeat(name, execution)
+
                 logger.info(
                     f"[SCHEDULER] {name} completed in "
                     f"{execution.duration_sec}s"
@@ -409,6 +443,8 @@ class AgentScheduler:
         execution.error = last_error
         execution.end_time = time.time()
         self._tracker.record(execution)
+
+        # For failed agents, always update heartbeat to mark error
         self._update_heartbeat(name, execution)
 
         logger.error(

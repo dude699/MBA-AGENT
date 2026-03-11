@@ -530,6 +530,10 @@ class StealthRequestBuilder:
         elif site == 'naukri':
             headers['appid'] = '109'
             headers['systemid'] = 'Jenga'
+            headers['Accept'] = 'application/json'
+            headers['Content-Type'] = 'application/json'
+            headers['Referer'] = 'https://www.naukri.com/'
+            headers['Origin'] = 'https://www.naukri.com'
         elif site == 'indeed':
             headers['Referer'] = 'https://www.indeed.co.in/'
 
