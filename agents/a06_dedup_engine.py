@@ -92,6 +92,7 @@ except ImportError:
 from core.config import get_config, IST
 from core.database import get_db, DatabaseManager, RawListing, CleanListing
 from core.ai_router import get_router, AIRouter
+from core.job_filter import score_job_relevance, FilterResult
 
 
 # ============================================================
@@ -256,6 +257,7 @@ class DedupStats:
     total_processed: int = 0
     new_clean_listings: int = 0
     duplicates_found: int = 0
+    filtered_irrelevant: int = 0
     layer_1_url_matches: int = 0
     layer_2_exact_matches: int = 0
     layer_3_fuzzy_matches: int = 0
@@ -273,6 +275,7 @@ class DedupStats:
             f"Processed: {self.total_processed}",
             f"New Clean: {self.new_clean_listings}",
             f"Duplicates: {self.duplicates_found}",
+            f"Filtered (sales/irrelevant): {self.filtered_irrelevant}",
             f"  L1 (URL): {self.layer_1_url_matches}",
             f"  L2 (Exact): {self.layer_2_exact_matches}",
             f"  L3 (Fuzzy): {self.layer_3_fuzzy_matches}",
@@ -1091,6 +1094,7 @@ class DedupEngine:
             f"Processed: {self._stats.total_processed} | "
             f"New: {self._stats.new_clean_listings} | "
             f"Dups: {self._stats.duplicates_found} | "
+            f"Filtered: {self._stats.filtered_irrelevant} | "
             f"L1:{self._stats.layer_1_url_matches} "
             f"L2:{self._stats.layer_2_exact_matches} "
             f"L3:{self._stats.layer_3_fuzzy_matches} "
@@ -1124,6 +1128,30 @@ class DedupEngine:
         stipend = raw.get('stipend_normalized', 0) or 0
         duration = raw.get('duration_months', 0) or 0
         description = raw.get('description_text', '')
+
+        # ---- LAYER 0: Smart Relevance Filter ----
+        # Filter out sales/BD/irrelevant roles BEFORE dedup
+        company_obj = self.db.fuzzy_match_company(company)
+        company_tier = company_obj.get('tier', 5) if company_obj else 5
+
+        filter_result = score_job_relevance(
+            title=title,
+            company=company,
+            description=description,
+            category=raw.get('category', ''),
+            location=location,
+            stipend=stipend,
+            company_tier=company_tier,
+            source=raw.get('source', ''),
+        )
+
+        if not filter_result.is_relevant:
+            self._stats.filtered_irrelevant += 1
+            self.db.mark_raw_listing_processed(raw_id, filtered=True)
+            logger.debug(
+                f"[{AGENT_ID}] Filtered: '{title}' @ {company} — {filter_result.reason}"
+            )
+            return
 
         # Layer 1: URL Match
         match = self.layer1.check(url)

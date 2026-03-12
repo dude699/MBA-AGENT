@@ -120,7 +120,8 @@ class ReportFormatter:
         'greenhouse': '🌿', 'lever': '⚙️', 'indeed': '🟠',
         'iimjobs': '🟡', 'wellfound': '🔶', 'dark_channel': '🌑',
         'glassdoor': '🟩', 'workday': '🔷', 'smartrecruiters': '💼',
-        'ashby': '🔘', 'twitter_x': '🐦',
+        'ashby': '🔘', 'twitter_x': '🐦', 'career_page': '🏢',
+        'instahyre': '💎', 'ats_crawler': '🤖',
     }
 
     # Tier label mapping
@@ -229,6 +230,17 @@ class ReportFormatter:
             lines.append(f"  ⚠️ Unprocessed raw: <b>{unprocessed_raw}</b> (run /run pipeline)")
         if total_raw > 0 and total_active == 0:
             lines.append(f"  📦 Raw scraped: <b>{total_raw}</b> (needs dedup processing)")
+
+        # Source breakdown
+        source_data = data.get('source_counts', {})
+        if source_data:
+            lines.append(f"")
+            lines.append(f"📡 <b>Sources</b>")
+            for src, cnt in sorted(source_data.items(), key=lambda x: -x[1]):
+                if cnt > 0:
+                    emoji = cls.SOURCE_EMOJI.get(src, '📡')
+                    lines.append(f"  {emoji} {src}: <b>{cnt}</b>")
+
         lines.append(f"")
 
         if top_10:
@@ -754,6 +766,12 @@ class TelegramReporter:
             'queue': self._cmd_queue,
             'autoapply': self._cmd_autoapply,
             'appstatus': self._cmd_appstatus,
+            'loadall': self._cmd_loadall,
+            'filter': self._cmd_filter,
+            'sources': self._cmd_sources,
+            'browse': self._cmd_browse,
+            'cfstatus': self._cmd_cfstatus,
+            'reprocess': self._cmd_reprocess,
         }
 
         for cmd_name, handler_fn in commands.items():
@@ -1128,23 +1146,28 @@ class TelegramReporter:
     async def _cmd_help(self, update, context):
         """Full command reference."""
         msg = (
-            "📖 <b>Command Reference (29 Commands)</b>\n"
+            "📖 <b>Command Reference (37 Commands)</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "📊 <b>Reports</b>\n"
-            "/morning — Full morning brief\n"
+            "📋 <b>Browse & Discover</b>\n"
+            "/loadall [page] [cat] [src] — Browse ALL listings\n"
+            "/browse [category] — Category browser\n"
+            "/filter — Available filters & counts\n"
+            "/sources — Source health dashboard\n"
             "/top [N] — Top N by PPO score (default 10)\n"
             "/ocean — Blue Ocean listings\n"
+            "/export [N] — Export to Excel\n\n"
+            "📊 <b>Reports</b>\n"
+            "/morning — Full morning brief\n"
             "/dark — Dark channel finds\n"
             "/signals — Active intent signals\n"
             "/stats — Weekly funnel stats\n\n"
             "🔍 <b>Search</b>\n"
             "/internshala [query] — Live search\n"
-            "/refresh — Force re-scrape all sources\n"
-            "/export [N] — Export to Excel\n\n"
+            "/refresh — Force re-scrape all sources\n\n"
             "📝 <b>Application</b>\n"
             "/package [id] — Full app package\n"
             "/ats [id] — ATS keyword simulation\n"
-            "/cover [id] — AI cover letter (no AI markers)\n"
+            "/cover [id] — AI cover letter\n"
             "/network [company] — Alumni map\n"
             "/apply [id] — Mark as applied\n"
             "/outcome [id] [result] — Log result\n\n"
@@ -1164,6 +1187,8 @@ class TelegramReporter:
             "⚙️ <b>System</b>\n"
             "/health — Agent heartbeats\n"
             "/quota — API usage\n"
+            "/cfstatus — Cloudflare /crawl status\n"
+            "/reprocess — Raw listing status/reset\n"
             "/settings — Preferences"
         )
         await update.message.reply_text(msg, parse_mode='HTML')
@@ -2375,6 +2400,335 @@ class TelegramReporter:
             await update.message.reply_text(f"❌ Error: {e}")
 
     # ================================================================
+    # /loadall — BROWSE ALL LISTINGS WITH PAGINATION
+    # ================================================================
+
+    @command_error_boundary
+    async def _cmd_loadall(self, update, context):
+        """Browse ALL clean listings with pagination and filters.
+        Usage: /loadall [page] [category] [source]
+        Examples:
+            /loadall              — Page 1, all listings
+            /loadall 2            — Page 2
+            /loadall 1 marketing  — Page 1, marketing only
+            /loadall 1 all linkedin — Page 1, LinkedIn only
+        """
+        page = 1
+        category = None
+        source = None
+        per_page = 15
+
+        if context.args:
+            # Parse page number
+            try:
+                page = max(1, int(context.args[0]))
+            except ValueError:
+                pass
+
+            # Parse category filter
+            if len(context.args) > 1:
+                cat_arg = context.args[1].lower()
+                if cat_arg != 'all':
+                    category = cat_arg
+
+            # Parse source filter
+            if len(context.args) > 2:
+                source = context.args[2].lower()
+
+        offset = (page - 1) * per_page
+
+        listings = self.db.get_all_clean_listings(
+            limit=per_page, offset=offset,
+            category=category, source=source,
+            sort_by='ppo_score', sort_order='DESC'
+        )
+
+        if not listings:
+            msg = "📋 No listings found"
+            if category:
+                msg += f" for category '{category}'"
+            if source:
+                msg += f" from '{source}'"
+            msg += f" on page {page}."
+            msg += "\n\nTry: /loadall 1"
+            await update.message.reply_text(msg)
+            return
+
+        # Count totals for header
+        total = self.db.count_clean_listings_filtered(
+            category=category, source=source
+        )
+        total_pages = max(1, (total + per_page - 1) // per_page)
+
+        lines = [
+            f"📋 <b>ALL LISTINGS</b> — Page {page}/{total_pages} ({total} total)",
+        ]
+        if category or source:
+            filters = []
+            if category:
+                filters.append(f"📂 {category}")
+            if source:
+                filters.append(f"📡 {source}")
+            lines.append(f"<i>Filters: {' | '.join(filters)}</i>")
+        lines.extend(["━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", ""])
+
+        start_num = offset + 1
+        for i, l in enumerate(listings, start_num):
+            lines.append(self.formatter._format_listing_line(i, l))
+
+        # Navigation hints
+        nav = []
+        if page > 1:
+            nav.append(f"/loadall {page-1}" + (f" {category}" if category else "") + (f" {source}" if source else ""))
+        if page < total_pages:
+            nav.append(f"/loadall {page+1}" + (f" {category}" if category else "") + (f" {source}" if source else ""))
+        if nav:
+            lines.append(f"\n📄 Navigate: {' | '.join(nav)}")
+
+        lines.append(f"\n💡 /filter to see available filters")
+        await self._send_long_message(update, '\n'.join(lines))
+
+    # ================================================================
+    # /filter — SHOW AVAILABLE FILTERS AND STATS
+    # ================================================================
+
+    @command_error_boundary
+    async def _cmd_filter(self, update, context):
+        """Show available filter categories and sources with counts.
+        Usage: /filter
+        """
+        # Get category counts
+        cat_counts = self.db.get_category_counts()
+        source_counts = self.db.get_source_counts()
+
+        lines = [
+            "🔍 <b>FILTER OPTIONS</b>",
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+            "",
+            "📂 <b>By Category:</b>",
+        ]
+
+        for cat, count in sorted(cat_counts.items(), key=lambda x: -x[1]):
+            if count > 0:
+                lines.append(f"  • <code>{cat}</code> — {count} listings")
+                lines.append(f"    → /loadall 1 {cat}")
+
+        lines.extend(["", "📡 <b>By Source:</b>"])
+        for src, count in sorted(source_counts.items(), key=lambda x: -x[1]):
+            if count > 0:
+                emoji = self.formatter.SOURCE_EMOJI.get(src, '📡')
+                lines.append(f"  {emoji} <code>{src}</code> — {count} listings")
+                lines.append(f"    → /loadall 1 all {src}")
+
+        lines.extend([
+            "",
+            "📊 <b>Combine filters:</b>",
+            "  /loadall 1 marketing linkedin",
+            "  /loadall 1 finance internshala",
+            "",
+            "🏆 <b>Quick views:</b>",
+            "  /top 20 — Top 20 by PPO score",
+            "  /ocean — Blue Ocean (low competition)",
+            "  /loadall — Browse all",
+        ])
+
+        await self._send_long_message(update, '\n'.join(lines))
+
+    # ================================================================
+    # /sources — SOURCE HEALTH & STATISTICS
+    # ================================================================
+
+    @command_error_boundary
+    async def _cmd_sources(self, update, context):
+        """Show detailed source health and scraping statistics."""
+        source_counts = self.db.get_source_counts()
+        raw_counts = self.db.get_raw_source_counts()
+
+        lines = [
+            "📡 <b>SOURCE HEALTH DASHBOARD</b>",
+            f"<i>{datetime.now(IST).strftime('%d %b %Y, %I:%M %p IST')}</i>",
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+            "",
+        ]
+
+        total_clean = sum(source_counts.values())
+        total_raw = sum(raw_counts.values())
+
+        lines.append(f"📊 Total clean listings: <b>{total_clean}</b>")
+        lines.append(f"📦 Total raw scraped: <b>{total_raw}</b>")
+        lines.append(f"🔄 Conversion rate: <b>{total_clean/max(total_raw,1)*100:.1f}%</b>")
+        lines.append("")
+
+        all_sources = set(list(source_counts.keys()) + list(raw_counts.keys()))
+        for src in sorted(all_sources):
+            emoji = self.formatter.SOURCE_EMOJI.get(src, '📡')
+            clean = source_counts.get(src, 0)
+            raw = raw_counts.get(src, 0)
+            status = "✅" if clean > 0 else ("⚠️" if raw > 0 else "❌")
+            lines.append(
+                f"{status} {emoji} <b>{src}</b>: "
+                f"{clean} clean / {raw} raw"
+            )
+
+        lines.extend([
+            "",
+            "💡 <b>Commands:</b>",
+            "  /refresh — Force re-scrape all sources",
+            "  /run pipeline — Run full processing pipeline",
+            "  /loadall 1 all <source> — Browse by source",
+        ])
+
+        await self._send_long_message(update, '\n'.join(lines))
+
+    # ================================================================
+    # /browse — QUICK CATEGORY BROWSER
+    # ================================================================
+
+    @command_error_boundary
+    async def _cmd_browse(self, update, context):
+        """Quick category browser — jump to any category.
+        Usage: /browse [category]
+        """
+        if not context.args:
+            # Show category menu
+            cat_counts = self.db.get_category_counts()
+            lines = [
+                "📂 <b>CATEGORY BROWSER</b>",
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+                "",
+            ]
+            for cat, count in sorted(cat_counts.items(), key=lambda x: -x[1]):
+                if count > 0:
+                    lines.append(f"  📁 /browse {cat} — {count} listings")
+
+            lines.extend([
+                "",
+                "💡 Tap any category above to view listings",
+            ])
+            await self._send_long_message(update, '\n'.join(lines))
+            return
+
+        # Show listings for that category
+        category = context.args[0].lower()
+        listings = self.db.get_all_clean_listings(
+            limit=15, offset=0,
+            category=category, sort_by='ppo_score'
+        )
+
+        if not listings:
+            await update.message.reply_text(
+                f"📂 No listings in '{category}'.\n"
+                f"Try /browse to see available categories."
+            )
+            return
+
+        total = self.db.count_clean_listings_filtered(category=category)
+        lines = [
+            f"📂 <b>{category.upper()}</b> — {total} listings (showing top 15)",
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", "",
+        ]
+        for i, l in enumerate(listings, 1):
+            lines.append(self.formatter._format_listing_line(i, l))
+
+        if total > 15:
+            lines.append(f"\n📄 More: /loadall 2 {category}")
+        lines.append(f"💡 /export for Excel | /browse for categories")
+        await self._send_long_message(update, '\n'.join(lines))
+
+    # ================================================================
+    # /cfstatus — CLOUDFLARE CRAWL STATUS
+    # ================================================================
+
+    @command_error_boundary
+    async def _cmd_cfstatus(self, update, context):
+        """Show Cloudflare /crawl API configuration status."""
+        try:
+            from core.cloudflare_crawl import get_status
+            status = get_status()
+        except ImportError:
+            await update.message.reply_text("❌ Cloudflare crawl module not found")
+            return
+
+        configured = status.get('configured', False)
+        lines = [
+            "☁️ <b>CLOUDFLARE /CRAWL STATUS</b>",
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+            "",
+            f"Status: {'✅ CONFIGURED' if configured else '❌ NOT CONFIGURED'}",
+            f"Worker URL: {status.get('worker_url', 'NOT SET')}",
+            f"Requests this hour: {status.get('requests_this_hour', 0)}/{status.get('max_per_hour', 10)}",
+            f"Free tier: {status.get('free_tier_limit', '5,000/month')}",
+        ]
+        if not configured:
+            lines.extend([
+                "",
+                "📋 <b>Setup Guide (FREE):</b>",
+                "1. Create Cloudflare account",
+                "2. Enable Browser Rendering (free tier)",
+                "3. Deploy Worker (see core/cloudflare_crawl.py)",
+                "4. Set env vars:",
+                "   CF_CRAWL_WORKER_URL=https://your.workers.dev",
+                "   CF_CRAWL_SECRET=your-secret",
+            ])
+        await self._send_long_message(update, '\n'.join(lines))
+
+    # ================================================================
+    # /reprocess — FORCE RE-PROCESS STUCK RAW LISTINGS
+    # ================================================================
+
+    @command_error_boundary
+    async def _cmd_reprocess(self, update, context):
+        """Force re-process stuck/pending raw listings through the pipeline.
+        Usage: /reprocess [reset]
+            /reprocess       — Show status of raw listings
+            /reprocess reset — Reset all 'duplicate' raw to 'pending' for re-eval
+        """
+        unprocessed = self.db.count_unprocessed_raw_listings()
+
+        if context.args and context.args[0].lower() == 'reset':
+            # Reset all duplicate raw listings back to pending
+            with self.db.get_cursor() as cur:
+                cur.execute(
+                    "UPDATE raw_listings SET dedup_status = 'pending' "
+                    "WHERE dedup_status = 'duplicate'"
+                )
+                reset_count = cur.rowcount
+
+            await update.message.reply_text(
+                f"🔄 Reset {reset_count} duplicate raw listings to pending.\n"
+                f"They will be re-evaluated in the next dedup cycle.\n"
+                f"Run /run pipeline to process them now."
+            )
+            return
+
+        # Show raw listing status breakdown
+        with self.db.get_cursor() as cur:
+            cur.execute(
+                "SELECT dedup_status, COUNT(*) as cnt "
+                "FROM raw_listings GROUP BY dedup_status"
+            )
+            status_counts = {row['dedup_status']: row['cnt'] for row in cur.fetchall()}
+
+        total_raw = sum(status_counts.values())
+        lines = [
+            "📦 <b>RAW LISTINGS STATUS</b>",
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+            "",
+            f"Total raw: <b>{total_raw}</b>",
+        ]
+        for status, count in sorted(status_counts.items()):
+            emoji = {'pending': '⏳', 'new': '✅', 'duplicate': '🔄', 'filtered': '🚫'}.get(status, '❓')
+            lines.append(f"  {emoji} {status}: <b>{count}</b>")
+
+        lines.extend([
+            "",
+            "💡 <b>Commands:</b>",
+            "  /reprocess reset — Reset duplicates for re-evaluation",
+            "  /run pipeline — Process pending listings",
+        ])
+        await self._send_long_message(update, '\n'.join(lines))
+
+    # ================================================================
     # SCHEDULED REPORTS
     # ================================================================
 
@@ -2382,6 +2736,11 @@ class TelegramReporter:
         """Send scheduled morning brief at 07:15 IST."""
         logger.info(f"[{AGENT_ID}] Sending morning brief...")
         data = self.db.get_morning_brief_data()
+        # Add source counts for the brief
+        try:
+            data['source_counts'] = self.db.get_source_counts()
+        except Exception:
+            data['source_counts'] = {}
         msg = self.formatter.morning_brief(data)
         await self.send_message(msg)
 

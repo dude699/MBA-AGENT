@@ -2136,14 +2136,21 @@ class ATSCrawler:
     # ---- Database Operations ----
 
     def _load_companies_by_ats(self, tier_filter: List[int]) -> Dict[str, List[Dict]]:
-        """Load companies grouped by their ATS platform."""
+        """Load companies grouped by their ATS platform.
+        Only loads companies with actual API-crawlable ATS platforms.
+        Companies with 'custom' ATS are handled by the scraper (A-03), not ATS crawler."""
         companies_by_platform = defaultdict(list)
+
+        # These platforms have public APIs we can crawl
+        crawlable_platforms = {'greenhouse', 'lever', 'workday', 'wellfound', 'smartrecruiters', 'ashby'}
 
         for tier in tier_filter:
             companies = self.db.get_companies_by_tier(tier, limit=200)
             for company in companies:
                 ats_platform = company.get('ats_platform', '')
-                if ats_platform and ats_platform != 'unknown':
+                board_id = company.get('ats_board_id', '')
+                # Only include companies with crawlable ATS platforms AND valid board IDs
+                if ats_platform in crawlable_platforms and board_id:
                     companies_by_platform[ats_platform].append(company)
 
         # Log distribution

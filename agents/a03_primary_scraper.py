@@ -99,8 +99,8 @@ INDEED_RSS_BASE = "https://www.indeed.co.in/rss"
 # Wellfound
 WELLFOUND_BASE_URL = "https://wellfound.com"
 
-# LinkedIn DDG dork template
-LINKEDIN_DORK = 'site:linkedin.com/jobs "{query}" india intern'
+# LinkedIn DDG dork template — search for DIRECT job listings
+LINKEDIN_DORK = 'site:linkedin.com/jobs/view "{query}" india intern'
 
 
 # ============================================================
@@ -594,14 +594,19 @@ class InternshalaHarvester:
 
 
 # ============================================================
-# NAUKRI SCRAPER
+# NAUKRI SCRAPER — MULTI-STRATEGY
 # ============================================================
 
 class NaukriScraper:
     """
-    Naukri job board scraper using mobile API.
-    Routes through Cloudflare Worker relay for stealth.
-    Expected yield: 100-200 listings per scrape.
+    Naukri job board scraper using multiple strategies:
+      Strategy 1: DDG dorks (site:naukri.com) — most reliable
+      Strategy 2: Naukri SEO-friendly URL scraping via Cloudflare /crawl
+      Strategy 3: Naukri API v2 (fallback, often blocked)
+    
+    Naukri's API returns 406 without proper mobile app headers,
+    so we primarily use DDG dorks to discover listings.
+    Expected yield: 50-100 listings per scrape.
     """
 
     def __init__(self, stealth: StealthHTTPClient = None,
@@ -609,28 +614,82 @@ class NaukriScraper:
         self.stealth = stealth or get_stealth_client()
         self.db = db or get_db()
         self.batch_id = ""
+        self._ddg = None
+
+    def _get_ddg(self):
+        """Lazy-load DuckDuckGo search."""
+        if self._ddg is None:
+            try:
+                from ddgs import DDGS
+                self._ddg = DDGS()
+            except ImportError:
+                try:
+                    from duckduckgo_search import DDGS
+                    self._ddg = DDGS()
+                except ImportError:
+                    logger.warning(f"[{AGENT_ID}] ddgs not installed")
+        return self._ddg
 
     def scrape_mba_internships(self, max_pages: int = 5) -> List[RawListing]:
-        """Scrape MBA internship listings from Naukri."""
+        """Scrape MBA internship listings from Naukri via DDG dorks."""
         self.batch_id = generate_batch_id("naukri")
         all_listings = []
-        queries = [
-            "MBA intern", "MBA internship", "management intern",
-            "business intern", "marketing intern MBA",
-            "finance intern MBA", "strategy intern",
-            "consulting intern", "operations intern MBA",
-            "analytics intern MBA", "product management intern",
+
+        # Naukri-specific DDG dork queries
+        dork_queries = [
+            'site:naukri.com "MBA intern" -jobs-{page}',
+            'site:naukri.com "MBA internship" india',
+            'site:naukri.com "management trainee" internship',
+            'site:naukri.com "summer internship" MBA',
+            'site:naukri.com "marketing intern" MBA stipend',
+            'site:naukri.com "finance intern" MBA',
+            'site:naukri.com "strategy intern" OR "consulting intern"',
+            'site:naukri.com "operations intern" OR "supply chain intern"',
+            'site:naukri.com "product management intern"',
+            'site:naukri.com "analytics intern" MBA',
         ]
 
-        logger.info(f"[{AGENT_ID}] Starting Naukri scrape (batch: {self.batch_id})")
+        # Also try Naukri SEO URLs via DDG
+        seo_queries = [
+            'site:naukri.com/job-listings mba intern 2026',
+            'site:naukri.com/job-listings management trainee 2026',
+            'site:naukri.com/job-listings summer internship mba',
+        ]
 
-        for query in queries:
+        logger.info(f"[{AGENT_ID}] Starting Naukri scrape via DDG dorks (batch: {self.batch_id})")
+
+        ddg = self._get_ddg()
+        if not ddg:
+            logger.warning(f"[{AGENT_ID}] DDG not available, trying API fallback")
+            return self._api_fallback()
+
+        queries_used = 0
+        max_dorks = 8  # Rate limit DDG queries
+
+        for query in dork_queries + seo_queries:
+            if queries_used >= max_dorks:
+                break
             try:
-                listings = self._search_naukri(query, max_pages=max_pages)
-                all_listings.extend(listings)
-                logger.info(f"[{AGENT_ID}] Naukri '{query}': {len(listings)} listings")
+                results = ddg.text(query, region='in-en', max_results=15)
+                for result in results:
+                    url = result.get('href', '') or result.get('link', '')
+                    title = result.get('title', '')
+                    body = result.get('body', '')
+
+                    # Only accept actual Naukri job listing URLs
+                    if not url or 'naukri.com' not in url:
+                        continue
+                    # Filter for job listing URLs (not category pages)
+                    if '/job-listings' in url or '/job-listings-' in url:
+                        listing = self._parse_dork_result(url, title, body)
+                        if listing:
+                            all_listings.append(listing)
+
+                queries_used += 1
+                time.sleep(random.uniform(8, 15))
+
             except Exception as e:
-                logger.error(f"[{AGENT_ID}] Naukri error for '{query}': {e}")
+                logger.error(f"[{AGENT_ID}] Naukri DDG dork error: {e}")
                 continue
 
         # Deduplicate by URL
@@ -644,152 +703,137 @@ class NaukriScraper:
         if unique:
             inserted = self.db.insert_raw_listings_batch(unique)
             logger.info(
-                f"[{AGENT_ID}] Naukri complete: "
-                f"{len(unique)} unique, {inserted} new"
+                f"[{AGENT_ID}] Naukri DDG complete: "
+                f"{len(unique)} unique, {inserted} new ({queries_used} dorks)"
             )
 
         return unique
 
-    def _search_naukri(self, query: str,
-                       max_pages: int = 3) -> List[RawListing]:
-        """Search Naukri for a query."""
+    def _parse_dork_result(self, url: str, title: str, body: str) -> Optional[RawListing]:
+        """Parse a DDG search result for a Naukri listing."""
+        listing = RawListing()
+        listing.source = "naukri"
+        listing.batch_id = self.batch_id
+        listing.url = url.split('?')[0]  # Clean tracking params
+
+        # Parse title: "Job Title - Company Name - Location - Naukri.com"
+        title_parts = [p.strip() for p in title.split(' - ') if p.strip()]
+        if title_parts:
+            listing.title = title_parts[0]
+            if len(title_parts) >= 2:
+                # Last part is usually "Naukri.com", second-to-last is company or location
+                company_part = title_parts[1] if len(title_parts) > 2 else ''
+                if company_part and 'naukri' not in company_part.lower():
+                    listing.company = company_part
+            if len(title_parts) >= 3:
+                loc_part = title_parts[2] if 'naukri' not in title_parts[2].lower() else ''
+                if loc_part:
+                    listing.location = loc_part
+
+        # Parse body for more info
+        listing.description_text = body[:3000] if body else ''
+
+        # Detect category from title
+        listing.category = self._detect_category(listing.title)
+
+        # Detect PPO/WFH
+        full_text = f"{listing.title} {body}"
+        listing.is_ppo = detect_ppo(full_text)
+        listing.is_wfh = detect_wfh(full_text)
+
+        return listing if listing.title and listing.url else None
+
+    def _api_fallback(self) -> List[RawListing]:
+        """Fallback: try Naukri API v2 with updated headers."""
+        self.batch_id = generate_batch_id("naukri_api")
         listings = []
+        queries = ["MBA intern", "management trainee", "summer internship MBA"]
 
-        for page_no in range(max_pages):
-            params = {
-                'noOfResults': 20,
-                'urlType': 'search_by_keyword',
-                'searchType': 'adv',
-                'keyword': query,
-                'pageNo': page_no + 1,
-                'experience': 0,
-                'sort': 'r',  # relevance
-                'jobAge': 7,  # last 7 days
-            }
-
-            url = f"{NAUKRI_API_URL}?{urlencode(params)}"
-
-            # Naukri API requires specific headers to avoid 406
-            naukri_headers = {
-                'Accept': 'application/json',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'appid': '109',
-                'systemid': 'Jenga',
-                'Content-Type': 'application/json',
-                'gid': 'LOCATION,INDUSTRY,EDUCATION,FAREA_ROLE',
-                'Referer': 'https://www.naukri.com/',
-                'Origin': 'https://www.naukri.com',
-            }
-
-            response = self.stealth.get(
-                url,
-                site='naukri',
-                headers=naukri_headers,
-                auto_delay=True,
-            )
-
-            if not response:
-                logger.warning(
-                    f"[{AGENT_ID}] Naukri '{query}' page {page_no+1}: "
-                    f"no response (stealth engine returned None)"
-                )
-                break
-
-            status_code = response.get('status_code', 0)
-            if status_code != 200:
-                logger.warning(
-                    f"[{AGENT_ID}] Naukri '{query}' page {page_no+1}: "
-                    f"HTTP {status_code}"
-                )
-                break
-
+        for query in queries:
             try:
-                text = response.get('text', '')
+                # Use v2 API (v3 returns 406)
+                params = {
+                    'noOfResults': 20,
+                    'urlType': 'search_by_keyword',
+                    'searchType': 'adv',
+                    'keyword': query,
+                    'pageNo': 1,
+                    'experience': 0,
+                    'sort': 'r',
+                    'jobAge': 7,
+                }
+                url = f"https://www.naukri.com/jobapi/v2/search?{urlencode(params)}"
 
-                # Detect Cloudflare challenge page
-                if '<html' in text[:500].lower() and 'cloudflare' in text.lower():
-                    logger.warning(
-                        f"[{AGENT_ID}] Naukri blocked by Cloudflare for '{query}'. "
-                        f"Set CF_WORKER_URL and CF_RELAY_SECRET to fix."
-                    )
-                    break
+                naukri_headers = {
+                    'Accept': 'application/json',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'appid': '109',
+                    'systemid': '109',
+                    'Content-Type': 'application/json',
+                    'gid': 'LOCATION,INDUSTRY,EDUCATION,FAREA_ROLE',
+                    'Referer': 'https://www.naukri.com/',
+                    'Origin': 'https://www.naukri.com',
+                    'X-Requested-With': 'XMLHttpRequest',
+                }
 
-                data = json.loads(text)
-                job_details = data.get('jobDetails', [])
-
-                if not job_details:
-                    break
-
-                for job in job_details:
-                    listing = self._parse_naukri_job(job)
-                    if listing:
-                        listings.append(listing)
-
-            except (json.JSONDecodeError, KeyError) as e:
-                # Log enough of the response to diagnose issues
-                text_preview = response.get('text', '')[:200]
-                logger.warning(
-                    f"[{AGENT_ID}] Naukri parse error for '{query}': {e}. "
-                    f"Response preview: {text_preview}"
+                response = self.stealth.get(
+                    url, site='naukri', headers=naukri_headers, auto_delay=True
                 )
-                break
+
+                if not response or response.get('status_code', 0) != 200:
+                    continue
+
+                text = response.get('text', '')
+                try:
+                    data = json.loads(text)
+                    for job in data.get('jobDetails', []):
+                        listing = self._parse_naukri_api_job(job)
+                        if listing:
+                            listings.append(listing)
+                except (json.JSONDecodeError, KeyError):
+                    continue
+
+                time.sleep(random.uniform(5, 10))
+
+            except Exception as e:
+                logger.debug(f"[{AGENT_ID}] Naukri API fallback error: {e}")
+                continue
+
+        if listings:
+            self.db.insert_raw_listings_batch(listings)
+            logger.info(f"[{AGENT_ID}] Naukri API fallback: {len(listings)} listings")
 
         return listings
 
-    def _parse_naukri_job(self, job: Dict) -> Optional[RawListing]:
-        """Parse a Naukri job API response into RawListing."""
+    def _parse_naukri_api_job(self, job: Dict) -> Optional[RawListing]:
+        """Parse a Naukri API v2 job response."""
         try:
             listing = RawListing()
             listing.source = "naukri"
             listing.batch_id = self.batch_id
-
             listing.title = job.get('title', '')
             listing.company = job.get('companyName', '')
             listing.url = job.get('jdURL', '') or job.get('jobId', '')
             if listing.url and not listing.url.startswith('http'):
                 listing.url = f"https://www.naukri.com{listing.url}"
 
-            # Location
-            locations = job.get('placeholders', [])
-            for ph in locations:
+            for ph in job.get('placeholders', []):
                 if ph.get('type') == 'location':
                     listing.location = ph.get('label', '')
                     break
-            if not listing.location:
-                listing.location = job.get('ambitionBoxData', {}).get('Location', '')
 
-            # Salary/Stipend
             salary = job.get('salaryDetail', {})
             listing.stipend = salary.get('label', '')
             listing.stipend_normalized = normalize_stipend(listing.stipend)
-
-            # Experience
-            experience = job.get('experience', '')
-
-            # Description
             listing.description_text = job.get('jobDescription', '')[:5000]
+            listing.category = self._detect_category(listing.title)
 
-            # Detect PPO and WFH
             full_text = f"{listing.title} {listing.description_text}"
             listing.is_ppo = detect_ppo(full_text)
             listing.is_wfh = detect_wfh(full_text)
-            if listing.location:
-                listing.is_wfh = listing.is_wfh or detect_wfh(listing.location)
-
-            # Posted date
-            created_date = job.get('createdDate', '')
-            if created_date:
-                listing.posted_days_ago = parse_posted_days(created_date)
-
-            # Category detection
-            for category, keywords in MBA_CATEGORIES.__class__.__mro__[0].__dict__.items():
-                pass  # Will use title matching
-            listing.category = self._detect_category(listing.title)
 
             return listing if listing.title and listing.url else None
-
-        except Exception as e:
-            logger.debug(f"Naukri job parse error: {e}")
+        except Exception:
             return None
 
     def _detect_category(self, title: str) -> str:
@@ -798,14 +842,13 @@ class NaukriScraper:
         category_map = {
             'marketing': ['marketing', 'brand', 'digital', 'social media', 'content', 'seo'],
             'finance': ['finance', 'financial', 'accounting', 'investment', 'banking', 'audit'],
-            'business-development': ['business development', 'bd', 'sales', 'partnership'],
             'operations': ['operations', 'logistics', 'supply chain', 'procurement'],
             'strategy': ['strategy', 'strategic', 'planning'],
             'consulting': ['consulting', 'consultant', 'advisory'],
-            'product-management': ['product', 'pm', 'product manager'],
+            'product-management': ['product', 'product manager'],
             'human-resources': ['hr', 'human resources', 'talent', 'recruitment'],
             'supply-chain': ['supply chain', 'scm', 'warehouse', 'inventory'],
-            'analytics': ['analytics', 'data', 'business intelligence', 'bi'],
+            'analytics': ['analytics', 'data', 'business intelligence'],
         }
         for cat, keywords in category_map.items():
             if any(kw in title_lower for kw in keywords):
@@ -819,9 +862,9 @@ class NaukriScraper:
 
 class IIMJobsScraper:
     """
-    IIMjobs scraper — easy target with light protections.
-    Direct requests with rotating UA and 8-12s delays.
-    Expected yield: 30-80 listings per scrape.
+    IIMjobs scraper — DDG dork primary + direct HTML fallback.
+    IIMjobs often blocks direct requests, so DDG dorks are more reliable.
+    Expected yield: 20-50 listings per scrape.
     """
 
     def __init__(self, stealth: StealthHTTPClient = None,
@@ -829,28 +872,82 @@ class IIMJobsScraper:
         self.stealth = stealth or get_stealth_client()
         self.db = db or get_db()
         self.batch_id = ""
+        self._ddg = None
+
+    def _get_ddg(self):
+        if self._ddg is None:
+            try:
+                from ddgs import DDGS
+                self._ddg = DDGS()
+            except ImportError:
+                try:
+                    from duckduckgo_search import DDGS
+                    self._ddg = DDGS()
+                except ImportError:
+                    pass
+        return self._ddg
 
     def scrape_internships(self, max_pages: int = 3) -> List[RawListing]:
         """Scrape MBA internship listings from IIMjobs."""
         self.batch_id = generate_batch_id("iimjobs")
         all_listings = []
-        queries = ["MBA internship", "management trainee", "summer intern"]
 
         logger.info(f"[{AGENT_ID}] Starting IIMjobs scrape")
 
-        for query in queries:
-            try:
-                listings = self._search(query, max_pages)
-                all_listings.extend(listings)
-            except Exception as e:
-                logger.error(f"IIMjobs error for '{query}': {e}")
-                continue
+        # Strategy 1: DDG dorks (primary — most reliable)
+        ddg = self._get_ddg()
+        if ddg:
+            dork_queries = [
+                'site:iimjobs.com "internship" MBA india',
+                'site:iimjobs.com "summer intern" OR "management trainee"',
+                'site:iimjobs.com intern stipend 2026',
+                'site:iimjobs.com marketing OR finance OR strategy intern',
+            ]
+            for query in dork_queries[:3]:
+                try:
+                    results = ddg.text(query, region='in-en', max_results=12)
+                    for result in results:
+                        url = result.get('href', '') or result.get('link', '')
+                        title = result.get('title', '')
+                        body = result.get('body', '')
+
+                        if not url or 'iimjobs.com' not in url:
+                            continue
+
+                        listing = RawListing(
+                            title=title.replace(' - IIMjobs', '').replace(' | IIMjobs', '').strip(),
+                            company=self._extract_company(title, body),
+                            url=url.split('?')[0],
+                            source="iimjobs",
+                            description_text=body[:2000],
+                            batch_id=self.batch_id,
+                            is_ppo=detect_ppo(f"{title} {body}"),
+                            is_wfh=detect_wfh(f"{title} {body}"),
+                        )
+                        if listing.title and listing.url:
+                            all_listings.append(listing)
+
+                    time.sleep(random.uniform(8, 15))
+                except Exception as e:
+                    logger.debug(f"[{AGENT_ID}] IIMjobs DDG error: {e}")
+                    continue
+
+        # Strategy 2: Direct HTML scrape (fallback)
+        if len(all_listings) < 5:
+            queries = ["MBA internship", "management trainee", "summer intern"]
+            for query in queries:
+                try:
+                    listings = self._search_html(query, max_pages)
+                    all_listings.extend(listings)
+                except Exception as e:
+                    logger.debug(f"[{AGENT_ID}] IIMjobs HTML error for '{query}': {e}")
+                    continue
 
         # Deduplicate
         seen = set()
         unique = []
         for l in all_listings:
-            if l.url not in seen:
+            if l.url and l.url not in seen:
                 seen.add(l.url)
                 unique.append(l)
 
@@ -860,7 +957,17 @@ class IIMJobsScraper:
 
         return unique
 
-    def _search(self, query: str, max_pages: int) -> List[RawListing]:
+    def _extract_company(self, title: str, body: str) -> str:
+        for sep in [' at ', ' - ', ' | ']:
+            if sep in title:
+                parts = title.split(sep)
+                if len(parts) >= 2:
+                    comp = parts[-1].replace('IIMjobs', '').strip()
+                    if comp and len(comp) > 2:
+                        return comp
+        return ""
+
+    def _search_html(self, query: str, max_pages: int) -> List[RawListing]:
         """Search IIMjobs."""
         listings = []
 
@@ -960,6 +1067,8 @@ class LinkedInDorkScraper:
                     max_dorks: int = 5) -> List[RawListing]:
         """
         Search LinkedIn via DDG dorks for each category.
+        Returns DIRECT job listing URLs (linkedin.com/jobs/view/...)
+        NOT search result pages.
 
         Args:
             categories: MBA categories to search (default: all)
@@ -977,16 +1086,25 @@ class LinkedInDorkScraper:
         listings = []
         dork_count = 0
 
+        # Multiple dork patterns for better coverage
+        dork_patterns = [
+            'site:linkedin.com/jobs/view "{query}" india intern',
+            'site:linkedin.com/jobs/view "{query}" internship india 2026',
+            'site:in.linkedin.com/jobs/view "{query}" intern',
+        ]
+
         for category in categories:
             if dork_count >= max_dorks:
                 break
 
             try:
-                dork_query = LINKEDIN_DORK.format(query=category.replace('-', ' '))
+                # Try different dork patterns
+                pattern = dork_patterns[dork_count % len(dork_patterns)]
+                dork_query = pattern.format(query=category.replace('-', ' '))
                 results = ddg.text(
                     dork_query,
                     region='in-en',
-                    max_results=10,
+                    max_results=15,
                 )
 
                 for result in results:
@@ -994,11 +1112,25 @@ class LinkedInDorkScraper:
                     title = result.get('title', '')
                     body = result.get('body', '')
 
-                    if 'linkedin.com/jobs' in url:
+                    # ONLY accept direct job view URLs
+                    # Accept: linkedin.com/jobs/view/1234
+                    # Reject: linkedin.com/jobs/search, linkedin.com/jobs/collections
+                    if not url:
+                        continue
+
+                    is_direct_job = (
+                        'linkedin.com/jobs/view/' in url
+                        or re.search(r'linkedin\.com/jobs/\d+', url)
+                    )
+
+                    if is_direct_job:
+                        # Clean the URL — remove tracking params
+                        clean_url = url.split('?')[0]
+
                         listing = RawListing(
-                            title=title,
+                            title=self._clean_linkedin_title(title),
                             company=self._extract_company_from_title(title),
-                            url=url,
+                            url=clean_url,
                             source="linkedin",
                             category=category,
                             description_text=body[:2000],
@@ -1022,6 +1154,14 @@ class LinkedInDorkScraper:
 
         return listings
 
+    def _clean_linkedin_title(self, title: str) -> str:
+        """Clean LinkedIn title from DDG result."""
+        # Remove common LinkedIn suffixes
+        for suffix in [' | LinkedIn', ' - LinkedIn', ' on LinkedIn']:
+            if title.endswith(suffix):
+                title = title[:-len(suffix)]
+        return title.strip()
+
     def _extract_company_from_title(self, title: str) -> str:
         """Try to extract company name from LinkedIn title."""
         # Titles often look like: "Marketing Intern at Company Name"
@@ -1030,6 +1170,351 @@ class LinkedInDorkScraper:
                 parts = title.split(separator)
                 if len(parts) >= 2:
                     return parts[-1].strip()
+        return ""
+
+
+# ============================================================
+# CAREER PAGE DDG DORK SCRAPER
+# ============================================================
+
+class CareerPageScraper:
+    """
+    Scrapes career pages of top companies via DDG dorks.
+    For companies with 'custom' ATS (McKinsey, BCG, Goldman etc.),
+    we use DDG to search their career sites for internship postings.
+    
+    Strategy:
+      - DDG: 'site:<company-careers-url> intern OR internship'
+      - DDG: '<company-name> india internship MBA 2026'
+      - Parse results for direct job page URLs
+    """
+
+    def __init__(self, stealth: StealthHTTPClient = None,
+                 db: DatabaseManager = None):
+        self.stealth = stealth or get_stealth_client()
+        self.db = db or get_db()
+        self.batch_id = ""
+        self._ddg = None
+
+    def _get_ddg(self):
+        if self._ddg is None:
+            try:
+                from ddgs import DDGS
+                self._ddg = DDGS()
+            except ImportError:
+                try:
+                    from duckduckgo_search import DDGS
+                    self._ddg = DDGS()
+                except ImportError:
+                    logger.warning(f"[{AGENT_ID}] ddgs not installed for career page scraper")
+        return self._ddg
+
+    def scrape_career_pages(self, max_companies: int = 20,
+                             max_dorks_per_company: int = 2) -> List[RawListing]:
+        """Scrape career pages of custom ATS companies via DDG dorks."""
+        self.batch_id = generate_batch_id("careerpage")
+        all_listings = []
+
+        ddg = self._get_ddg()
+        if not ddg:
+            logger.warning(f"[{AGENT_ID}] DDG not available for career page scraping")
+            return []
+
+        # Load companies with 'custom' ATS platform
+        custom_companies = self.db.get_companies_by_ats_platform('custom', limit=max_companies)
+        if not custom_companies:
+            logger.info(f"[{AGENT_ID}] No custom ATS companies to scrape")
+            return []
+
+        logger.info(
+            f"[{AGENT_ID}] Career page scrape: {len(custom_companies)} companies "
+            f"(batch: {self.batch_id})"
+        )
+
+        companies_scraped = 0
+        for company in custom_companies:
+            name = company.get('name', '')
+            board_id = company.get('ats_board_id', '')
+            tier = company.get('tier', 5)
+
+            if not name:
+                continue
+
+            try:
+                listings = self._scrape_single_company(ddg, name, board_id, tier)
+                all_listings.extend(listings)
+                companies_scraped += 1
+
+                # If DDG found nothing, try Cloudflare /crawl for JS-heavy pages
+                if not listings and board_id and '.' in board_id:
+                    cf_listings = self._crawl_career_page_cf(name, board_id)
+                    all_listings.extend(cf_listings)
+                    if cf_listings:
+                        logger.info(
+                            f"[{AGENT_ID}] Career [{name}] CF /crawl: {len(cf_listings)} listings"
+                        )
+
+                if listings:
+                    logger.info(
+                        f"[{AGENT_ID}] Career [{name}]: {len(listings)} listings found"
+                    )
+
+                time.sleep(random.uniform(8, 15))
+            except Exception as e:
+                logger.debug(f"[{AGENT_ID}] Career [{name}] error: {e}")
+                continue
+
+        # Deduplicate and insert
+        seen_urls = set()
+        unique = []
+        for listing in all_listings:
+            if listing.url and listing.url not in seen_urls:
+                seen_urls.add(listing.url)
+                unique.append(listing)
+
+        if unique:
+            inserted = self.db.insert_raw_listings_batch(unique)
+            logger.info(
+                f"[{AGENT_ID}] Career page scrape complete: "
+                f"{companies_scraped} companies, {len(unique)} unique, {inserted} new"
+            )
+
+        return unique
+
+    def _scrape_single_company(self, ddg, company_name: str,
+                                career_url: str, tier: int) -> List[RawListing]:
+        """Scrape a single company's career page via DDG dorks."""
+        listings = []
+
+        queries = []
+        if career_url and '.' in career_url:
+            domain = career_url.split('/')[0] if '/' in career_url else career_url
+            queries.append(f'site:{domain} intern OR internship india')
+            queries.append(f'site:{domain} MBA intern OR "management trainee"')
+        else:
+            clean_name = company_name.replace(' India', '').replace(' Ltd', '').strip()
+            queries.append(f'"{clean_name}" careers intern india 2026')
+            queries.append(f'"{clean_name}" internship MBA india apply')
+
+        for query in queries[:2]:
+            try:
+                results = ddg.text(query, region='in-en', max_results=10)
+
+                for result in results:
+                    url = result.get('href', '') or result.get('link', '')
+                    title = result.get('title', '')
+                    body = result.get('body', '')
+
+                    if not url or not title:
+                        continue
+
+                    skip_domains = ['linkedin.com', 'glassdoor.com', 'indeed.com',
+                                     'naukri.com', 'internshala.com', 'ambitionbox.com',
+                                     'wikipedia.org', 'youtube.com']
+                    if any(domain in url.lower() for domain in skip_domains):
+                        continue
+
+                    url_lower = url.lower()
+                    title_lower = title.lower()
+                    body_lower = body.lower()
+
+                    is_career_page = any(kw in url_lower for kw in [
+                        'career', 'job', 'intern', 'hiring', 'apply',
+                        'position', 'openings', 'vacancy', 'recruit',
+                    ]) or any(kw in title_lower for kw in [
+                        'intern', 'trainee', 'associate', 'career',
+                    ]) or any(kw in body_lower for kw in [
+                        'intern', 'apply now', 'stipend', 'opening',
+                    ])
+
+                    if not is_career_page:
+                        continue
+
+                    listing = RawListing(
+                        title=self._clean_title(title, company_name),
+                        company=company_name,
+                        url=url.split('?')[0],
+                        source="career_page",
+                        category=self._detect_category(title),
+                        description_text=body[:3000],
+                        location=self._extract_location(body),
+                        batch_id=self.batch_id,
+                        is_ppo=detect_ppo(f"{title} {body}"),
+                        is_wfh=detect_wfh(f"{title} {body}"),
+                    )
+                    if listing.title and listing.url:
+                        listings.append(listing)
+
+                time.sleep(random.uniform(3, 6))
+            except Exception as e:
+                logger.debug(f"[{AGENT_ID}] Career dork error for {company_name}: {e}")
+                continue
+
+        return listings
+
+    def _clean_title(self, title: str, company: str) -> str:
+        for suffix in [f' - {company}', f' | {company}', f' at {company}',
+                       ' - Careers', ' | Careers', ' - Jobs']:
+            if title.endswith(suffix):
+                title = title[:-len(suffix)]
+        return title.strip()
+
+    def _detect_category(self, title: str) -> str:
+        title_lower = title.lower()
+        category_map = {
+            'marketing': ['marketing', 'brand', 'digital', 'social media', 'content'],
+            'finance': ['finance', 'financial', 'accounting', 'investment', 'banking'],
+            'operations': ['operations', 'logistics', 'supply chain', 'procurement'],
+            'strategy': ['strategy', 'strategic', 'planning'],
+            'consulting': ['consulting', 'consultant', 'advisory'],
+            'product-management': ['product', 'product manager'],
+            'human-resources': ['hr', 'human resources', 'talent'],
+            'analytics': ['analytics', 'data', 'business intelligence'],
+        }
+        for cat, keywords in category_map.items():
+            if any(kw in title_lower for kw in keywords):
+                return cat
+        return 'general'
+
+    def _extract_location(self, body: str) -> str:
+        india_cities = [
+            'mumbai', 'bangalore', 'bengaluru', 'delhi', 'gurugram',
+            'gurgaon', 'hyderabad', 'chennai', 'pune', 'noida',
+            'kolkata', 'ahmedabad', 'jaipur', 'chandigarh',
+        ]
+        body_lower = body.lower()
+        for city in india_cities:
+            if city in body_lower:
+                return city.capitalize()
+        if 'india' in body_lower:
+            return 'India'
+        return ''
+
+    def _crawl_career_page_cf(self, company_name: str,
+                               career_url: str) -> List[RawListing]:
+        """Crawl a career page using Cloudflare /crawl API (JS rendering)."""
+        try:
+            from core.cloudflare_crawl import crawl_career_page, is_configured
+            if not is_configured():
+                return []
+
+            full_url = f"https://{career_url}" if not career_url.startswith('http') else career_url
+            jobs = crawl_career_page(
+                full_url,
+                keywords=['intern', 'internship', 'mba', 'trainee', 'summer']
+            )
+
+            listings = []
+            for job in jobs:
+                listing = RawListing(
+                    title=job.get('title', ''),
+                    company=company_name,
+                    url=job.get('url', ''),
+                    source="career_page",
+                    description_text=job.get('description', '')[:3000],
+                    batch_id=self.batch_id,
+                )
+                if listing.title and listing.url:
+                    listings.append(listing)
+
+            return listings
+        except Exception as e:
+            logger.debug(f"[{AGENT_ID}] CF crawl error for {company_name}: {e}")
+            return []
+
+
+# ============================================================
+# INSTAHYRE SCRAPER
+# ============================================================
+
+class InstahyreScraper:
+    """
+    Instahyre job scraper via DDG dorks.
+    Instahyre is a curated job platform popular with MBA grads.
+    Direct API is locked down, so we use DDG site: search.
+    """
+
+    def __init__(self, db: DatabaseManager = None):
+        self.db = db or get_db()
+        self.batch_id = ""
+        self._ddg = None
+
+    def _get_ddg(self):
+        if self._ddg is None:
+            try:
+                from ddgs import DDGS
+                self._ddg = DDGS()
+            except ImportError:
+                try:
+                    from duckduckgo_search import DDGS
+                    self._ddg = DDGS()
+                except ImportError:
+                    pass
+        return self._ddg
+
+    def scrape_jobs(self, max_dorks: int = 5) -> List[RawListing]:
+        """Scrape Instahyre via DDG dorks."""
+        self.batch_id = generate_batch_id("instahyre")
+        ddg = self._get_ddg()
+        if not ddg:
+            return []
+
+        queries = [
+            'site:instahyre.com "intern" india MBA',
+            'site:instahyre.com "internship" marketing OR finance OR strategy',
+            'site:instahyre.com "management trainee" india',
+            'site:instahyre.com "associate" MBA fresh graduate',
+            'site:instahyre.com intern stipend india 2026',
+        ]
+
+        all_listings = []
+        for query in queries[:max_dorks]:
+            try:
+                results = ddg.text(query, region='in-en', max_results=10)
+                for result in results:
+                    url = result.get('href', '') or result.get('link', '')
+                    title = result.get('title', '')
+                    body = result.get('body', '')
+
+                    if not url or 'instahyre.com' not in url:
+                        continue
+
+                    listing = RawListing(
+                        title=title.replace(' - Instahyre', '').strip(),
+                        company=self._extract_company(title, body),
+                        url=url.split('?')[0],
+                        source="instahyre",
+                        description_text=body[:2000],
+                        batch_id=self.batch_id,
+                        is_ppo=detect_ppo(f"{title} {body}"),
+                        is_wfh=detect_wfh(f"{title} {body}"),
+                    )
+                    if listing.title and listing.url:
+                        all_listings.append(listing)
+
+                time.sleep(random.uniform(8, 15))
+            except Exception as e:
+                logger.debug(f"[{AGENT_ID}] Instahyre dork error: {e}")
+                continue
+
+        # Dedup and insert
+        seen = set()
+        unique = [l for l in all_listings if l.url not in seen and not seen.add(l.url)]
+
+        if unique:
+            inserted = self.db.insert_raw_listings_batch(unique)
+            logger.info(f"[{AGENT_ID}] Instahyre: {len(unique)} unique, {inserted} new")
+
+        return unique
+
+    def _extract_company(self, title: str, body: str) -> str:
+        for sep in [' at ', ' - ', ' | ']:
+            if sep in title:
+                parts = title.split(sep)
+                if len(parts) >= 2:
+                    comp = parts[-1].replace('Instahyre', '').strip()
+                    if comp and len(comp) > 2:
+                        return comp
         return ""
 
 
@@ -1114,6 +1599,8 @@ class PrimaryScraper:
         self.iimjobs = IIMJobsScraper(self.stealth, self.db)
         self.linkedin = LinkedInDorkScraper(self.db)
         self.indeed = IndeedRSSScraper(self.db)
+        self.career_page = CareerPageScraper(self.stealth, self.db)
+        self.instahyre = InstahyreScraper(self.db)
 
     def run_morning_scrape(self) -> Dict[str, Any]:
         """
@@ -1158,6 +1645,24 @@ class PrimaryScraper:
             except Exception as e:
                 results['errors'].append(f"Indeed: {str(e)}")
 
+            # Career Pages (custom ATS: McKinsey, BCG, Goldman etc.)
+            try:
+                career_listings = self.career_page.scrape_career_pages(
+                    max_companies=15, max_dorks_per_company=2
+                )
+                results['source']['career_page'] = len(career_listings)
+                results['total'] += len(career_listings)
+            except Exception as e:
+                results['errors'].append(f"CareerPage: {str(e)}")
+
+            # Instahyre (curated MBA job platform)
+            try:
+                instahyre_listings = self.instahyre.scrape_jobs(max_dorks=4)
+                results['source']['instahyre'] = len(instahyre_listings)
+                results['total'] += len(instahyre_listings)
+            except Exception as e:
+                results['errors'].append(f"Instahyre: {str(e)}")
+
         except Exception as e:
             results['errors'].append(f"General: {str(e)}")
 
@@ -1198,7 +1703,7 @@ class PrimaryScraper:
         self.db.update_agent_heartbeat(AGENT_ID, "running")
 
         try:
-            # Naukri
+            # Naukri — PRIMARY for afternoon (now DDG-based)
             try:
                 naukri_listings = self.naukri.scrape_mba_internships(max_pages=3)
                 results['source']['naukri'] = len(naukri_listings)
@@ -1213,6 +1718,14 @@ class PrimaryScraper:
                 results['total'] += len(iimjobs_listings)
             except Exception as e:
                 results['errors'].append(f"IIMjobs: {str(e)}")
+
+            # Indeed RSS (also in afternoon for broader coverage)
+            try:
+                indeed_listings = self.indeed.scrape_feeds()
+                results['source']['indeed'] = len(indeed_listings)
+                results['total'] += len(indeed_listings)
+            except Exception as e:
+                results['errors'].append(f"Indeed: {str(e)}")
 
         except Exception as e:
             results['errors'].append(f"General: {str(e)}")

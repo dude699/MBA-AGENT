@@ -193,6 +193,7 @@ class Application:
         self._keepalive = None
         self._db = None
         self._running = False
+        self._startup_complete = False  # SIGTERM deferred until startup done
         self._watchdog_task: Optional[asyncio.Task] = None
         self._gc_task: Optional[asyncio.Task] = None
         self._status = SubsystemStatus()
@@ -512,6 +513,9 @@ class Application:
         logger.info(self._status.to_report())
         logger.info("=" * 60)
 
+        # Mark startup as complete so SIGTERM handler can work
+        self._startup_complete = True
+
         # Send startup report to Telegram
         await self._send_startup_report(duration)
 
@@ -668,6 +672,16 @@ def setup_signal_handlers(app: Application, loop: asyncio.AbstractEventLoop):
     def handle_signal(signum, frame):
         sig_name = signal.Signals(signum).name
         logger.info(f"Received {sig_name} -- GRACEFUL SHUTDOWN INITIATED")
+
+        # If startup is not complete, defer the shutdown
+        if not app._startup_complete:
+            logger.warning(
+                f"[{sig_name}] Received during startup — deferring shutdown. "
+                f"Will shut down after startup completes."
+            )
+            # Set a flag and return — the main run loop will check
+            app._shutdown_event.set()
+            return
 
         if app._telegram:
             async def _emergency_stop():
