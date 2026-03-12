@@ -151,10 +151,10 @@ class ReportFormatter:
 
         # Tags
         tags = []
-        if is_ppo: tags.append('PPO')
-        if is_wfh: tags.append('WFH')
-        if is_bo: tags.append('Blue Ocean')
-        tag_str = ' | '.join(tags) if tags else ''
+        if is_ppo: tags.append('🎯PPO')
+        if is_wfh: tags.append('🏠WFH')
+        if is_bo: tags.append('🌊Blue Ocean')
+        tag_str = ' '.join(tags) if tags else ''
 
         # Source emoji
         src_emoji = cls.SOURCE_EMOJI.get(source, '📡')
@@ -162,42 +162,95 @@ class ReportFormatter:
         # Tier label
         tier_label = cls.TIER_LABELS.get(tier, '') if tier else ''
 
-        # Build main line
-        line = f"<b>{i}. {title}</b>\n"
+        # Stipend formatting
+        if stipend >= 100000:
+            stipend_str = f"₹{stipend/100000:.1f}L/mo"
+        elif stipend > 0:
+            stipend_str = f"₹{stipend:,.0f}/mo"
+        else:
+            stipend_str = "Unpaid/TBD"
+
+        # Build professional card
+        line = f"{'━' * 28}\n"
+        line += f"<b>{i}. {title}</b>\n"
         line += f"   🏢 {company}"
         if tier_label:
-            line += f" [{tier_label}]"
+            line += f" <i>[{tier_label}]</i>"
         line += "\n"
 
-        # Details row
-        details = []
+        # Row 2: Location + Duration + Stipend
+        row2 = []
         if location:
-            details.append(f"📍 {location[:30]}")
-        if stipend > 0:
-            details.append(f"💰 {stipend:,.0f}/mo")
-        elif stipend == 0 and source not in ('greenhouse', 'lever', 'ashby'):
-            details.append(f"💰 Unpaid/TBD")
+            row2.append(f"📍{location[:25]}")
         if duration > 0:
-            details.append(f"⏱ {duration}mo")
+            row2.append(f"⏱{duration}mo")
+        row2.append(f"💰{stipend_str}")
+        line += f"   {' │ '.join(row2)}\n"
+
+        # Row 3: Applicants + PPO Score + Source
+        row3 = []
         if applicants > 0:
-            details.append(f"👥 {applicants}")
-        if details:
-            line += f"   {' | '.join(details)}\n"
+            if applicants > 500:
+                row3.append(f"👥{applicants}⚠️")
+            else:
+                row3.append(f"👥{applicants}")
+        row3.append(f"📊PPO:{ppo:.0f}")
+        row3.append(f"{src_emoji}{source}")
+        if category:
+            row3.append(f"📂{category}")
+        line += f"   {' │ '.join(row3)}\n"
 
-        # Score + source row
-        score_parts = [f"📊 PPO: {ppo:.1f}"]
+        # Row 4: Tags (if any)
         if tag_str:
-            score_parts.append(tag_str)
-        score_parts.append(f"{src_emoji} {source}")
-        line += f"   {' | '.join(score_parts)}\n"
+            line += f"   {tag_str}\n"
 
-        # URL row
+        # Row 5: Action buttons
         if url:
-            line += f"   🔗 <a href=\"{url}\">Apply Link</a> | /package {lid}\n"
+            line += f"   🔗 <a href=\"{url}\">APPLY NOW</a> │ /package {lid}\n"
         else:
-            line += f"   /package {lid} | /cover {lid}\n"
+            line += f"   /package {lid} │ /cover {lid}\n"
 
         return line
+
+    @classmethod
+    def format_jobs_header(cls, total: int, page: int, total_pages: int,
+                            sort_by: str, max_duration: int,
+                            filters: Dict = None) -> str:
+        """Format the header for /jobs command output."""
+        sort_labels = {
+            'stipend': '💰 Stipend (High→Low)',
+            'ppo': '📊 PPO Score',
+            'date': '📅 Newest First',
+            'duration': '⏱ Duration (Short→Long)',
+            'applicants': '👥 Competition (Low→High)',
+        }
+        sort_label = sort_labels.get(sort_by, sort_by)
+
+        lines = [
+            f"📋 <b>MANAGEMENT INTERNSHIPS</b>",
+            f"<i>{datetime.now(IST).strftime('%d %b %Y, %I:%M %p IST')}</i>",
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+            f"📊 <b>{total}</b> listings │ Page <b>{page}</b>/{total_pages}",
+            f"🔀 Sorted by: {sort_label}",
+            f"⏱ Duration: ≤ {max_duration} months",
+        ]
+
+        if filters:
+            filter_parts = []
+            if filters.get('category'):
+                filter_parts.append(f"📂 {filters['category']}")
+            if filters.get('source'):
+                filter_parts.append(f"📡 {filters['source']}")
+            if filters.get('location'):
+                filter_parts.append(f"📍 {filters['location']}")
+            if filters.get('min_stipend'):
+                filter_parts.append(f"💰 ≥₹{filters['min_stipend']:,.0f}")
+            if filter_parts:
+                lines.append(f"🔍 Filters: {' │ '.join(filter_parts)}")
+
+        lines.append(f"🚫 Sales/BD/Cold-Calling: <b>AUTO-EXCLUDED</b>")
+        lines.append("")
+        return '\n'.join(lines)
 
     @classmethod
     def morning_brief(cls, data: Dict) -> str:
@@ -265,7 +318,7 @@ class ReportFormatter:
             lines.append(f"⏰ <b>Urgent (closing soon):</b> {len(urgent)} listings")
 
         lines.append(f"")
-        lines.append(f"💡 /top 25 for more | /ocean for Blue Ocean | /export for Excel")
+        lines.append(f"💡 /jobs for filtered | /top 25 for more | /ocean for Blue Ocean")
         return '\n'.join(lines)
 
     @classmethod
@@ -772,6 +825,7 @@ class TelegramReporter:
             'browse': self._cmd_browse,
             'cfstatus': self._cmd_cfstatus,
             'reprocess': self._cmd_reprocess,
+            'jobs': self._cmd_jobs,
         }
 
         for cmd_name, handler_fn in commands.items():
@@ -1125,20 +1179,21 @@ class TelegramReporter:
     async def _cmd_start(self, update, context):
         """Welcome message and setup wizard."""
         msg = (
-            "⚡ <b>Operation First Mover v5</b>\n"
+            "⚡ <b>Operation First Mover v5.2</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "Your zero-cost MBA internship hunting agent.\n\n"
             "🤖 <b>12 AI agents</b> working 24/7\n"
             "📊 <b>1080+</b> Indian companies tracked\n"
             "🔍 <b>8+</b> job boards scraped daily\n"
             "💰 Total cost: <b>₹0.00/day</b>\n\n"
-            "🔧 <b>Quick Setup:</b>\n"
-            "1. /settings college Your College Name\n"
-            "2. /settings spec Marketing\n\n"
+            "🎯 <b>Start Here:</b>\n"
+            "/jobs — Browse filtered internships (no sales!)\n"
+            "/morning — Full morning brief\n"
+            "/top 20 — Top 20 by PPO score\n\n"
             "🚀 <b>Run agents on demand:</b>\n"
             "/run pipeline — Full scrape+process+report\n"
             "/run scrape — Just scrape now\n\n"
-            "Type /help for all 26 commands."
+            "Type /help for all 38 commands."
         )
         await update.message.reply_text(msg, parse_mode='HTML')
 
@@ -1146,9 +1201,12 @@ class TelegramReporter:
     async def _cmd_help(self, update, context):
         """Full command reference."""
         msg = (
-            "📖 <b>Command Reference (37 Commands)</b>\n"
+            "📖 <b>Command Reference (38 Commands)</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
             "📋 <b>Browse & Discover</b>\n"
+            "/jobs [sort] [page] — <b>SMART filtered (no sales!)</b>\n"
+            "  Sorts: stipend, ppo, date, duration, applicants\n"
+            "  Filters: /jobs marketing, /jobs mumbai, /jobs 10k\n"
             "/loadall [page] [cat] [src] — Browse ALL listings\n"
             "/browse [category] — Category browser\n"
             "/filter — Available filters & counts\n"
@@ -1229,7 +1287,162 @@ class TelegramReporter:
         for i, l in enumerate(listings, 1):
             lines.append(self.formatter._format_listing_line(i, l))
 
-        lines.append(f"💡 /export {n} for Excel | /ocean for Blue Ocean")
+        lines.append(f"💡 /jobs for filtered | /export {n} for Excel | /ocean for Blue Ocean")
+        await self._send_long_message(update, '\n'.join(lines))
+
+    @command_error_boundary
+    async def _cmd_jobs(self, update, context):
+        """
+        Super-rich management internship browser with smart filtering.
+
+        Usage:
+            /jobs                — Page 1, sorted by stipend, ≤3mo, no sales
+            /jobs 2              — Page 2
+            /jobs stipend 2      — Sort by stipend, page 2
+            /jobs ppo            — Sort by PPO score
+            /jobs date           — Newest first
+            /jobs duration       — Shortest first
+            /jobs applicants     — Least competitive first
+            /jobs marketing      — Filter by category
+            /jobs linkedin       — Filter by source
+            /jobs mumbai         — Filter by location
+            /jobs 5mo            — Duration ≤ 5 months
+            /jobs 10k            — Min stipend ₹10,000
+
+        All results ALWAYS exclude sales/BD/cold-calling roles.
+        """
+        import re as _re
+
+        # Defaults
+        page = 1
+        sort_by = 'stipend'
+        max_duration = 3
+        category_filter = None
+        source_filter = None
+        location_filter = None
+        min_stipend = 0
+        per_page = 15
+
+        valid_sorts = {'stipend', 'ppo', 'date', 'duration', 'applicants'}
+        valid_sources = {
+            'internshala', 'linkedin', 'naukri', 'indeed', 'iimjobs',
+            'greenhouse', 'lever', 'instahyre', 'career_page', 'ats_crawler',
+            'glassdoor', 'wellfound', 'workday', 'ashby',
+        }
+        valid_categories = {
+            'marketing', 'finance', 'strategy', 'consulting', 'operations',
+            'product-management', 'analytics', 'human-resources', 'supply-chain',
+            'general-management', 'business-analytics', 'business-development',
+        }
+        location_keywords = {
+            'mumbai', 'delhi', 'bangalore', 'bengaluru', 'hyderabad',
+            'chennai', 'pune', 'kolkata', 'gurugram', 'gurgaon', 'noida',
+            'remote', 'wfh', 'ahmedabad', 'jaipur', 'lucknow', 'kochi',
+        }
+
+        if context.args:
+            for arg in context.args:
+                arg_lower = arg.lower().strip()
+
+                if arg_lower.isdigit():
+                    page = max(1, int(arg_lower))
+                    continue
+                if arg_lower in valid_sorts:
+                    sort_by = arg_lower
+                    continue
+                if arg_lower in valid_sources:
+                    source_filter = arg_lower
+                    continue
+                if arg_lower in valid_categories:
+                    category_filter = arg_lower
+                    continue
+                if arg_lower in location_keywords:
+                    location_filter = arg_lower
+                    continue
+
+                # Duration: "5mo" or "5m"
+                dur_match = _re.match(r'^(\d+)\s*m(?:o(?:nths?)?)?$', arg_lower)
+                if dur_match:
+                    max_duration = max(1, min(12, int(dur_match.group(1))))
+                    continue
+
+                # Min stipend: "10k" or "10000"
+                stip_match = _re.match(r'^(\d+)\s*k$', arg_lower)
+                if stip_match:
+                    min_stipend = int(stip_match.group(1)) * 1000
+                    continue
+
+                # Might be a category or location we don't know
+                if len(arg_lower) > 2:
+                    category_filter = arg_lower
+
+        offset = (page - 1) * per_page
+
+        await update.message.reply_text(
+            f"🔍 Finding management internships...\n"
+            f"⏱ ≤{max_duration}mo │ 🔀 by {sort_by} │ 🚫 No sales/BD"
+        )
+
+        listings, total = self.db.get_management_internships(
+            limit=per_page,
+            offset=offset,
+            max_duration_months=max_duration,
+            sort_by=sort_by,
+            category=category_filter,
+            source=source_filter,
+            min_stipend=min_stipend,
+            location=location_filter,
+        )
+
+        if not listings:
+            msg_parts = ["📭 No management internships found with current filters."]
+            if max_duration < 6:
+                msg_parts.append(f"Try: /jobs 6mo (expand to 6 months)")
+            if min_stipend > 0:
+                msg_parts.append(f"Try: /jobs (remove stipend filter)")
+            msg_parts.append("Or: /run pipeline to scrape new listings")
+            await update.message.reply_text('\n'.join(msg_parts))
+            return
+
+        total_pages = max(1, (total + per_page - 1) // per_page)
+
+        filters = {
+            'category': category_filter,
+            'source': source_filter,
+            'location': location_filter,
+            'min_stipend': min_stipend if min_stipend > 0 else None,
+        }
+        header = self.formatter.format_jobs_header(
+            total, page, total_pages, sort_by, max_duration,
+            {k: v for k, v in filters.items() if v}
+        )
+
+        lines = [header]
+        start_num = offset + 1
+        for i, l in enumerate(listings, start_num):
+            lines.append(self.formatter._format_listing_line(i, l))
+
+        lines.append(f"{'━' * 28}")
+
+        # Navigation
+        nav = []
+        if page > 1:
+            nav.append(f"⬅️ /jobs {sort_by} {page - 1}")
+        if page < total_pages:
+            nav.append(f"➡️ /jobs {sort_by} {page + 1}")
+        if nav:
+            lines.append(f"📄 {' │ '.join(nav)}")
+
+        lines.append("")
+        lines.append(
+            "💡 <b>Shortcuts:</b>\n"
+            "  /jobs ppo — Sort by PPO score\n"
+            "  /jobs marketing — Filter category\n"
+            "  /jobs mumbai — Filter location\n"
+            "  /jobs 10k — Min ₹10,000 stipend\n"
+            "  /jobs 6mo — Expand to 6 months"
+        )
+
         await self._send_long_message(update, '\n'.join(lines))
 
     @command_error_boundary

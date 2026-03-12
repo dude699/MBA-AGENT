@@ -2309,6 +2309,9 @@ class DatabaseManager:
             )
             urgent = [dict(row) for row in cur.fetchall()]
 
+            # Source counts for dashboard
+            source_counts = self.get_source_counts()
+
             return {
                 'total_new': total_new,
                 'total_active': total_active,
@@ -2320,7 +2323,118 @@ class DatabaseManager:
                 'top_10': top_10,
                 'dark_finds': dark_finds,
                 'urgent_deadlines': urgent,
+                'source_counts': source_counts,
             }
+
+    def get_management_internships(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        max_duration_months: int = 3,
+        sort_by: str = 'stipend',
+        category: Optional[str] = None,
+        source: Optional[str] = None,
+        min_stipend: float = 0,
+        location: Optional[str] = None,
+    ) -> Tuple[List[Dict], int]:
+        """
+        Get management-related internships sorted by stipend, filtered by
+        duration (<=N months), excluding sales/cold-calling roles.
+
+        Returns:
+            Tuple of (listings, total_count) for pagination.
+
+        Exclusion is done at the SQL level using LIKE patterns for speed.
+        """
+        SALES_EXCLUDE_PATTERNS = [
+            '%telesales%', '%telecaller%', '%cold call%',
+            '%door to door%', '%field sales%', '%direct sales%',
+            '%sales executive%', '%sales officer%', '%sales associate%',
+            '%sales representative%', '%inside sales%',
+            '%area sales manager%', '%territory sales%',
+            '%bde %', '% bdm %', '%business development executive%',
+            '%business development manager%',
+            '%insurance agent%', '%insurance advisor%', '%insurance sales%',
+            '%real estate agent%', '%real estate sales%', '%real estate broker%',
+            '%commission based%', '%target based sales%',
+            '%walk in%', '%walkin%', '%call center%', '%bpo%', '%kpo%',
+            '%mlm%', '%network marketing%', '%direct selling%',
+            '%data entry%', '%typing job%',
+        ]
+
+        where_clauses = [
+            "cl.status = 'active'",
+            "cl.is_ghost = 0",
+        ]
+        params: list = []
+
+        # Duration filter
+        if max_duration_months > 0:
+            where_clauses.append(
+                "(cl.duration_months <= ? OR cl.duration_months = 0 OR cl.duration_months IS NULL)"
+            )
+            params.append(max_duration_months)
+
+        # Min stipend
+        if min_stipend > 0:
+            where_clauses.append("cl.stipend_monthly >= ?")
+            params.append(min_stipend)
+
+        # Category filter
+        if category:
+            where_clauses.append("cl.category LIKE ?")
+            params.append(f"%{category}%")
+
+        # Source filter
+        if source:
+            where_clauses.append("cl.source = ?")
+            params.append(source)
+
+        # Location filter
+        if location:
+            where_clauses.append("cl.location LIKE ?")
+            params.append(f"%{location}%")
+
+        # Exclude sales patterns
+        for pattern in SALES_EXCLUDE_PATTERNS:
+            where_clauses.append("LOWER(cl.title) NOT LIKE ?")
+            params.append(pattern)
+
+        where_sql = " AND ".join(f"({c})" for c in where_clauses)
+
+        # Sort order
+        sort_map = {
+            'stipend': 'cl.stipend_monthly DESC, cl.ppo_score DESC',
+            'ppo': 'cl.ppo_score DESC, cl.stipend_monthly DESC',
+            'date': 'cl.created_at DESC',
+            'duration': 'cl.duration_months ASC, cl.stipend_monthly DESC',
+            'applicants': 'COALESCE(cl.applicants, 9999) ASC, cl.ppo_score DESC',
+        }
+        order_sql = sort_map.get(sort_by, sort_map['stipend'])
+
+        with self.get_cursor() as cur:
+            # Count total
+            cur.execute(
+                f"""SELECT COUNT(*) FROM clean_listings cl
+                    LEFT JOIN companies c ON cl.company_id = c.id
+                    WHERE {where_sql}""",
+                params
+            )
+            total_count = cur.fetchone()[0]
+
+            # Fetch page
+            cur.execute(
+                f"""SELECT cl.*, c.tier, c.sector, c.cirs, c.name as company_name
+                    FROM clean_listings cl
+                    LEFT JOIN companies c ON cl.company_id = c.id
+                    WHERE {where_sql}
+                    ORDER BY {order_sql}
+                    LIMIT ? OFFSET ?""",
+                params + [limit, offset]
+            )
+            listings = [dict(row) for row in cur.fetchall()]
+
+        return listings, total_count
 
     def get_weekly_stats(self) -> Dict[str, Any]:
         """Get weekly statistics for A-11 and /stats command."""
