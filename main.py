@@ -94,7 +94,7 @@ except ImportError:
 # CONSTANTS
 # ============================================================
 
-VERSION = "5.1.0"
+VERSION = "5.2.0"
 RENDER_OVERLAP_GRACE_SEC = int(os.getenv('RENDER_OVERLAP_GRACE_SEC', '15'))
 WATCHDOG_INTERVAL_SEC = 120
 STARTUP_TIMEOUT_SEC = 120
