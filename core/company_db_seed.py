@@ -47,18 +47,18 @@ from core.database import get_db, Company
 
 TIER_1_ELITE = [
     # MBB + Strategy Consulting
-    ("McKinsey & Company", "consulting", "enterprise", "gurugram", "greenhouse", "mckinsey"),
-    ("Boston Consulting Group", "consulting", "enterprise", "mumbai", "greenhouse", "bcg"),
-    ("Bain & Company", "consulting", "enterprise", "mumbai", "greenhouse", "bain"),
-    ("Oliver Wyman", "consulting", "enterprise", "mumbai", "greenhouse", "oliverwyman"),
-    ("A.T. Kearney", "consulting", "enterprise", "mumbai", "greenhouse", "atkearney"),
+    ("McKinsey & Company", "consulting", "enterprise", "gurugram", "custom", "mckinsey.com/careers"),
+    ("Boston Consulting Group", "consulting", "enterprise", "mumbai", "custom", "careers.bcg.com"),
+    ("Bain & Company", "consulting", "enterprise", "mumbai", "custom", "bain.com/careers"),
+    ("Oliver Wyman", "consulting", "enterprise", "mumbai", "custom", "oliverwyman.com/careers"),
+    ("A.T. Kearney", "consulting", "enterprise", "mumbai", "custom", "kearney.com/careers"),
     ("Roland Berger", "consulting", "enterprise", "mumbai", None, None),
     ("Strategy&", "consulting", "enterprise", "gurugram", None, None),
 
     # Investment Banking & Finance
-    ("Goldman Sachs", "banking", "enterprise", "bengaluru", "greenhouse", "goldmansachs"),
-    ("JP Morgan Chase", "banking", "enterprise", "mumbai", "greenhouse", "jpmorgan"),
-    ("Morgan Stanley", "banking", "enterprise", "mumbai", "greenhouse", "morganstanley"),
+    ("Goldman Sachs", "banking", "enterprise", "bengaluru", "custom", "goldmansachs.com/careers"),
+    ("JP Morgan Chase", "banking", "enterprise", "mumbai", "custom", "jpmorgan.com/careers"),
+    ("Morgan Stanley", "banking", "enterprise", "mumbai", "custom", "morganstanley.com/careers"),
     ("Citi India", "banking", "enterprise", "mumbai", None, None),
     ("HSBC India", "banking", "enterprise", "mumbai", None, None),
     ("Standard Chartered India", "banking", "enterprise", "mumbai", None, None),
@@ -91,13 +91,13 @@ TIER_1_ELITE = [
     ("Amazon India", "ecommerce", "enterprise", "bengaluru", None, None),
     ("Google India", "technology", "enterprise", "bengaluru", None, None),
     ("Microsoft India", "technology", "enterprise", "hyderabad", None, None),
-    ("Apple India", "technology", "enterprise", "bengaluru", "greenhouse", "apple"),
+    ("Apple India", "technology", "enterprise", "bengaluru", "custom", "apple.com/careers"),
     ("Meta India", "technology", "enterprise", "gurugram", "lever", "meta"),
     ("Netflix India", "media", "enterprise", "mumbai", "lever", "netflix"),
-    ("Uber India", "technology", "enterprise", "bengaluru", "greenhouse", "uber"),
-    ("Adobe India", "technology", "enterprise", "noida", "greenhouse", "adobe"),
-    ("Salesforce India", "technology", "enterprise", "hyderabad", "greenhouse", "salesforce"),
-    ("Cisco India", "technology", "enterprise", "bengaluru", "greenhouse", "cisco"),
+    ("Uber India", "technology", "enterprise", "bengaluru", "custom", "uber.com/careers"),
+    ("Adobe India", "technology", "enterprise", "noida", "custom", "adobe.com/careers"),
+    ("Salesforce India", "technology", "enterprise", "hyderabad", "custom", "salesforce.com/careers"),
+    ("Cisco India", "technology", "enterprise", "bengaluru", "custom", "cisco.com/careers"),
     ("Intel India", "technology", "enterprise", "bengaluru", None, None),
     ("Samsung India", "technology", "enterprise", "gurugram", None, None),
 
@@ -162,7 +162,7 @@ TIER_2_STRONG_MNC = [
     ("KPMG India", "consulting", "enterprise", "mumbai", None, None),
     ("Accenture India", "consulting", "enterprise", "bengaluru", None, None),
     ("Capgemini India", "consulting", "enterprise", "mumbai", None, None),
-    ("ZS Associates", "consulting", "large", "pune", "greenhouse", "zsassociates"),
+    ("ZS Associates", "consulting", "large", "pune", "custom", "zs.com/careers"),
     ("Alvarez & Marsal", "consulting", "large", "mumbai", None, None),
     ("Everest Group", "consulting", "mid", "gurugram", None, None),
     ("Korn Ferry", "consulting", "large", "mumbai", None, None),
@@ -190,7 +190,7 @@ TIER_2_STRONG_MNC = [
 
     # Fintech
     ("PayPal India", "fintech", "large", "chennai", None, None),
-    ("Stripe India", "fintech", "large", "bengaluru", "greenhouse", "stripe"),
+    ("Stripe India", "fintech", "large", "bengaluru", "greenhouse", "stripe"),  # VERIFIED: has public board
     ("Spotify India", "media", "large", "mumbai", "lever", "spotify"),
 
     # Semiconductor / Hardware
@@ -229,12 +229,12 @@ for i in range(1, 181):
 # ============================================================
 
 TIER_3_UNICORNS = [
-    ("Zepto", "ecommerce", "mid", "mumbai", "greenhouse", "zepto"),
-    ("Meesho", "ecommerce", "mid", "bengaluru", None, None),
-    ("PhonePe", "fintech", "large", "bengaluru", None, None),
-    ("CRED", "fintech", "mid", "bengaluru", "lever", "cred"),
-    ("Razorpay", "fintech", "mid", "bengaluru", "greenhouse", "razorpay"),
-    ("Groww", "fintech", "mid", "bengaluru", "ashby", "groww"),
+    ("Zepto", "ecommerce", "mid", "mumbai", "custom", "zepto.co/careers"),
+    ("Meesho", "ecommerce", "mid", "bengaluru", "lever", "meesho"),  # VERIFIED: has Lever board
+    ("PhonePe", "fintech", "large", "bengaluru", "greenhouse", "phonepe"),  # VERIFIED: has GH board
+    ("CRED", "fintech", "mid", "bengaluru", "lever", "cred"),  # VERIFIED: has Lever board
+    ("Razorpay", "fintech", "mid", "bengaluru", "custom", "razorpay.com/careers"),
+    ("Groww", "fintech", "mid", "bengaluru", "greenhouse", "groww"),  # VERIFIED: has GH board,
     ("Lenskart", "ecommerce", "mid", "delhi", None, None),
     ("Nykaa", "ecommerce", "large", "mumbai", None, None),
     ("Swiggy", "food_delivery", "large", "bengaluru", None, None),

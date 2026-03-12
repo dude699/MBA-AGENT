@@ -946,7 +946,7 @@ class IntelligenceEnricher:
         self.urgency = UrgencyScorer()
         self.stipend_analyzer = StipendAnalyzer()
 
-    def run_enrichment(self, hours: int = 48, limit: int = 500) -> EnrichmentStats:
+    def run_enrichment(self, hours: int = 48, limit: int = 2000) -> EnrichmentStats:
         """
         Run full enrichment pipeline on recent listings.
         

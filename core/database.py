@@ -72,7 +72,7 @@ except ImportError:
 # CONSTANTS
 # ============================================================
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 MIGRATION_TABLE = "__schema_migrations"
 
 # Listing statuses
@@ -383,7 +383,10 @@ CREATE_TABLES_SQL: List[str] = [
         description_text TEXT DEFAULT '',
         scraped_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         batch_id TEXT DEFAULT '',
-        content_hash TEXT DEFAULT ''
+        content_hash TEXT DEFAULT '',
+        dedup_status TEXT DEFAULT 'pending' CHECK(dedup_status IN ('pending','new','duplicate','filtered')),
+        dedup_matched_id INTEGER DEFAULT NULL,
+        dedup_at DATETIME DEFAULT NULL
     )
     """,
 
@@ -524,6 +527,21 @@ CREATE_TABLES_SQL: List[str] = [
 
     # ---- Table 9: application_packages ----
     """
+    CREATE TABLE IF NOT EXISTS auto_apply_queue (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        listing_id INTEGER NOT NULL REFERENCES clean_listings(id) ON DELETE CASCADE,
+        status TEXT DEFAULT 'queued' CHECK(status IN ('queued','in_progress','applied','failed','skipped')),
+        platform TEXT DEFAULT '',
+        apply_url TEXT DEFAULT '',
+        notes TEXT DEFAULT '',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME,
+        UNIQUE(listing_id)
+    )
+    """,
+
+    # ---- Table 9b: application_packages ----
+    """
     CREATE TABLE IF NOT EXISTS application_packages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         listing_id INTEGER NOT NULL REFERENCES clean_listings(id) ON DELETE CASCADE,
@@ -622,6 +640,9 @@ CREATE_INDEXES_SQL: List[str] = [
     "CREATE INDEX IF NOT EXISTS idx_raw_listings_category ON raw_listings(category)",
     "CREATE INDEX IF NOT EXISTS idx_raw_listings_hash ON raw_listings(content_hash)",
     "CREATE INDEX IF NOT EXISTS idx_raw_listings_url ON raw_listings(url)",
+    "CREATE INDEX IF NOT EXISTS idx_raw_listings_dedup ON raw_listings(dedup_status)",
+    "CREATE INDEX IF NOT EXISTS idx_auto_apply_status ON auto_apply_queue(status)",
+    "CREATE INDEX IF NOT EXISTS idx_auto_apply_listing ON auto_apply_queue(listing_id)",
 
     # clean_listings indexes
     "CREATE INDEX IF NOT EXISTS idx_clean_listings_ppo_score ON clean_listings(ppo_score DESC)",
@@ -848,10 +869,79 @@ class DatabaseManager:
             conn.commit()
             logger.info(f"Database initialized at {self.db_path} (schema v{SCHEMA_VERSION})")
 
+            # Run migrations for existing databases
+            self._run_migrations(conn)
+
         except Exception as e:
             conn.rollback()
             logger.error(f"Failed to initialize database: {e}")
             raise
+
+    def _run_migrations(self, conn):
+        """Run schema migrations for existing databases."""
+        cursor = conn.cursor()
+        try:
+            # Check current version
+            cursor.execute("SELECT MAX(version) FROM __schema_migrations")
+            row = cursor.fetchone()
+            current_version = row[0] if row and row[0] else 0
+
+            # Migration v2: Add dedup tracking columns + auto_apply_queue
+            if current_version < 2:
+                logger.info("Running migration v2: dedup tracking + auto_apply_queue")
+                # Add columns to raw_listings if they don't exist
+                try:
+                    cursor.execute("ALTER TABLE raw_listings ADD COLUMN dedup_status TEXT DEFAULT 'pending'")
+                except Exception:
+                    pass  # Column already exists
+                try:
+                    cursor.execute("ALTER TABLE raw_listings ADD COLUMN dedup_matched_id INTEGER DEFAULT NULL")
+                except Exception:
+                    pass
+                try:
+                    cursor.execute("ALTER TABLE raw_listings ADD COLUMN dedup_at DATETIME DEFAULT NULL")
+                except Exception:
+                    pass
+
+                # Create auto_apply_queue if not exists
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS auto_apply_queue (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        listing_id INTEGER NOT NULL REFERENCES clean_listings(id) ON DELETE CASCADE,
+                        status TEXT DEFAULT 'queued' CHECK(status IN ('queued','in_progress','applied','failed','skipped')),
+                        platform TEXT DEFAULT '',
+                        apply_url TEXT DEFAULT '',
+                        notes TEXT DEFAULT '',
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME,
+                        UNIQUE(listing_id)
+                    )
+                """)
+
+                # Create indexes
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_raw_listings_dedup ON raw_listings(dedup_status)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_auto_apply_status ON auto_apply_queue(status)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_auto_apply_listing ON auto_apply_queue(listing_id)")
+
+                # Mark existing unlinked raw_listings as 'pending' (already default)
+                # Mark existing raw_listings that have clean counterparts as 'new'
+                cursor.execute("""
+                    UPDATE raw_listings SET dedup_status = 'new'
+                    WHERE id IN (SELECT raw_id FROM clean_listings WHERE raw_id IS NOT NULL)
+                    AND dedup_status = 'pending'
+                """)
+
+                # Record migration
+                cursor.execute(
+                    "INSERT OR IGNORE INTO __schema_migrations (version, description) VALUES (?, ?)",
+                    (2, "v2: dedup tracking columns + auto_apply_queue table")
+                )
+                conn.commit()
+                logger.info("Migration v2 complete")
+
+        except Exception as e:
+            logger.error(f"Migration error: {e}")
+            conn.rollback()
 
     def get_schema_version(self) -> int:
         """Get the current schema version."""
@@ -948,13 +1038,12 @@ class DatabaseManager:
             return [dict(row) for row in cur.fetchall()]
 
     def get_unprocessed_raw_listings(self, limit: int = 500) -> List[Dict]:
-        """Get raw listings not yet in clean_listings."""
+        """Get raw listings not yet processed by dedup."""
         with self.get_cursor() as cur:
             cur.execute(
                 """
                 SELECT r.* FROM raw_listings r
-                LEFT JOIN clean_listings c ON c.raw_id = r.id
-                WHERE c.id IS NULL
+                WHERE r.dedup_status = 'pending'
                 ORDER BY r.scraped_at DESC
                 LIMIT ?
                 """,
@@ -977,15 +1066,119 @@ class DatabaseManager:
             cur.execute(query, params)
             return cur.fetchone()[0]
 
-    def count_unprocessed_raw_listings(self) -> int:
-        """Count raw listings that haven't been processed into clean listings yet."""
+    def mark_raw_listing_processed(self, raw_id: int, duplicate: bool = False,
+                                     matched_id: Optional[int] = None,
+                                     clean_id: Optional[int] = None,
+                                     filtered: bool = False) -> None:
+        """Mark a raw listing as processed by the dedup engine."""
+        if filtered:
+            status = 'filtered'
+        elif duplicate:
+            status = 'duplicate'
+        else:
+            status = 'new'
+
+        ref_id = matched_id or clean_id
         with self.get_cursor() as cur:
             cur.execute(
                 """
-                SELECT COUNT(*) FROM raw_listings r
-                LEFT JOIN clean_listings c ON c.raw_id = r.id
-                WHERE c.id IS NULL
+                UPDATE raw_listings
+                SET dedup_status = ?, dedup_matched_id = ?, dedup_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (status, ref_id, raw_id)
+            )
+
+    def get_queued_applications(self, limit: int = 10) -> List[Dict]:
+        """Get queued applications for auto-apply."""
+        with self.get_cursor() as cur:
+            cur.execute(
                 """
+                SELECT q.*, c.title, c.company, c.url, c.source, c.category,
+                       c.stipend_monthly, c.is_ppo, c.location
+                FROM auto_apply_queue q
+                JOIN clean_listings c ON c.id = q.listing_id
+                WHERE q.status = 'queued'
+                ORDER BY c.ppo_score DESC, c.created_at DESC
+                LIMIT ?
+                """,
+                (limit,)
+            )
+            return [dict(row) for row in cur.fetchall()]
+
+    def queue_for_auto_apply(self, listing_id: int, platform: str = '',
+                              apply_url: str = '') -> Optional[int]:
+        """Add a listing to the auto-apply queue."""
+        with self.get_cursor() as cur:
+            try:
+                cur.execute(
+                    """
+                    INSERT OR IGNORE INTO auto_apply_queue
+                    (listing_id, platform, apply_url)
+                    VALUES (?, ?, ?)
+                    """,
+                    (listing_id, platform, apply_url)
+                )
+                return cur.lastrowid if cur.rowcount > 0 else None
+            except Exception:
+                return None
+
+    def update_auto_apply_status(self, queue_id: int, status: str,
+                                   notes: str = '') -> None:
+        """Update auto-apply queue entry status."""
+        with self.get_cursor() as cur:
+            cur.execute(
+                """
+                UPDATE auto_apply_queue
+                SET status = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (status, notes, queue_id)
+            )
+
+    def update_application_status(self, queue_id: int, status: str,
+                                    cover_letter: str = '',
+                                    external_app_id: str = '',
+                                    error: str = '') -> None:
+        """Update application status (alias for auto-apply queue).
+        Used by A-13 Auto-Apply agent."""
+        notes = error if error else cover_letter[:200] if cover_letter else ''
+        if external_app_id:
+            notes = f"app_id={external_app_id}; {notes}"
+        self.update_auto_apply_status(queue_id, status, notes)
+
+    def get_all_clean_listings(self, limit: int = 500, offset: int = 0,
+                                status: str = 'active',
+                                category: Optional[str] = None,
+                                source: Optional[str] = None,
+                                sort_by: str = 'ppo_score',
+                                sort_order: str = 'DESC') -> List[Dict]:
+        """Get all clean listings with flexible filtering."""
+        allowed_sorts = {'ppo_score', 'created_at', 'stipend_monthly', 'applicants', 'company'}
+        if sort_by not in allowed_sorts:
+            sort_by = 'ppo_score'
+        sort_order = 'DESC' if sort_order.upper() == 'DESC' else 'ASC'
+
+        query = f"SELECT * FROM clean_listings WHERE status = ?"
+        params: list = [status]
+        if category:
+            query += " AND category = ?"
+            params.append(category)
+        if source:
+            query += " AND source = ?"
+            params.append(source)
+        query += f" ORDER BY {sort_by} {sort_order} LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+
+        with self.get_cursor() as cur:
+            cur.execute(query, params)
+            return [dict(row) for row in cur.fetchall()]
+
+    def count_unprocessed_raw_listings(self) -> int:
+        """Count raw listings that haven't been processed by dedup."""
+        with self.get_cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) FROM raw_listings WHERE dedup_status = 'pending'"
             )
             return cur.fetchone()[0]
 
@@ -1211,6 +1404,66 @@ class DatabaseManager:
             cur.execute(query, params)
             return cur.fetchone()[0]
 
+    def count_clean_listings_filtered(self, category: Optional[str] = None,
+                                        source: Optional[str] = None,
+                                        status: str = 'active') -> int:
+        """Count clean listings with category/source filters."""
+        query = "SELECT COUNT(*) FROM clean_listings WHERE status = ?"
+        params: list = [status]
+        if category:
+            query += " AND category = ?"
+            params.append(category)
+        if source:
+            query += " AND source = ?"
+            params.append(source)
+        with self.get_cursor() as cur:
+            cur.execute(query, params)
+            return cur.fetchone()[0]
+
+    def get_category_counts(self, status: str = 'active') -> Dict[str, int]:
+        """Get listing counts per category."""
+        with self.get_cursor() as cur:
+            cur.execute(
+                """
+                SELECT category, COUNT(*) as cnt
+                FROM clean_listings
+                WHERE status = ? AND category != ''
+                GROUP BY category
+                ORDER BY cnt DESC
+                """,
+                (status,)
+            )
+            return {row['category']: row['cnt'] for row in cur.fetchall()}
+
+    def get_source_counts(self, status: str = 'active') -> Dict[str, int]:
+        """Get clean listing counts per source."""
+        with self.get_cursor() as cur:
+            cur.execute(
+                """
+                SELECT source, COUNT(*) as cnt
+                FROM clean_listings
+                WHERE status = ? AND source != ''
+                GROUP BY source
+                ORDER BY cnt DESC
+                """,
+                (status,)
+            )
+            return {row['source']: row['cnt'] for row in cur.fetchall()}
+
+    def get_raw_source_counts(self) -> Dict[str, int]:
+        """Get raw listing counts per source."""
+        with self.get_cursor() as cur:
+            cur.execute(
+                """
+                SELECT source, COUNT(*) as cnt
+                FROM raw_listings
+                WHERE source != ''
+                GROUP BY source
+                ORDER BY cnt DESC
+                """
+            )
+            return {row['source']: row['cnt'] for row in cur.fetchall()}
+
     def get_listings_by_company(self, company_name: str,
                                  limit: int = 20) -> List[Dict]:
         """Get listings for a specific company."""
@@ -1333,6 +1586,21 @@ class DatabaseManager:
                 cur.execute(
                     "SELECT * FROM companies WHERE ats_platform != '' AND ats_board_id != ''"
                 )
+            return [dict(row) for row in cur.fetchall()]
+
+    def get_companies_by_ats_platform(self, platform: str,
+                                        limit: int = 50) -> List[Dict]:
+        """Get companies by ATS platform with optional limit."""
+        with self.get_cursor() as cur:
+            cur.execute(
+                """
+                SELECT * FROM companies
+                WHERE ats_platform = ?
+                ORDER BY tier ASC, cirs DESC
+                LIMIT ?
+                """,
+                (platform, limit)
+            )
             return [dict(row) for row in cur.fetchall()]
 
     def update_company_cirs(self, company_id: int, cirs: float):

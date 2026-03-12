@@ -361,7 +361,7 @@ class AgentScheduler:
         heartbeats for agents that don't self-manage (brief/summary jobs).
         """
         execution = JobExecution(job_id=name, start_time=time.time())
-        job_timeout = kwargs.pop('job_timeout', 900)
+        job_timeout = kwargs.pop('job_timeout', 1800)
         max_retries = kwargs.pop('max_retries', 2)
         retry_delay = 30  # seconds between retries
 
