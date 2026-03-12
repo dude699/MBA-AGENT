@@ -44,3 +44,9 @@ build/
 
 # Playwright browsers
 playwright-browsers/
+
+# Mini App
+mini-app/node_modules/
+mini-app/dist/
+mini-app/.env
+mini-app/*.local
