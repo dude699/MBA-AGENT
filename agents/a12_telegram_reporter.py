@@ -64,6 +64,11 @@ except ImportError:
 from core.config import get_config, IST, MBA_CATEGORIES
 from core.database import get_db, DatabaseManager, Outcome, OutcomeStatus
 from core.ai_router import get_router, AIRouter
+from core.security import (
+    get_security_manager, SecurityManager,
+    require_auth, require_admin,
+    ADMIN_TELEGRAM_ID, ADMIN_USERNAME,
+)
 
 AGENT_ID = "A-12"
 AGENT_NAME = "Telegram Reporter"
@@ -84,22 +89,53 @@ def command_error_boundary(func):
     Industrial-grade error boundary for Telegram command handlers.
     Catches ALL exceptions and sends a user-friendly error message
     instead of silently failing or crashing the bot.
+    
+    Also enforces authorization — unauthorized users get a denial
+    message instead of the command output.
     """
     @functools.wraps(func)
     async def wrapper(self, update, context):
         try:
+            # ---- AUTHORIZATION CHECK ----
+            # /start is always allowed (for discovery)
+            # Admin commands handle their own auth
+            cmd_name = func.__name__.replace('_cmd_', '')
+            
+            # These commands handle their own auth or are always public
+            always_allowed = {'start', 'adduser', 'removeuser', 'readduser', 
+                            'listusers', 'gencode', 'secstatus'}
+            
+            if cmd_name not in always_allowed:
+                telegram_id = update.effective_user.id if update.effective_user else 0
+                if telegram_id:
+                    try:
+                        sec = get_security_manager()
+                        authorized, reason = sec.authorize_command(
+                            telegram_id, f'/{cmd_name}'
+                        )
+                        if not authorized:
+                            await update.message.reply_text(
+                                f"🔒 Access Denied: {reason}\n\n"
+                                f"Your ID: <code>{telegram_id}</code>\n"
+                                f"Contact admin to get authorized.",
+                                parse_mode='HTML'
+                            )
+                            return
+                    except Exception as auth_err:
+                        logger.debug(f"[{AGENT_ID}] Auth check error (allowing): {auth_err}")
+            
             return await func(self, update, context)
         except Exception as e:
-            cmd_name = func.__name__.replace('_cmd_', '/')
+            cmd_display = func.__name__.replace('_cmd_', '/')
             error_msg = str(e)[:200]
             logger.error(
-                f"[{AGENT_ID}] Command {cmd_name} failed: "
+                f"[{AGENT_ID}] Command {cmd_display} failed: "
                 f"{type(e).__name__}: {error_msg}"
             )
-            logger.debug(f"[{AGENT_ID}] {cmd_name} traceback:\n{traceback.format_exc()[-500:]}")
+            logger.debug(f"[{AGENT_ID}] {cmd_display} traceback:\n{traceback.format_exc()[-500:]}")
             try:
                 await update.message.reply_text(
-                    f"❌ Error in {cmd_name}: {error_msg}\n\n"
+                    f"❌ Error in {cmd_display}: {error_msg}\n\n"
                     f"This has been logged. Try again or use /health to check system status."
                 )
             except Exception:
@@ -499,6 +535,9 @@ PREFLIGHT_DRAIN_INTERVAL = 2  # seconds between drain calls
 PREFLIGHT_OLD_INSTANCE_CHECK_TIMEOUT = 30  # seconds
 PREFLIGHT_OLD_INSTANCE_CHECK_INTERVAL = 5  # seconds
 
+# Instance lock file — prevents concurrent polling on same machine
+INSTANCE_LOCK_FILE = "data/.telegram_polling.lock"
+
 
 class TelegramReporter:
     """
@@ -522,6 +561,7 @@ class TelegramReporter:
         self.config = get_config()
         self.router = get_router()
         self.formatter = ReportFormatter()
+        self.security = get_security_manager()
         self._app = None
         self._running = False
         self._restart_lock = asyncio.Lock()
@@ -531,6 +571,9 @@ class TelegramReporter:
         # Background task tracking for /run, /status, /cancel
         self._running_tasks: Dict[str, Dict[str, Any]] = {}
         self._task_lock = asyncio.Lock()
+        
+        # Instance lock for single-instance guarantee
+        self._lock_fd = None
 
     # ================================================================
     # PRE-FLIGHT: CLEAN STALE SESSIONS
@@ -788,7 +831,7 @@ class TelegramReporter:
         # Register custom error handler for runtime Conflict errors
         app.add_error_handler(self._on_telegram_error)
 
-        # Register all 26 command handlers
+        # Register all command handlers (26 user + 6 admin)
         commands = {
             'start': self._cmd_start,
             'help': self._cmd_help,
@@ -826,6 +869,13 @@ class TelegramReporter:
             'cfstatus': self._cmd_cfstatus,
             'reprocess': self._cmd_reprocess,
             'jobs': self._cmd_jobs,
+            # Security & Admin commands
+            'adduser': self._cmd_adduser,
+            'removeuser': self._cmd_removeuser,
+            'readduser': self._cmd_readduser,
+            'listusers': self._cmd_listusers,
+            'gencode': self._cmd_gencode,
+            'secstatus': self._cmd_secstatus,
         }
 
         for cmd_name, handler_fn in commands.items():
@@ -861,9 +911,48 @@ class TelegramReporter:
         except Exception:
             pass
 
+    def _acquire_instance_lock(self) -> bool:
+        """
+        Acquire a file-based instance lock to prevent multiple
+        bot instances on the same machine from polling simultaneously.
+        Uses fcntl (POSIX) for atomic locking.
+        """
+        import fcntl
+        lock_path = INSTANCE_LOCK_FILE
+        os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+        try:
+            self._lock_fd = open(lock_path, 'w')
+            fcntl.flock(self._lock_fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self._lock_fd.write(f"{os.getpid()}\n")
+            self._lock_fd.flush()
+            logger.info(f"[{AGENT_ID}] Instance lock acquired (PID {os.getpid()})")
+            return True
+        except (IOError, OSError):
+            logger.warning(
+                f"[{AGENT_ID}] Another instance holds the polling lock. "
+                f"This instance will NOT start polling."
+            )
+            if self._lock_fd:
+                self._lock_fd.close()
+                self._lock_fd = None
+            return False
+    
+    def _release_instance_lock(self):
+        """Release the file-based instance lock."""
+        import fcntl
+        if self._lock_fd:
+            try:
+                fcntl.flock(self._lock_fd.fileno(), fcntl.LOCK_UN)
+                self._lock_fd.close()
+            except Exception:
+                pass
+            self._lock_fd = None
+            logger.info(f"[{AGENT_ID}] Instance lock released")
+
     async def start_bot(self):
         """
         Initialize and start the Telegram bot with full robustness:
+        0. Acquire instance lock (prevents dual polling on same machine)
         1. Wait for old instance to die (Render health check)
         2. Kill stale sessions via Telegram /close API
         3. Build application with error handler
@@ -884,6 +973,14 @@ class TelegramReporter:
             from telegram.error import Conflict, TimedOut, NetworkError
         except ImportError:
             logger.error(f"[{AGENT_ID}] python-telegram-bot not installed")
+            return
+
+        # ---- STEP -1: Acquire instance lock ----
+        if not self._acquire_instance_lock():
+            logger.error(
+                f"[{AGENT_ID}] SKIPPING bot start — another instance is polling. "
+                f"This prevents the getUpdates Conflict error."
+            )
             return
 
         # ---- STEP 0: Check if old instance is still alive ----
@@ -1128,7 +1225,11 @@ class TelegramReporter:
             logger.error(f"[{AGENT_ID}] App shutdown error: {e}")
 
         self._running = False
-        logger.info(f"[{AGENT_ID}] Bot fully stopped (session released)")
+        
+        # Release instance lock
+        self._release_instance_lock()
+        
+        logger.info(f"[{AGENT_ID}] Bot fully stopped (session + lock released)")
 
     async def send_message(self, text: str, chat_id: str = None):
         """Send a message to configured chat, with auto-splitting on newlines."""
@@ -1177,15 +1278,42 @@ class TelegramReporter:
 
     @command_error_boundary
     async def _cmd_start(self, update, context):
-        """Welcome message and setup wizard."""
+        """Welcome message and setup wizard. Always accessible (for auth flow)."""
+        telegram_id = update.effective_user.id if update.effective_user else 0
+        is_authorized = self.security.is_authorized(telegram_id)
+        is_admin = self.security.is_admin(telegram_id)
+        
+        if not is_authorized:
+            msg = (
+                "🔒 <b>Operation First Mover v5.3</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                "This bot requires authorization.\n"
+                "Please contact the admin to get access.\n\n"
+                f"Your Telegram ID: <code>{telegram_id}</code>\n"
+                "Share this with the admin."
+            )
+            await update.message.reply_text(msg, parse_mode='HTML')
+            return
+        
+        admin_section = ""
+        if is_admin:
+            admin_section = (
+                "\n\n🔐 <b>Admin Commands:</b>\n"
+                "/adduser — Add authorized user\n"
+                "/removeuser — Remove user\n"
+                "/listusers — List all users\n"
+                "/secstatus — Security dashboard"
+            )
+        
         msg = (
-            "⚡ <b>Operation First Mover v5.2</b>\n"
+            "⚡ <b>Operation First Mover v5.3</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "Your zero-cost MBA internship hunting agent.\n\n"
             "🤖 <b>12 AI agents</b> working 24/7\n"
             "📊 <b>1080+</b> Indian companies tracked\n"
             "🔍 <b>8+</b> job boards scraped daily\n"
-            "💰 Total cost: <b>₹0.00/day</b>\n\n"
+            "💰 Total cost: <b>₹0.00/day</b>\n"
+            "🔐 <b>Security:</b> Enabled\n\n"
             "🎯 <b>Start Here:</b>\n"
             "/jobs — Browse filtered internships (no sales!)\n"
             "/morning — Full morning brief\n"
@@ -1193,15 +1321,24 @@ class TelegramReporter:
             "🚀 <b>Run agents on demand:</b>\n"
             "/run pipeline — Full scrape+process+report\n"
             "/run scrape — Just scrape now\n\n"
-            "Type /help for all 38 commands."
+            f"Type /help for all commands.{admin_section}"
         )
         await update.message.reply_text(msg, parse_mode='HTML')
 
     @command_error_boundary
     async def _cmd_help(self, update, context):
         """Full command reference."""
+        # Auth check
+        telegram_id = update.effective_user.id if update.effective_user else 0
+        authorized, reason = self.security.authorize_command(telegram_id, '/help')
+        if not authorized:
+            await update.message.reply_text(f"🔒 {reason}")
+            return
+        
+        is_admin = self.security.is_admin(telegram_id)
+        
         msg = (
-            "📖 <b>Command Reference (38 Commands)</b>\n"
+            "📖 <b>Command Reference (38+ Commands)</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
             "📋 <b>Browse & Discover</b>\n"
             "/jobs [sort] [page] — <b>SMART filtered (no sales!)</b>\n"
@@ -1249,6 +1386,18 @@ class TelegramReporter:
             "/reprocess — Raw listing status/reset\n"
             "/settings — Preferences"
         )
+        
+        if is_admin:
+            msg += (
+                "\n\n🔐 <b>Admin (Your Eyes Only)</b>\n"
+                "/adduser <user> <id> — Authorize user\n"
+                "/removeuser <id> — Deactivate user\n"
+                "/readduser <id> — Re-enable user\n"
+                "/listusers — All authorized users\n"
+                "/gencode <id> — Regenerate access code\n"
+                "/secstatus — Security dashboard"
+            )
+        
         await update.message.reply_text(msg, parse_mode='HTML')
 
     @command_error_boundary
@@ -2940,6 +3089,168 @@ class TelegramReporter:
             "  /run pipeline — Process pending listings",
         ])
         await self._send_long_message(update, '\n'.join(lines))
+
+    # ================================================================
+    # ADMIN SECURITY COMMANDS (admin-only, in admin chat)
+    # ================================================================
+
+    @command_error_boundary
+    async def _cmd_adduser(self, update, context):
+        """Add a new authorized user (admin only).
+        Usage: /adduser <username> <telegram_id>
+        Example: /adduser johndoe 987654321
+        """
+        telegram_id = update.effective_user.id if update.effective_user else 0
+        if not self.security.is_admin(telegram_id):
+            await update.message.reply_text("🔒 Admin-only command.")
+            return
+
+        if len(context.args) < 2:
+            await update.message.reply_text(
+                "Usage: /adduser <username> <telegram_id>\n"
+                "Example: /adduser johndoe 987654321\n\n"
+                "The user will receive a one-time access code."
+            )
+            return
+
+        username = context.args[0].lstrip('@').lower()
+        try:
+            new_user_id = int(context.args[1])
+        except ValueError:
+            await update.message.reply_text("❌ Invalid Telegram ID. Must be a number.")
+            return
+
+        success, code, msg_text = self.security.add_user(username, new_user_id, added_by=telegram_id)
+
+        if success:
+            await update.message.reply_text(
+                f"✅ <b>User Added Successfully</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"👤 Username: @{username}\n"
+                f"🆔 Telegram ID: <code>{new_user_id}</code>\n"
+                f"🔑 Access Code: <code>{code}</code>\n\n"
+                f"⚠️ Send this code to the user privately.\n"
+                f"They need it for the mini-app login.\n"
+                f"Code format: {username[:3]}+id_chars+random",
+                parse_mode='HTML'
+            )
+        else:
+            await update.message.reply_text(f"⚠️ {msg_text}")
+
+    @command_error_boundary
+    async def _cmd_removeuser(self, update, context):
+        """Remove/deactivate a user (admin only).
+        Usage: /removeuser <telegram_id>
+        """
+        telegram_id = update.effective_user.id if update.effective_user else 0
+        if not self.security.is_admin(telegram_id):
+            await update.message.reply_text("🔒 Admin-only command.")
+            return
+
+        if not context.args:
+            await update.message.reply_text(
+                "Usage: /removeuser <telegram_id>\n"
+                "Use /listusers to see all users and their IDs."
+            )
+            return
+
+        try:
+            target_id = int(context.args[0])
+        except ValueError:
+            await update.message.reply_text("❌ Invalid Telegram ID.")
+            return
+
+        success, msg_text = self.security.remove_user(target_id)
+        emoji = "✅" if success else "⚠️"
+        await update.message.reply_text(f"{emoji} {msg_text}", parse_mode='HTML')
+
+    @command_error_boundary
+    async def _cmd_readduser(self, update, context):
+        """Re-enable a previously removed user (admin only).
+        Usage: /readduser <telegram_id>
+        """
+        telegram_id = update.effective_user.id if update.effective_user else 0
+        if not self.security.is_admin(telegram_id):
+            await update.message.reply_text("🔒 Admin-only command.")
+            return
+
+        if not context.args:
+            await update.message.reply_text("Usage: /readduser <telegram_id>")
+            return
+
+        try:
+            target_id = int(context.args[0])
+        except ValueError:
+            await update.message.reply_text("❌ Invalid Telegram ID.")
+            return
+
+        success, code, msg_text = self.security.readd_user(target_id)
+        if success:
+            await update.message.reply_text(
+                f"✅ <b>User Re-activated</b>\n\n"
+                f"{msg_text}\n"
+                f"🔑 New Access Code: <code>{code}</code>",
+                parse_mode='HTML'
+            )
+        else:
+            await update.message.reply_text(f"⚠️ {msg_text}")
+
+    @command_error_boundary
+    async def _cmd_listusers(self, update, context):
+        """List all authorized users (admin only)."""
+        telegram_id = update.effective_user.id if update.effective_user else 0
+        if not self.security.is_admin(telegram_id):
+            await update.message.reply_text("🔒 Admin-only command.")
+            return
+
+        msg = self.security.format_user_list()
+        await self._send_long_message(update, msg)
+
+    @command_error_boundary
+    async def _cmd_gencode(self, update, context):
+        """Regenerate access code for a user (admin only).
+        Usage: /gencode <telegram_id>
+        """
+        telegram_id = update.effective_user.id if update.effective_user else 0
+        if not self.security.is_admin(telegram_id):
+            await update.message.reply_text("🔒 Admin-only command.")
+            return
+
+        if not context.args:
+            await update.message.reply_text(
+                "Usage: /gencode <telegram_id>\n"
+                "Generates a new access code (old code invalidated)."
+            )
+            return
+
+        try:
+            target_id = int(context.args[0])
+        except ValueError:
+            await update.message.reply_text("❌ Invalid Telegram ID.")
+            return
+
+        success, code, msg_text = self.security.regenerate_code(target_id)
+        if success:
+            await update.message.reply_text(
+                f"🔑 <b>New Access Code Generated</b>\n\n"
+                f"{msg_text}\n"
+                f"New Code: <code>{code}</code>\n\n"
+                f"⚠️ Previous code & sessions invalidated.",
+                parse_mode='HTML'
+            )
+        else:
+            await update.message.reply_text(f"⚠️ {msg_text}")
+
+    @command_error_boundary
+    async def _cmd_secstatus(self, update, context):
+        """Security dashboard (admin only)."""
+        telegram_id = update.effective_user.id if update.effective_user else 0
+        if not self.security.is_admin(telegram_id):
+            await update.message.reply_text("🔒 Admin-only command.")
+            return
+
+        msg = self.security.format_security_dashboard()
+        await self._send_long_message(update, msg)
 
     # ================================================================
     # SCHEDULED REPORTS
