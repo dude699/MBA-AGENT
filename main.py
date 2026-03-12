@@ -94,7 +94,7 @@ except ImportError:
 # CONSTANTS
 # ============================================================
 
-VERSION = "5.2.0"
+VERSION = "5.3.0"
 RENDER_OVERLAP_GRACE_SEC = int(os.getenv('RENDER_OVERLAP_GRACE_SEC', '15'))
 WATCHDOG_INTERVAL_SEC = 120
 STARTUP_TIMEOUT_SEC = 120
@@ -103,7 +103,7 @@ GC_INTERVAL_SEC = 300
 BANNER = """
 +============================================================+
 |                                                              |
-|   OPERATION FIRST MOVER v5.1 — Zero Cost MBA Agent          |
+|   OPERATION FIRST MOVER v5.3 — Zero Cost MBA Agent          |
 |                                                              |
 |   12 AI Agents | 1081 Companies | 8+ Job Boards             |
 |   Groq + Cerebras Dual-Brain | Telegram Command Center      |
@@ -276,6 +276,27 @@ class Application:
         except Exception as e:
             self._status.mark_degraded('seed', str(e))
             logger.error(f"[Phase 3] Seed error: {e}")
+
+    # ================================================================
+    # PHASE 3.5: SECURITY LAYER
+    # ================================================================
+
+    def _init_security(self):
+        """Initialize the security layer (admin, user whitelist, access codes)."""
+        try:
+            from core.security import get_security_manager, ADMIN_TELEGRAM_ID, ADMIN_USERNAME
+            sec = get_security_manager()
+            status = sec.get_security_status()
+            detail = (
+                f"admin=@{ADMIN_USERNAME} (ID:{ADMIN_TELEGRAM_ID}), "
+                f"users={status['active_users']}"
+            )
+            self._status.mark_ok('security', detail)
+            logger.info(f"[Phase 3.5] Security initialized: {detail}")
+        except Exception as e:
+            self._status.mark_degraded('security', str(e))
+            logger.warning(f"[Phase 3.5] Security degraded: {e}")
+            logger.warning("[Phase 3.5] System continues WITHOUT security layer")
 
     # ================================================================
     # PHASE 4: AI LAYER
@@ -465,28 +486,31 @@ class Application:
 
         start_time = time.monotonic()
 
-        logger.info("[Phase 1/8] Loading configuration...")
+        logger.info("[Phase 1/9] Loading configuration...")
         config = self._init_foundation()
 
-        logger.info("[Phase 2/8] Initializing database...")
+        logger.info("[Phase 2/9] Initializing database...")
         db = self._init_storage()
 
-        logger.info("[Phase 3/8] Seeding data...")
+        logger.info("[Phase 3/9] Seeding data...")
         self._init_data_seed(db)
 
-        logger.info("[Phase 4/8] Initializing AI router...")
+        logger.info("[Phase 3.5/9] Initializing security layer...")
+        self._init_security()
+
+        logger.info("[Phase 4/9] Initializing AI router...")
         self._init_ai_layer()
 
-        logger.info("[Phase 5/8] Starting web server + keep-alive...")
+        logger.info("[Phase 5/9] Starting web server + keep-alive...")
         await self._init_web_layer()
 
-        logger.info("[Phase 6/8] Starting Telegram bot...")
+        logger.info("[Phase 6/9] Starting Telegram bot...")
         await self._init_telegram()
 
-        logger.info("[Phase 7/8] Starting scheduler...")
+        logger.info("[Phase 7/9] Starting scheduler...")
         await self._init_scheduler()
 
-        logger.info("[Phase 8/8] Starting watchdog + memory manager...")
+        logger.info("[Phase 8/9] Starting watchdog + memory manager...")
         self._watchdog_task = asyncio.create_task(self._watchdog_loop())
         self._gc_task = asyncio.create_task(self._gc_loop())
         self._status.mark_ok('watchdog', f'interval={WATCHDOG_INTERVAL_SEC}s')

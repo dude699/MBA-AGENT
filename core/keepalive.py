@@ -288,6 +288,17 @@ class WebServer:
         app.router.add_route('HEAD', '/', self._handle_ping)
         app.router.add_route('HEAD', '/health', self._handle_ping)
         app.router.add_route('HEAD', '/ping', self._handle_ping)
+        
+        # Register auth API routes for Mini-App security
+        try:
+            from core.auth_middleware import register_auth_routes
+            register_auth_routes(app)
+            logger.info("[WEBSERVER] Auth API routes registered")
+        except ImportError as e:
+            logger.warning(f"[WEBSERVER] Auth middleware not available: {e}")
+        except Exception as e:
+            logger.warning(f"[WEBSERVER] Auth route registration failed: {e}")
+        
         return app
 
     async def start(self):
