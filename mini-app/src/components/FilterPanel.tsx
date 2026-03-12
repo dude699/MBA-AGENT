@@ -1,0 +1,560 @@
+// ============================================================
+// FILTER PANEL — Comprehensive Filter Sheet
+// ============================================================
+
+import React, { useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import {
+  X, RotateCcw, ChevronDown, ChevronUp, Check,
+  MapPin, Clock, Briefcase, DollarSign, Shield, Star,
+  Building2, Tag, Calendar, TrendingUp, Users, Layers,
+} from 'lucide-react';
+import { useAppStore } from '@/store/useAppStore';
+import { hapticFeedback } from '@/utils/helpers';
+import {
+  CATEGORIES, LOCATIONS, POPULAR_SKILLS, SECTORS,
+  SOURCE_CONFIG, POSTED_WITHIN_OPTIONS, STIPEND_RANGES,
+  TIER_LABELS,
+} from '@/utils/constants';
+import type { InternshipSource, CompanyTier } from '@/types';
+
+export default function FilterPanel() {
+  const { isFilterOpen, setFilterOpen, filters, setFilters, resetFilters, activeFilterCount } = useAppStore();
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['source', 'stipend', 'duration']));
+
+  const toggleSection = (key: string) => {
+    setExpandedSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+    hapticFeedback('light');
+  };
+
+  if (!isFilterOpen) return null;
+
+  return (
+    <AnimatePresence>
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="fixed inset-0 z-50 bg-black/30 backdrop-blur-sm"
+        onClick={() => setFilterOpen(false)}
+      >
+        <motion.div
+          initial={{ y: '100%' }}
+          animate={{ y: 0 }}
+          exit={{ y: '100%' }}
+          transition={{ type: 'spring', damping: 30, stiffness: 300 }}
+          className="absolute bottom-0 left-0 right-0 bg-white rounded-t-3xl max-h-[85vh] overflow-hidden flex flex-col"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Handle */}
+          <div className="flex justify-center pt-3 pb-1">
+            <div className="w-10 h-1 bg-primary-200 rounded-full" />
+          </div>
+
+          {/* Header */}
+          <div className="flex items-center justify-between px-5 py-3 border-b border-surface-border">
+            <div className="flex items-center gap-2">
+              <h2 className="text-base font-bold text-primary-900">Filters</h2>
+              {activeFilterCount > 0 && (
+                <span className="bg-accent text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                  {activeFilterCount}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => { resetFilters(); hapticFeedback('medium'); }}
+                className="flex items-center gap-1 text-xs font-semibold text-status-danger hover:underline"
+              >
+                <RotateCcw className="w-3.5 h-3.5" /> Reset
+              </button>
+              <button onClick={() => setFilterOpen(false)} className="p-1">
+                <X className="w-5 h-5 text-primary-500" />
+              </button>
+            </div>
+          </div>
+
+          {/* Scrollable Filters */}
+          <div className="flex-1 overflow-y-auto pb-20">
+            {/* SOURCE FILTER */}
+            <FilterSection
+              title="Source Platform"
+              icon={<Layers className="w-4 h-4" />}
+              expanded={expandedSections.has('source')}
+              onToggle={() => toggleSection('source')}
+              count={filters.sources.length}
+            >
+              <div className="grid grid-cols-2 gap-2">
+                {(Object.keys(SOURCE_CONFIG) as InternshipSource[]).map((source) => {
+                  const config = SOURCE_CONFIG[source];
+                  const active = filters.sources.includes(source);
+                  return (
+                    <button
+                      key={source}
+                      onClick={() => {
+                        const next = active
+                          ? filters.sources.filter((s) => s !== source)
+                          : [...filters.sources, source];
+                        setFilters({ sources: next });
+                        hapticFeedback('light');
+                      }}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium transition-all ${
+                        active
+                          ? 'bg-accent text-white border border-accent'
+                          : 'bg-surface-muted text-primary-700 border border-surface-border hover:border-primary-400'
+                      }`}
+                    >
+                      <span>{config.icon}</span>
+                      <span className="truncate">{config.name}</span>
+                      {active && <Check className="w-3 h-3 ml-auto flex-shrink-0" />}
+                    </button>
+                  );
+                })}
+              </div>
+            </FilterSection>
+
+            {/* STIPEND FILTER */}
+            <FilterSection
+              title="Stipend Range"
+              icon={<DollarSign className="w-4 h-4" />}
+              expanded={expandedSections.has('stipend')}
+              onToggle={() => toggleSection('stipend')}
+              count={filters.stipendMin > 0 || filters.stipendMax < 100000 ? 1 : 0}
+            >
+              <div className="space-y-3">
+                <div className="flex items-center gap-3">
+                  <div className="flex-1">
+                    <label className="text-[10px] font-semibold text-primary-500 uppercase mb-1 block">Min</label>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100000}
+                      step={5000}
+                      value={filters.stipendMin}
+                      onChange={(e) => setFilters({ stipendMin: Number(e.target.value) })}
+                      className="w-full accent-accent"
+                    />
+                    <span className="text-xs font-bold text-primary-800">₹{(filters.stipendMin / 1000).toFixed(0)}K</span>
+                  </div>
+                  <div className="flex-1">
+                    <label className="text-[10px] font-semibold text-primary-500 uppercase mb-1 block">Max</label>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100000}
+                      step={5000}
+                      value={filters.stipendMax}
+                      onChange={(e) => setFilters({ stipendMax: Number(e.target.value) })}
+                      className="w-full accent-accent"
+                    />
+                    <span className="text-xs font-bold text-primary-800">₹{(filters.stipendMax / 1000).toFixed(0)}K</span>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {STIPEND_RANGES.map((range) => (
+                    <button
+                      key={range.label}
+                      onClick={() => {
+                        setFilters({ stipendMin: range.min, stipendMax: range.max });
+                        hapticFeedback('light');
+                      }}
+                      className={`text-[10px] font-semibold px-2.5 py-1 rounded-lg transition-all ${
+                        filters.stipendMin === range.min && filters.stipendMax === range.max
+                          ? 'bg-accent text-white'
+                          : 'bg-surface-muted text-primary-600 border border-surface-border'
+                      }`}
+                    >
+                      {range.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </FilterSection>
+
+            {/* DURATION FILTER */}
+            <FilterSection
+              title="Duration"
+              icon={<Clock className="w-4 h-4" />}
+              expanded={expandedSections.has('duration')}
+              onToggle={() => toggleSection('duration')}
+              count={filters.durationMax < 12 ? 1 : 0}
+            >
+              <div className="space-y-2">
+                <input
+                  type="range"
+                  min={1}
+                  max={12}
+                  value={filters.durationMax}
+                  onChange={(e) => setFilters({ durationMax: Number(e.target.value) })}
+                  className="w-full accent-accent"
+                />
+                <div className="flex justify-between text-xs text-primary-500">
+                  <span>1 month</span>
+                  <span className="font-bold text-accent">{filters.durationMax} months max</span>
+                  <span>12 months</span>
+                </div>
+                <div className="flex gap-2">
+                  {[1, 2, 3, 6].map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => { setFilters({ durationMax: m }); hapticFeedback('light'); }}
+                      className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                        filters.durationMax === m
+                          ? 'bg-accent text-white'
+                          : 'bg-surface-muted text-primary-600 border border-surface-border'
+                      }`}
+                    >
+                      ≤{m}mo
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </FilterSection>
+
+            {/* CATEGORY FILTER */}
+            <FilterSection
+              title="Category"
+              icon={<Briefcase className="w-4 h-4" />}
+              expanded={expandedSections.has('category')}
+              onToggle={() => toggleSection('category')}
+              count={filters.categories.length}
+            >
+              <ChipGrid
+                items={CATEGORIES}
+                selected={filters.categories}
+                onChange={(categories) => setFilters({ categories })}
+              />
+            </FilterSection>
+
+            {/* LOCATION FILTER */}
+            <FilterSection
+              title="Location"
+              icon={<MapPin className="w-4 h-4" />}
+              expanded={expandedSections.has('location')}
+              onToggle={() => toggleSection('location')}
+              count={filters.locations.length + filters.locationTypes.length}
+            >
+              <div className="space-y-3">
+                <div className="flex gap-2">
+                  {(['remote', 'onsite', 'hybrid'] as const).map((type) => (
+                    <button
+                      key={type}
+                      onClick={() => {
+                        const next = filters.locationTypes.includes(type)
+                          ? filters.locationTypes.filter((t) => t !== type)
+                          : [...filters.locationTypes, type];
+                        setFilters({ locationTypes: next });
+                        hapticFeedback('light');
+                      }}
+                      className={`flex-1 py-2 rounded-xl text-xs font-semibold capitalize transition-all ${
+                        filters.locationTypes.includes(type)
+                          ? 'bg-accent text-white'
+                          : 'bg-surface-muted text-primary-600 border border-surface-border'
+                      }`}
+                    >
+                      {type}
+                    </button>
+                  ))}
+                </div>
+                <ChipGrid
+                  items={LOCATIONS}
+                  selected={filters.locations}
+                  onChange={(locations) => setFilters({ locations })}
+                />
+              </div>
+            </FilterSection>
+
+            {/* SKILLS FILTER */}
+            <FilterSection
+              title="Skills"
+              icon={<Tag className="w-4 h-4" />}
+              expanded={expandedSections.has('skills')}
+              onToggle={() => toggleSection('skills')}
+              count={filters.skills.length}
+            >
+              <ChipGrid
+                items={POPULAR_SKILLS}
+                selected={filters.skills}
+                onChange={(skills) => setFilters({ skills })}
+              />
+            </FilterSection>
+
+            {/* COMPANY TIER FILTER */}
+            <FilterSection
+              title="Company Tier"
+              icon={<Building2 className="w-4 h-4" />}
+              expanded={expandedSections.has('tier')}
+              onToggle={() => toggleSection('tier')}
+              count={filters.companyTiers.length}
+            >
+              <div className="grid grid-cols-2 gap-2">
+                {(Object.entries(TIER_LABELS)).map(([key, config]) => {
+                  const active = filters.companyTiers.includes(key as CompanyTier);
+                  return (
+                    <button
+                      key={key}
+                      onClick={() => {
+                        const next = active
+                          ? filters.companyTiers.filter((t) => t !== key)
+                          : [...filters.companyTiers, key as CompanyTier];
+                        setFilters({ companyTiers: next });
+                        hapticFeedback('light');
+                      }}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium transition-all ${
+                        active
+                          ? 'text-white border'
+                          : 'bg-surface-muted text-primary-700 border border-surface-border'
+                      }`}
+                      style={active ? { backgroundColor: config.color, borderColor: config.color } : {}}
+                    >
+                      <span>{config.icon}</span>
+                      <span>{config.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </FilterSection>
+
+            {/* SECTOR FILTER */}
+            <FilterSection
+              title="Sector"
+              icon={<Layers className="w-4 h-4" />}
+              expanded={expandedSections.has('sector')}
+              onToggle={() => toggleSection('sector')}
+              count={filters.sectors.length}
+            >
+              <ChipGrid
+                items={SECTORS}
+                selected={filters.sectors}
+                onChange={(sectors) => setFilters({ sectors })}
+              />
+            </FilterSection>
+
+            {/* POSTED WITHIN */}
+            <FilterSection
+              title="Posted Within"
+              icon={<Calendar className="w-4 h-4" />}
+              expanded={expandedSections.has('posted')}
+              onToggle={() => toggleSection('posted')}
+              count={filters.postedWithin !== 'any' ? 1 : 0}
+            >
+              <div className="flex flex-wrap gap-2">
+                {POSTED_WITHIN_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => { setFilters({ postedWithin: opt.value as any }); hapticFeedback('light'); }}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                      filters.postedWithin === opt.value
+                        ? 'bg-accent text-white'
+                        : 'bg-surface-muted text-primary-600 border border-surface-border'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </FilterSection>
+
+            {/* ADVANCED FILTERS */}
+            <FilterSection
+              title="Advanced"
+              icon={<Star className="w-4 h-4" />}
+              expanded={expandedSections.has('advanced')}
+              onToggle={() => toggleSection('advanced')}
+              count={
+                (filters.minMatchScore > 0 ? 1 : 0) +
+                (filters.maxGhostScore < 100 ? 1 : 0) +
+                (filters.successRateMin > 0 ? 1 : 0) +
+                (filters.onlyVerified ? 1 : 0) +
+                (filters.onlyPremium ? 1 : 0)
+              }
+            >
+              <div className="space-y-4">
+                {/* Min Match Score */}
+                <div>
+                  <div className="flex justify-between mb-1">
+                    <label className="text-xs font-medium text-primary-600">Min Match Score</label>
+                    <span className="text-xs font-bold text-accent">{filters.minMatchScore}%</span>
+                  </div>
+                  <input
+                    type="range" min={0} max={100} step={5}
+                    value={filters.minMatchScore}
+                    onChange={(e) => setFilters({ minMatchScore: Number(e.target.value) })}
+                    className="w-full accent-accent"
+                  />
+                </div>
+
+                {/* Max Ghost Score */}
+                <div>
+                  <div className="flex justify-between mb-1">
+                    <label className="text-xs font-medium text-primary-600">Max Ghost Score</label>
+                    <span className="text-xs font-bold text-status-warning">{filters.maxGhostScore}%</span>
+                  </div>
+                  <input
+                    type="range" min={0} max={100} step={5}
+                    value={filters.maxGhostScore}
+                    onChange={(e) => setFilters({ maxGhostScore: Number(e.target.value) })}
+                    className="w-full accent-status-warning"
+                  />
+                </div>
+
+                {/* Min Success Rate */}
+                <div>
+                  <div className="flex justify-between mb-1">
+                    <label className="text-xs font-medium text-primary-600">Min Success Rate</label>
+                    <span className="text-xs font-bold text-status-success">{filters.successRateMin}%</span>
+                  </div>
+                  <input
+                    type="range" min={0} max={100} step={5}
+                    value={filters.successRateMin}
+                    onChange={(e) => setFilters({ successRateMin: Number(e.target.value) })}
+                    className="w-full accent-status-success"
+                  />
+                </div>
+
+                {/* Toggle Switches */}
+                <div className="space-y-2">
+                  <ToggleSwitch
+                    label="Only Verified Listings"
+                    checked={filters.onlyVerified}
+                    onChange={(v) => setFilters({ onlyVerified: v })}
+                  />
+                  <ToggleSwitch
+                    label="Only Premium Listings"
+                    checked={filters.onlyPremium}
+                    onChange={(v) => setFilters({ onlyPremium: v })}
+                  />
+                  <ToggleSwitch
+                    label="Hide Already Applied"
+                    checked={filters.hideApplied}
+                    onChange={(v) => setFilters({ hideApplied: v })}
+                  />
+                  <ToggleSwitch
+                    label="Only With Stipend"
+                    checked={filters.onlyWithStipend}
+                    onChange={(v) => setFilters({ onlyWithStipend: v })}
+                  />
+                </div>
+              </div>
+            </FilterSection>
+          </div>
+
+          {/* Apply Button */}
+          <div className="absolute bottom-0 left-0 right-0 p-4 bg-white/95 backdrop-blur-md border-t border-surface-border">
+            <button
+              onClick={() => { setFilterOpen(false); hapticFeedback('medium'); }}
+              className="btn-primary w-full text-sm"
+            >
+              Apply Filters
+            </button>
+          </div>
+        </motion.div>
+      </motion.div>
+    </AnimatePresence>
+  );
+}
+
+// ===== FILTER SECTION COMPONENT =====
+function FilterSection({
+  title, icon, expanded, onToggle, count, children,
+}: {
+  title: string;
+  icon: React.ReactNode;
+  expanded: boolean;
+  onToggle: () => void;
+  count: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="border-b border-surface-border">
+      <button
+        onClick={onToggle}
+        className="flex items-center justify-between w-full px-5 py-3 hover:bg-surface-muted/50 transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <span className="text-primary-500">{icon}</span>
+          <span className="text-sm font-semibold text-primary-800">{title}</span>
+          {count > 0 && (
+            <span className="bg-accent text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full">
+              {count}
+            </span>
+          )}
+        </div>
+        {expanded ? <ChevronUp className="w-4 h-4 text-primary-400" /> : <ChevronDown className="w-4 h-4 text-primary-400" />}
+      </button>
+      <AnimatePresence>
+        {expanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="overflow-hidden"
+          >
+            <div className="px-5 pb-4">{children}</div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// ===== CHIP GRID =====
+function ChipGrid({
+  items, selected, onChange,
+}: {
+  items: string[];
+  selected: string[];
+  onChange: (selected: string[]) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {items.map((item) => {
+        const active = selected.includes(item);
+        return (
+          <button
+            key={item}
+            onClick={() => {
+              const next = active
+                ? selected.filter((s) => s !== item)
+                : [...selected, item];
+              onChange(next);
+              hapticFeedback('light');
+            }}
+            className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all ${
+              active
+                ? 'bg-accent text-white'
+                : 'bg-surface-muted text-primary-600 border border-surface-border hover:border-primary-400'
+            }`}
+          >
+            {item}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ===== TOGGLE SWITCH =====
+function ToggleSwitch({
+  label, checked, onChange,
+}: {
+  label: string; checked: boolean; onChange: (v: boolean) => void;
+}) {
+  return (
+    <button
+      onClick={() => { onChange(!checked); hapticFeedback('light'); }}
+      className="flex items-center justify-between w-full py-1"
+    >
+      <span className="text-xs font-medium text-primary-700">{label}</span>
+      <div className={`w-9 h-5 rounded-full transition-colors relative ${checked ? 'bg-accent' : 'bg-primary-200'}`}>
+        <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-4' : 'translate-x-0.5'}`} />
+      </div>
+    </button>
+  );
+}
