@@ -226,13 +226,22 @@ export async function chatWithLLM(
   message: string,
   profile: string = 'generalist',
   history: Array<{ role: string; content: string }> = [],
-  context?: { internshipIds?: string[] }
+  context?: { internshipIds?: string[]; clientJobCount?: number; hasLoadedJobs?: boolean }
 ): Promise<APIResponse<string>> {
   try {
     const resp = await fetch(getApiUrl('/llm/chat'), {
       method: 'POST',
       headers: getHeaders(),
-      body: JSON.stringify({ message, profile, history, context }),
+      body: JSON.stringify({
+        message,
+        profile,
+        history: history.slice(-4), // Only send last 2 exchanges to minimize payload
+        context: {
+          internshipIds: context?.internshipIds,
+          clientJobCount: context?.clientJobCount || 0,
+          hasLoadedJobs: context?.hasLoadedJobs || false,
+        },
+      }),
     });
 
     if (!resp.ok) {

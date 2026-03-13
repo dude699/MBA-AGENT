@@ -1,5 +1,6 @@
 // ============================================================
 // BOTTOM BAR — Ultra Premium Frosted Glass Navigation
+// Fixed z-index hierarchy to prevent overlapping
 // ============================================================
 
 import React from 'react';
@@ -19,14 +20,15 @@ export default function BottomBar({ activeTab, onTabChange }: BottomBarProps) {
 
   return (
     <>
-      {/* Floating Apply Button (when items selected) */}
+      {/* Floating Apply Button (when items selected) — above bottom bar */}
       <AnimatePresence>
         {hasSelection && (
           <motion.div
             initial={{ y: 100, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 100, opacity: 0 }}
-            className="fixed bottom-20 left-4 right-4 z-40"
+            className="fixed left-4 right-4 z-[41]"
+            style={{ bottom: 'calc(72px + env(safe-area-inset-bottom, 0px))' }}
           >
             <button
               onClick={() => { setBatchPanelOpen(true); hapticFeedback('medium'); }}
@@ -43,7 +45,7 @@ export default function BottomBar({ activeTab, onTabChange }: BottomBarProps) {
         )}
       </AnimatePresence>
 
-      {/* Bottom Navigation - Frosted Glass */}
+      {/* Bottom Navigation - Frosted Glass — z-40 */}
       <nav className="bottom-bar">
         <div className="flex items-center justify-around max-w-md mx-auto">
           <NavItem

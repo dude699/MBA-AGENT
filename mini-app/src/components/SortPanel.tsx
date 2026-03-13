@@ -49,8 +49,8 @@ export default function SortPanel() {
             </button>
           </div>
 
-          {/* Sort Options */}
-          <div className="overflow-y-auto pb-8">
+          {/* Sort Options — safe area padding */}
+          <div className="overflow-y-auto" style={{ paddingBottom: 'calc(24px + env(safe-area-inset-bottom, 0px))' }}>
             {SORT_OPTIONS.map((option) => {
               const active = sort === option.field;
               return (

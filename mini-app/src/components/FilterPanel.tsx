@@ -82,8 +82,8 @@ export default function FilterPanel() {
             </div>
           </div>
 
-          {/* Scrollable Filters */}
-          <div className="flex-1 overflow-y-auto pb-20">
+          {/* Scrollable Filters — extra bottom padding to clear bottom bar */}
+          <div className="flex-1 overflow-y-auto" style={{ paddingBottom: 'calc(80px + env(safe-area-inset-bottom, 0px))' }}>
             {/* SOURCE FILTER */}
             <FilterSection
               title="Source Platform"

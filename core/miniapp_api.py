@@ -273,12 +273,15 @@ async def handle_llm_chat(request: web.Request) -> web.Response:
     Body: {
         "message": "...",
         "profile": "generalist|resume_builder|ats_checker|career_counselor",
-        "context": { "internshipIds": [...] },
+        "context": { "internshipIds": [...], "clientJobCount": N, "hasLoadedJobs": bool },
         "history": [{"role":"user","content":"..."},...]
     }
 
-    AI-powered chat with specialist profiles and job database context.
-    Groq is primary, Cerebras is automatic fallback.
+    Resource-aware AI chat with specialist profiles and job database context.
+    - Groq primary, Cerebras automatic fallback
+    - Caches job context for 5 minutes to minimize DB calls
+    - Anti-hallucination: only references real data from database
+    - Self-aware of available resources before responding
     """
     try:
         body = await request.json()
@@ -292,33 +295,71 @@ async def handle_llm_chat(request: web.Request) -> web.Response:
     profile = body.get('profile', 'generalist')
     history = body.get('history', [])
     context = body.get('context', {})
+    client_job_count = context.get('clientJobCount', 0)
+    has_loaded_jobs = context.get('hasLoadedJobs', False)
 
-    # ---- Build job context from database ----
+    # ---- Resource-aware job context with caching ----
     job_context = ""
+    total_jobs = 0
     try:
-        from core.database import get_db
-        db = get_db()
-        listings, total = db.get_management_internships(limit=10, offset=0, sort_by='ppo')
-        if listings:
-            job_lines = []
-            for j in listings[:8]:
-                title = j.get('title', 'N/A')
-                company = j.get('company', 'N/A')
-                stipend = j.get('stipend', 0)
-                location = j.get('location', 'N/A')
-                source = j.get('source', 'N/A')
-                duration = j.get('duration', 0)
-                job_lines.append(
-                    f"- {title} at {company} | INR {stipend}/mo | {location} | {duration}mo | via {source}"
+        import time as _time
+
+        # Simple in-memory cache for job context (5 min TTL)
+        cache_key = '_llm_job_context_cache'
+        cache_ts_key = '_llm_job_context_ts'
+        cached_ctx = getattr(handle_llm_chat, cache_key, None)
+        cached_ts = getattr(handle_llm_chat, cache_ts_key, 0)
+
+        if cached_ctx and (_time.time() - cached_ts) < 300:
+            job_context = cached_ctx['context']
+            total_jobs = cached_ctx['total']
+            logger.debug(f"[{MODULE_ID}] Using cached job context ({total_jobs} listings)")
+        else:
+            from core.database import get_db
+            db = get_db()
+            listings, total = db.get_management_internships(limit=10, offset=0, sort_by='ppo')
+            total_jobs = total
+            if listings:
+                job_lines = []
+                for j in listings[:8]:
+                    title = j.get('title', 'N/A')
+                    company = j.get('company', 'N/A')
+                    stipend = j.get('stipend', 0)
+                    location = j.get('location', 'N/A')
+                    source = j.get('source', 'N/A')
+                    duration = j.get('duration', 0)
+                    category = j.get('category', 'N/A')
+                    job_lines.append(
+                        f"- {title} at {company} | INR {stipend}/mo | {location} | {duration}mo | {category} | via {source}"
+                    )
+                job_context = (
+                    f"\n\n--- CURRENT JOB DATABASE ({total} total verified listings) ---\n"
+                    f"Top listings by relevance:\n" + "\n".join(job_lines)
                 )
-            job_context = (
-                f"\n\n--- CURRENT JOB DATABASE ({total} total listings) ---\n"
-                f"Top listings by relevance:\n" + "\n".join(job_lines)
-            )
+            else:
+                job_context = "\n\n--- JOB DATABASE: Currently empty. No listings available. ---"
+
+            # Cache result
+            setattr(handle_llm_chat, cache_key, {'context': job_context, 'total': total_jobs})
+            setattr(handle_llm_chat, cache_ts_key, _time.time())
+
     except Exception as e:
         logger.debug(f"[{MODULE_ID}] Job context fetch skipped: {e}")
+        job_context = "\n\n--- JOB DATABASE: Temporarily unavailable ---"
 
-    # ---- Profile-specific system prompts ----
+    # ---- Profile-specific system prompts with anti-hallucination rules ----
+    ANTI_HALLUCINATION = (
+        "\n\nCRITICAL RULES (NEVER VIOLATE):\n"
+        "- ONLY reference jobs/companies that appear in the JOB DATABASE section above.\n"
+        "- If the database is empty or unavailable, clearly state that no listings are currently loaded.\n"
+        "- NEVER invent job titles, company names, stipend amounts, or statistics.\n"
+        "- If you don't have data to answer a question, say so honestly and suggest the user "
+        "refresh their listings or use Telegram bot commands.\n"
+        "- Keep responses concise. Use bullet points and short paragraphs.\n"
+        "- Do NOT use markdown heading syntax (# or ##). Use bold text (**text**) for emphasis instead.\n"
+        f"- The user's app currently shows {client_job_count} listings on their device.\n"
+        f"- The database has {total_jobs} total verified listings.\n"
+    )
     SYSTEM_PROMPTS = {
         "generalist": (
             "You are InternHub Pro AI -- a senior career counselor and student advisor "
@@ -341,6 +382,7 @@ async def handle_llm_chat(request: web.Request) -> web.Response:
             "- Keep responses concise (150-300 words) unless detailed analysis is requested.\n"
             "- Always consider the user's time constraints (MBA programs are demanding).\n"
             f"{job_context}"
+            f"{ANTI_HALLUCINATION}"
         ),
         "resume_builder": (
             "You are ResumeForge AI -- an elite resume and application materials specialist "
@@ -367,6 +409,7 @@ async def handle_llm_chat(request: web.Request) -> web.Response:
             "- Suggest role-specific keywords for ATS optimization.\n"
             "- Format output in clean markdown with clear sections.\n"
             f"{job_context}"
+            f"{ANTI_HALLUCINATION}"
         ),
         "ats_checker": (
             "You are ATScan Pro -- an advanced Applicant Tracking System analyzer and "
@@ -394,6 +437,7 @@ async def handle_llm_chat(request: web.Request) -> web.Response:
             "- Warn about ATS-breaking formatting issues.\n"
             "- Provide the optimized version alongside the analysis.\n"
             f"{job_context}"
+            f"{ANTI_HALLUCINATION}"
         ),
         "career_counselor": (
             "You are PathFinder AI -- a specialized career strategist for MBA students in India, "
@@ -421,22 +465,31 @@ async def handle_llm_chat(request: web.Request) -> web.Response:
             "- Consider ROI (brand value + stipend + PPO probability).\n"
             "- Use data from the job database to make recommendations concrete.\n"
             f"{job_context}"
+            f"{ANTI_HALLUCINATION}"
         ),
     }
 
     system_prompt = SYSTEM_PROMPTS.get(profile, SYSTEM_PROMPTS["generalist"])
 
-    # ---- Build conversation with history ----
+    # ---- Build conversation with history (minimize tokens) ----
     conversation_context = ""
     if history and len(history) > 0:
-        recent = history[-6:]  # Last 3 exchanges
+        recent = history[-4:]  # Last 2 exchanges only (save tokens)
         for msg in recent:
             role = msg.get('role', 'user')
-            content = msg.get('content', '')[:500]  # Truncate long messages
+            content = msg.get('content', '')[:300]  # Truncate to save tokens
             conversation_context += f"\n[{role.upper()}]: {content}"
-        conversation_context = f"\n\n--- CONVERSATION HISTORY ---{conversation_context}\n---\n"
+        conversation_context = f"\n\n--- RECENT CONTEXT ---{conversation_context}\n---\n"
 
     full_prompt = f"{conversation_context}\nUser: {message}"
+
+    # ---- Token budget: adjust based on profile ----
+    token_budget = {
+        'generalist': 800,
+        'resume_builder': 1200,  # Needs more for cover letters
+        'ats_checker': 1000,
+        'career_counselor': 900,
+    }.get(profile, 800)
 
     try:
         from core.ai_router import get_router
@@ -446,9 +499,9 @@ async def handle_llm_chat(request: web.Request) -> web.Response:
             task='cover_letter',  # Use heavy-analysis task routing (Groq primary)
             prompt=full_prompt,
             system_prompt=system_prompt,
-            max_tokens=1200,
-            temperature=0.7,
-            use_cache=False,
+            max_tokens=token_budget,
+            temperature=0.65,
+            use_cache=True,  # Enable cache for repeated similar queries
         )
 
         if response and response.success:

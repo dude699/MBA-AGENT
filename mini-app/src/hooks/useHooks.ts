@@ -194,41 +194,57 @@ export function useBatchApply() {
   };
 }
 
-// ===== LLM CHAT =====
+// ===== LLM CHAT (Resource-aware, anti-hallucination) =====
 export function useLLMChat() {
-  const { addLLMMessage, setLLMLoading, llmLoading, llmMessages } = useAppStore();
+  const { addLLMMessage, setLLMLoading, llmLoading, llmMessages, internships } = useAppStore();
 
   const sendMessage = useCallback(async (message: string, profile: string = 'generalist', internshipIds?: string[]) => {
     addLLMMessage({ role: 'user', content: message });
     setLLMLoading(true);
 
-    // Build history from recent messages
+    // Build condensed history (last 3 exchanges = 6 msgs) to minimize token usage
     const history = llmMessages.slice(-6).map((msg) => ({
       role: msg.role,
-      content: msg.content,
+      content: msg.content.slice(0, 400), // Truncate to save tokens
     }));
 
+    // Resource context: tell backend how many jobs are loaded client-side
+    const resourceContext = {
+      internshipIds,
+      clientJobCount: internships.length,
+      hasLoadedJobs: internships.length > 0,
+    };
+
     try {
-      const response = await chatWithLLM(message, profile, history, { internshipIds });
-      if (response.success) {
+      const response = await chatWithLLM(message, profile, history, resourceContext);
+      if (response.success && response.data) {
         addLLMMessage({
           role: 'assistant',
           content: response.data,
           metadata: {
             model: (response as any).meta?.model || 'groq-llama3',
+            provider: (response as any).meta?.provider,
+            profile: profile,
             internshipIds,
           },
+        });
+      } else {
+        addLLMMessage({
+          role: 'assistant',
+          content: response.data || 'I could not generate a response. Please check your connection and try again.',
+          metadata: { profile },
         });
       }
     } catch (err: any) {
       addLLMMessage({
         role: 'assistant',
-        content: 'Sorry, I encountered an error. Please try again.',
+        content: 'I\'m having trouble connecting to the AI service. Please check your internet connection and try again in a moment.',
+        metadata: { profile },
       });
     } finally {
       setLLMLoading(false);
     }
-  }, [llmMessages]);
+  }, [llmMessages, internships.length]);
 
   return { sendMessage, isLoading: llmLoading };
 }
