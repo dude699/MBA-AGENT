@@ -21,8 +21,8 @@ RUN python -c "import nltk; nltk.download('punkt_tab'); nltk.download('stopwords
 # Copy application code
 COPY . .
 
-# Build the mini-app frontend (with fallback to vite-only if tsc fails)
-RUN cd mini-app && npm install --production=false && (npm run build || npm run build:vite) && ls -la dist/ && cd ..
+# Build the mini-app frontend (--production=false ensures devDeps like vite/typescript)
+RUN cd mini-app && npm install --production=false --no-audit --no-fund && (npm run build || ./node_modules/.bin/vite build) && ls -la dist/ && cd ..
 
 # Create data and logs directories
 RUN mkdir -p data logs
