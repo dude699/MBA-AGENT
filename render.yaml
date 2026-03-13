@@ -3,8 +3,11 @@ services:
     name: operation-firstmover
     runtime: python
     pythonVersion: "3.11.0"
+    # Build: install Python deps + build mini-app frontend
+    # NOTE: If Render's blueprint isn't synced, start.sh will build the mini-app at startup
     buildCommand: pip install -r requirements.txt && python -c "import nltk; nltk.download('punkt_tab')" && cd mini-app && npm install && npm run build && ls -la dist/ && cd ..
-    startCommand: python main.py
+    # start.sh ensures mini-app is built even if buildCommand wasn't synced from render.yaml
+    startCommand: bash start.sh
     healthCheckPath: /health
     # Ensure only ONE instance runs (critical for Telegram polling)
     numInstances: 1
