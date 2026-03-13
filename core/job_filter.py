@@ -34,62 +34,76 @@ except ImportError:
 # ============================================================
 
 # Hard-reject: these titles are NEVER relevant
+# ANY form of sales / business development is auto-rejected
 HARD_REJECT_TITLES = [
-    # Pure sales roles
+    # ===== ALL SALES ROLES (zero tolerance) =====
+    r'\bsales\b',                                   # ANY title with 'sales'
     r'\b(tele\s*sales|tele\s*caller|tele\s*marketing)\b',
     r'\b(cold\s*call|door[\s-]to[\s-]door)\b',
+    r'\b(field\s*sales|direct\s*sales|channel\s*sales)\b',
+    r'\b(inside\s*sales|outside\s*sales)\b',
+    r'\b(area\s*sales|territory\s*sales)\b',
     r'\b(sales\s*executive|sales\s*officer|sales\s*associate)\b',
-    r'\b(field\s*sales|direct\s*sales|channel\s*sales\s*executive)\b',
-    r'\b(area\s*sales\s*manager|territory\s*sales)\b',
-    r'\b(sales\s*representative|sales\s*rep)\b',
-    r'\b(insurance\s*(?:agent|advisor|consultant|sales))\b',
-    r'\b(real\s*estate\s*(?:agent|sales|broker))\b',
-    r'\b(commission[\s-]based)\b',
-    r'\b(target[\s-]based\s*sales)\b',
-    r'\b(inside\s*sales)\b',
-    # Pure BDE/sales disguised
-    r'\b(bde|bdm)\b',  # Business Development Executive/Manager
-    r'\b(business\s*development\s*executive)\b',
-    r'\b(business\s*development\s*manager)\b',
-    # Walk-in / call center
+    r'\b(sales\s*representative|sales\s*rep|sales\s*manager)\b',
+    r'\b(sales\s*intern|sales\s*trainee)\b',
+    r'\b(b2b\s*sales|b2c\s*sales)\b',
+    # ===== ALL BUSINESS DEVELOPMENT ROLES (zero tolerance) =====
+    r'\bbusiness\s*development\b',                   # ANY title with 'business development'
+    r'\b(bde|bdm|bda)\b',                           # BDE/BDM/BDA abbreviations
+    r'\b(bd\s*intern|bd\s*executive|bd\s*manager|bd\s*associate)\b',
+    # ===== INSURANCE / REAL ESTATE =====
+    r'\b(insurance\s*(?:agent|advisor|consultant|sales|intern))\b',
+    r'\b(real\s*estate\s*(?:agent|sales|broker|intern))\b',
+    # ===== COMMISSION / TARGET BASED =====
+    r'\b(commission[\s-]based|commission\s*only)\b',
+    r'\b(target[\s-]based\s*sales|incentive[\s-]based)\b',
+    # ===== WALK-IN / CALL CENTER =====
     r'\b(walk[\s-]in|walkin)\b',
     r'\b(call\s*center|bpo|kpo)\b',
-    # Multi-level marketing / freelance sales
+    # ===== MLM / FREELANCE SALES =====
     r'\b(mlm|network\s*marketing|direct\s*selling)\b',
-    r'\b(freelance\s*sales|commission\s*only)\b',
-    # Data entry / non-MBA
+    r'\b(freelance\s*sales)\b',
+    # ===== NON-MBA ROLES =====
     r'\b(data\s*entry|typing\s*job)\b',
     r'\b(content\s*writer|blog\s*writer|article\s*writer)\b',
     r'\b(graphic\s*design(?:er)?)\b',
     r'\b(web\s*develop(?:er|ment))\b',
     r'\b(software\s*(?:engineer|developer))\b',
     r'\b(full[\s-]stack|front[\s-]end|back[\s-]end)\b',
+    # ===== LEAD GENERATION / CLIENT ACQUISITION =====
+    r'\b(lead\s*generation\s*(?:intern|executive|manager))\b',
+    r'\b(client\s*acquisition\s*(?:intern|executive|manager))\b',
+    r'\b(customer\s*acquisition\s*(?:intern|executive|manager))\b',
+    r'\b(revenue\s*generation)\b',
 ]
 
 # Soft-negative: these reduce score but don't auto-reject
+# NOTE: 'sales' and 'business development' are now HARD-REJECTED
+# These handle subtler negative signals in descriptions
 SOFT_NEGATIVE_KEYWORDS = {
-    'sales': -20,
-    'selling': -15,
-    'revenue target': -15,
+    'selling': -20,
+    'revenue target': -20,
     'cold calling': -30,
-    'lead generation': -10,
-    'client acquisition': -8,
-    'business development': -5,  # Mild penalty — context matters
-    'outbound': -12,
-    'inbound sales': -15,
-    'field work': -10,
-    'commission': -20,
-    'incentive based': -15,
-    'target based': -15,
-    'customer acquisition': -8,
-    'b2b sales': -12,
-    'b2c sales': -15,
-    'insurance': -10,
-    'real estate': -10,
+    'lead generation': -15,
+    'client acquisition': -15,
+    'outbound': -15,
+    'inbound sales': -20,
+    'field work': -12,
+    'commission': -25,
+    'incentive based': -20,
+    'target based': -20,
+    'customer acquisition': -15,
+    'insurance': -15,
+    'real estate': -15,
     'recruitment': -5,
     'placement': -3,
     'staffing': -8,
     'franchise': -10,
+    'revenue generation': -15,
+    'pitch': -8,
+    'client meeting': -5,
+    'prospect': -10,
+    'quotation': -8,
 }
 
 
@@ -313,6 +327,7 @@ def score_job_relevance(
     }
     bad_categories = {
         'sales', 'telesales', 'insurance', 'real-estate',
+        'business-development', 'business development',
     }
     
     if category:
@@ -336,27 +351,11 @@ def score_job_relevance(
             signals['stipend_reasonable'] = 5
     
     # ============================================================
-    # STEP 8: Special case: "Business Development Intern"
+    # STEP 8: REMOVED — "Business Development Intern" special case
     # ============================================================
-    # This is the tricky one — BD intern at McKinsey is great,
-    # BD intern at random startup might be cold-calling
-    if 'business development' in title_lower and 'intern' in title_lower:
-        if company_tier <= 2:
-            # T1/T2 company — BD intern is likely strategy-adjacent
-            score += 10
-            signals['bd_intern_t1t2'] = 10
-        elif stipend > 15000:
-            # Good stipend — probably legit
-            score += 5
-            signals['bd_intern_good_stipend'] = 5
-        elif any(kw in desc_lower for kw in ['strategy', 'market research', 'consulting', 'analysis']):
-            # Description suggests real MBA work
-            score += 5
-            signals['bd_intern_mba_desc'] = 5
-        else:
-            # Unknown company, low stipend, no MBA signals — likely sales
-            score -= 10
-            signals['bd_intern_likely_sales'] = -10
+    # ALL business development roles are now HARD-REJECTED at Step 1.
+    # No exceptions, regardless of company tier or stipend.
+    # This eliminates sales-disguised roles from ever appearing.
     
     # Clamp to 0-100
     final_score = max(0.0, min(100.0, score))

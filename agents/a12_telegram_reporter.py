@@ -73,6 +73,10 @@ from core.security import (
 AGENT_ID = "A-12"
 AGENT_NAME = "Telegram Reporter"
 
+# Mini-App URL — set via RENDER_EXTERNAL_URL or MINI_APP_URL env var
+# The mini-app should be hosted at this URL (e.g. Cloudflare Pages, Vercel, etc.)
+MINI_APP_URL = os.getenv('MINI_APP_URL', '')
+
 # Valid outcome statuses
 VALID_OUTCOMES = ['applied', 'shortlisted', 'interview', 'rejected', 'offer', 'ppo', 'withdrawn']
 
@@ -876,6 +880,9 @@ class TelegramReporter:
             'listusers': self._cmd_listusers,
             'gencode': self._cmd_gencode,
             'secstatus': self._cmd_secstatus,
+            # Mini-App access
+            'miniapp': self._cmd_miniapp,
+            'webapp': self._cmd_miniapp,  # alias
         }
 
         for cmd_name, handler_fn in commands.items():
@@ -1305,6 +1312,21 @@ class TelegramReporter:
                 "/secstatus — Security dashboard"
             )
         
+        # Get user's access code for mini-app
+        user_data = self.security.get_user(telegram_id)
+        access_code = user_data.get('access_code', '') if user_data else ''
+        
+        miniapp_section = ""
+        if MINI_APP_URL:
+            miniapp_section = (
+                "\n\n📱 <b>InternHub Pro (Mini App):</b>\n"
+                "/miniapp — Open the Mini App\n"
+            )
+            if access_code:
+                miniapp_section += (
+                    f"🔑 Your access code: <code>{access_code}</code>\n"
+                )
+        
         msg = (
             "⚡ <b>Operation First Mover v5.3</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -1321,9 +1343,32 @@ class TelegramReporter:
             "🚀 <b>Run agents on demand:</b>\n"
             "/run pipeline — Full scrape+process+report\n"
             "/run scrape — Just scrape now\n\n"
-            f"Type /help for all commands.{admin_section}"
+            f"Type /help for all commands.{miniapp_section}{admin_section}"
         )
-        await update.message.reply_text(msg, parse_mode='HTML')
+        
+        # Send with inline keyboard for Mini App if URL is configured
+        if MINI_APP_URL:
+            try:
+                from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+                keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton(
+                        "📱 Open InternHub Pro",
+                        web_app=WebAppInfo(url=MINI_APP_URL)
+                    )],
+                    [InlineKeyboardButton(
+                        "📋 Browse Jobs", callback_data="cmd_jobs"
+                    ), InlineKeyboardButton(
+                        "📊 Morning Brief", callback_data="cmd_morning"
+                    )],
+                ])
+                await update.message.reply_text(
+                    msg, parse_mode='HTML', reply_markup=keyboard
+                )
+            except Exception as e:
+                logger.debug(f"[{AGENT_ID}] Inline keyboard failed, sending plain: {e}")
+                await update.message.reply_text(msg, parse_mode='HTML')
+        else:
+            await update.message.reply_text(msg, parse_mode='HTML')
 
     @command_error_boundary
     async def _cmd_help(self, update, context):
@@ -1384,7 +1429,10 @@ class TelegramReporter:
             "/quota — API usage\n"
             "/cfstatus — Cloudflare /crawl status\n"
             "/reprocess — Raw listing status/reset\n"
-            "/settings — Preferences"
+            "/settings — Preferences\n\n"
+            "📱 <b>Mini App</b>\n"
+            "/miniapp — Open InternHub Pro mini app\n"
+            "/webapp — Alias for /miniapp"
         )
         
         if is_admin:
@@ -1481,7 +1529,8 @@ class TelegramReporter:
         valid_categories = {
             'marketing', 'finance', 'strategy', 'consulting', 'operations',
             'product-management', 'analytics', 'human-resources', 'supply-chain',
-            'general-management', 'business-analytics', 'business-development',
+            'general-management', 'business-analytics',
+            # NOTE: 'business-development' removed — all BD roles are auto-excluded
         }
         location_keywords = {
             'mumbai', 'delhi', 'bangalore', 'bengaluru', 'hyderabad',
@@ -3091,6 +3140,98 @@ class TelegramReporter:
         await self._send_long_message(update, '\n'.join(lines))
 
     # ================================================================
+    # /miniapp COMMAND — OPEN MINI APP
+    # ================================================================
+
+    @command_error_boundary
+    async def _cmd_miniapp(self, update, context):
+        """Open the InternHub Pro Mini App with inline keyboard button.
+        
+        Usage: /miniapp
+        
+        Sends a professional message with:
+        1. WebApp button to open the mini app directly in Telegram
+        2. User's access code for login
+        3. Direct URL as fallback
+        """
+        telegram_id = update.effective_user.id if update.effective_user else 0
+        
+        if not MINI_APP_URL:
+            await update.message.reply_text(
+                "⚠️ <b>Mini App Not Configured</b>\n\n"
+                "The InternHub Pro mini app URL has not been set.\n"
+                "Ask the admin to configure <code>MINI_APP_URL</code> in environment variables.\n\n"
+                "💡 In the meantime, use these bot commands:\n"
+                "/jobs — Browse filtered internships\n"
+                "/top 20 — Top 20 by PPO score\n"
+                "/morning — Full morning brief",
+                parse_mode='HTML'
+            )
+            return
+        
+        # Get user's access code
+        user_data = self.security.get_user(telegram_id)
+        access_code = user_data.get('access_code', '') if user_data else ''
+        username = user_data.get('username', '') if user_data else ''
+        
+        msg = (
+            "📱 <b>InternHub Pro — Mini App</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "🚀 <b>Features:</b>\n"
+            "  • Smart job browser with filters\n"
+            "  • AI-powered application packages\n"
+            "  • Real-time analytics dashboard\n"
+            "  • Batch apply functionality\n"
+            "  • Company research & CIRS scores\n\n"
+        )
+        
+        if access_code:
+            msg += (
+                "🔑 <b>Your Access Code:</b>\n"
+                f"  <code>{access_code}</code>\n"
+                f"  (Use this to login in the mini app)\n\n"
+            )
+        
+        msg += (
+            f"🌐 <b>Direct URL:</b>\n"
+            f"  <a href=\"{MINI_APP_URL}\">{MINI_APP_URL}</a>\n\n"
+            "👆 <b>Tap the button below to open the app!</b>"
+        )
+        
+        try:
+            from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+            
+            keyboard_buttons = [
+                [InlineKeyboardButton(
+                    "📱 Open InternHub Pro",
+                    web_app=WebAppInfo(url=MINI_APP_URL)
+                )],
+            ]
+            
+            # Add direct link as fallback
+            keyboard_buttons.append([
+                InlineKeyboardButton(
+                    "🌐 Open in Browser",
+                    url=MINI_APP_URL
+                ),
+            ])
+            
+            keyboard = InlineKeyboardMarkup(keyboard_buttons)
+            
+            await update.message.reply_text(
+                msg,
+                parse_mode='HTML',
+                reply_markup=keyboard,
+                disable_web_page_preview=True,
+            )
+        except Exception as e:
+            logger.debug(f"[{AGENT_ID}] Mini app keyboard failed: {e}")
+            # Fallback: send without keyboard
+            await update.message.reply_text(
+                msg, parse_mode='HTML', disable_web_page_preview=True
+            )
+
+    # ================================================================
     # ADMIN SECURITY COMMANDS (admin-only, in admin chat)
     # ================================================================
 
@@ -3131,7 +3272,7 @@ class TelegramReporter:
                 f"🔑 Access Code: <code>{code}</code>\n\n"
                 f"⚠️ Send this code to the user privately.\n"
                 f"They need it for the mini-app login.\n"
-                f"Code format: {username[:3]}+id_chars+random",
+                f"Code is fully random — no username/ID derivation.",
                 parse_mode='HTML'
             )
         else:
