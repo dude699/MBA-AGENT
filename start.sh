@@ -43,9 +43,12 @@ else
 
             # Add node_modules/.bin to PATH for direct binary access
             export PATH="$(pwd)/node_modules/.bin:$PATH"
+            # CRITICAL: Unset NODE_ENV=production so devDependencies get installed
+            # Render sets NODE_ENV=production which skips vite, typescript, etc.
+            unset NODE_ENV
 
-            echo "[START] Installing dependencies..."
-            npm install --no-audit --no-fund 2>&1 | tail -5
+            echo "[START] Installing dependencies (including devDependencies)..."
+            npm install --include=dev --no-audit --no-fund 2>&1 | tail -5
 
             echo "[START] Building mini-app..."
 

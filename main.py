@@ -165,7 +165,10 @@ def build_miniapp_if_needed():
         return False
     
     # Build environment: ensure node_modules/.bin is on PATH
+    # CRITICAL: Remove NODE_ENV=production so devDependencies get installed
+    # (Render sets NODE_ENV=production which skips devDeps like vite, typescript)
     build_env = os.environ.copy()
+    build_env.pop("NODE_ENV", None)
     node_modules_bin = str(miniapp_dir / "node_modules" / ".bin")
     build_env["PATH"] = node_modules_bin + os.pathsep + build_env.get("PATH", "")
     
@@ -177,11 +180,11 @@ def build_miniapp_if_needed():
     except Exception:
         pass
     
-    # Step 1: npm install
-    logger.info("[MINIAPP-BUILD] Running npm install...")
+    # Step 1: npm install (MUST include dev for vite, typescript, etc.)
+    logger.info("[MINIAPP-BUILD] Running npm install --include=dev ...")
     try:
         result = subprocess.run(
-            [npm_path, "install", "--no-audit", "--no-fund"],
+            [npm_path, "install", "--include=dev", "--no-audit", "--no-fund"],
             cwd=str(miniapp_dir),
             capture_output=True,
             text=True,
@@ -201,10 +204,12 @@ def build_miniapp_if_needed():
         logger.error(f"[MINIAPP-BUILD] npm install error: {e}")
         return False
     
-    # Step 2: Try full build first (tsc + vite), then vite-only fallback
+    # Step 2: Try full build first (tsc + vite), then direct vite binary as fallback
+    vite_bin = str(miniapp_dir / "node_modules" / ".bin" / "vite")
     build_commands = [
         ("npm run build (tsc + vite)", [npm_path, "run", "build"]),
         ("npm run build:vite (vite only)", [npm_path, "run", "build:vite"]),
+        ("direct vite binary", [vite_bin, "build"]),
     ]
     
     for desc, cmd in build_commands:
