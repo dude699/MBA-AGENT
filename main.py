@@ -105,7 +105,7 @@ GC_INTERVAL_SEC = 300
 BANNER = """
 +============================================================+
 |                                                              |
-|   OPERATION FIRST MOVER v5.4 — Zero Cost MBA Agent          |
+|   OPERATION FIRST MOVER v5.4.2 — Zero Cost MBA Agent          |
 |                                                              |
 |   12 AI Agents | 1081 Companies | 8+ Job Boards             |
 |   Groq + Cerebras Dual-Brain | Telegram Command Center      |
@@ -124,16 +124,24 @@ def build_miniapp_if_needed():
     """
     Build the mini-app frontend if dist/ doesn't exist.
     
-    ROOT CAUSE FIX (v5.4.1):
-        The previous build attempts failed because:
+    ROOT CAUSE FIX (v5.4.2):
+        Previous build attempts failed for THREE reasons:
         1. postcss.config.js and tailwind.config.js used ESM 'export default'
-           syntax with .js extensions — Node v22 strict ESM resolution breaks
-        2. The fallback used 'npx vite build' which fails when npx can't find
-           the local vite binary (PATH doesn't include node_modules/.bin)
-        3. stderr was truncated so the actual error was invisible in logs
-        
-        Now fixed: configs use .cjs (CommonJS), fallback uses 'npm run build:vite',
-        and full stdout+stderr are logged on failure.
+           syntax with .js extensions — Node v22 strict ESM resolution breaks.
+           FIX: Renamed to .cjs (CommonJS), use module.exports.
+        2. Render sets NODE_ENV=production which skips devDependencies (vite,
+           typescript, @types/*). The fallback 'npx vite build' also fails
+           because node_modules/.bin isn't on PATH.
+           FIX: Unset NODE_ENV, use --include=dev, add node_modules/.bin to PATH.
+        3. 'tsc && vite build' fails because tsc requires @types/react-dom and
+           @types/uuid which are devDependencies. But tsc is configured with
+           noEmit:true (only type-checks, doesn't produce output). Vite uses
+           esbuild for transpilation, making tsc unnecessary for production builds.
+           FIX: Changed 'npm run build' to just 'vite build', added separate
+           'typecheck' script for development.
+        4. render.yaml didn't set NODE_VERSION env var, so Render used its default
+           Node (v22) which has stricter ESM resolution rules.
+           FIX: Added NODE_VERSION=20.19.0 to render.yaml envVars.
     
     This runs synchronously BEFORE the async event loop starts,
     so it won't block health checks (web server isn't up yet).
@@ -204,11 +212,13 @@ def build_miniapp_if_needed():
         logger.error(f"[MINIAPP-BUILD] npm install error: {e}")
         return False
     
-    # Step 2: Try full build first (tsc + vite), then direct vite binary as fallback
+    # Step 2: Build the mini-app
+    # STRATEGY: Skip tsc entirely — it only type-checks (noEmit: true in tsconfig.json)
+    # and fails on Render due to missing @types/* when NODE_ENV=production.
+    # Vite uses esbuild for transpilation, not tsc, so this is safe.
     vite_bin = str(miniapp_dir / "node_modules" / ".bin" / "vite")
     build_commands = [
-        ("npm run build (tsc + vite)", [npm_path, "run", "build"]),
-        ("npm run build:vite (vite only)", [npm_path, "run", "build:vite"]),
+        ("npm run build (vite build)", [npm_path, "run", "build"]),
         ("direct vite binary", [vite_bin, "build"]),
     ]
     
