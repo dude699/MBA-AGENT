@@ -222,12 +222,17 @@ export async function applyToInternship(id: string, _credentials: Record<string,
   }
 }
 
-export async function chatWithLLM(message: string, context?: { internshipIds?: string[] }): Promise<APIResponse<string>> {
+export async function chatWithLLM(
+  message: string,
+  profile: string = 'generalist',
+  history: Array<{ role: string; content: string }> = [],
+  context?: { internshipIds?: string[] }
+): Promise<APIResponse<string>> {
   try {
     const resp = await fetch(getApiUrl('/llm/chat'), {
       method: 'POST',
       headers: getHeaders(),
-      body: JSON.stringify({ message, context }),
+      body: JSON.stringify({ message, profile, history, context }),
     });
 
     if (!resp.ok) {
@@ -238,6 +243,7 @@ export async function chatWithLLM(message: string, context?: { internshipIds?: s
     return {
       success: data.success,
       data: data.data || 'No response from AI.',
+      meta: data.meta,
       timestamp: data.timestamp || new Date().toISOString(),
     };
   } catch (error) {

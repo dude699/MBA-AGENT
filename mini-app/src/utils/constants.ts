@@ -42,7 +42,7 @@ export const SORT_OPTIONS: SortOption[] = [
   { field: 'stipend_low', label: 'Lowest Stipend', icon: '💵', description: 'Budget-friendly first' },
   { field: 'duration_short', label: 'Shortest Duration', icon: '⚡', description: 'Quick internships first' },
   { field: 'duration_long', label: 'Longest Duration', icon: '📅', description: 'Extended internships first' },
-  { field: 'match_score', label: 'Best Match', icon: '🎯', description: 'AI-matched to your profile' },
+  { field: 'match_score', label: 'Best Match', icon: 'target', description: 'AI-matched to your profile' },
   { field: 'success_rate', label: 'Highest Success Rate', icon: '✅', description: 'Best chance of selection' },
   { field: 'posted_recent', label: 'Most Recent', icon: '🆕', description: 'Newly posted first' },
   { field: 'posted_oldest', label: 'Oldest First', icon: '📆', description: 'Longest available first' },
@@ -51,7 +51,7 @@ export const SORT_OPTIONS: SortOption[] = [
   { field: 'applicants_low', label: 'Fewest Applicants', icon: '👥', description: 'Less competition' },
   { field: 'applicants_high', label: 'Most Popular', icon: '🔥', description: 'Trending internships' },
   { field: 'openings_high', label: 'Most Openings', icon: '🚪', description: 'Higher chance of selection' },
-  { field: 'company_rating', label: 'Top Companies', icon: '⭐', description: 'Highest rated companies' },
+  { field: 'company_rating', label: 'Top Companies', icon: 'star', description: 'Highest rated companies' },
   { field: 'ghost_score_low', label: 'Most Genuine', icon: '🛡️', description: 'Least likely ghost postings' },
   { field: 'response_time', label: 'Fastest Response', icon: '📨', description: 'Quick responders first' },
 ];
@@ -110,7 +110,7 @@ export const SOURCE_CONFIG: Record<InternshipSource, {
   internshala: {
     name: 'Internshala',
     color: '#00bcd4',
-    icon: '📘',
+    icon: 'internshala',
     maxBatchSize: 5,
     cooldownMinutes: 15,
     riskLevel: 'low',
@@ -118,7 +118,7 @@ export const SOURCE_CONFIG: Record<InternshipSource, {
   linkedin: {
     name: 'LinkedIn',
     color: '#0077b5',
-    icon: '🔗',
+    icon: 'linkedin',
     maxBatchSize: 3,
     cooldownMinutes: 30,
     riskLevel: 'high',
@@ -126,7 +126,7 @@ export const SOURCE_CONFIG: Record<InternshipSource, {
   naukri: {
     name: 'Naukri',
     color: '#4a90d9',
-    icon: '💼',
+    icon: 'naukri',
     maxBatchSize: 5,
     cooldownMinutes: 15,
     riskLevel: 'medium',
@@ -134,7 +134,7 @@ export const SOURCE_CONFIG: Record<InternshipSource, {
   indeed: {
     name: 'Indeed',
     color: '#2164f3',
-    icon: '🔵',
+    icon: 'indeed',
     maxBatchSize: 5,
     cooldownMinutes: 20,
     riskLevel: 'medium',
@@ -142,7 +142,7 @@ export const SOURCE_CONFIG: Record<InternshipSource, {
   glassdoor: {
     name: 'Glassdoor',
     color: '#0caa41',
-    icon: '🏢',
+    icon: 'glassdoor',
     maxBatchSize: 3,
     cooldownMinutes: 25,
     riskLevel: 'high',
@@ -150,7 +150,7 @@ export const SOURCE_CONFIG: Record<InternshipSource, {
   angellist: {
     name: 'AngelList',
     color: '#000000',
-    icon: '😇',
+    icon: 'angellist',
     maxBatchSize: 5,
     cooldownMinutes: 15,
     riskLevel: 'low',
@@ -158,7 +158,7 @@ export const SOURCE_CONFIG: Record<InternshipSource, {
   unstop: {
     name: 'Unstop',
     color: '#ff6b00',
-    icon: '🏆',
+    icon: 'unstop',
     maxBatchSize: 5,
     cooldownMinutes: 10,
     riskLevel: 'low',
@@ -166,7 +166,7 @@ export const SOURCE_CONFIG: Record<InternshipSource, {
   letsintern: {
     name: "LetsIntern",
     color: '#e91e63',
-    icon: '🎓',
+    icon: 'letsintern',
     maxBatchSize: 5,
     cooldownMinutes: 10,
     riskLevel: 'low',
@@ -174,7 +174,7 @@ export const SOURCE_CONFIG: Record<InternshipSource, {
   iimjobs: {
     name: 'IIMJobs',
     color: '#ff5722',
-    icon: '🎯',
+    icon: 'iimjobs',
     maxBatchSize: 3,
     cooldownMinutes: 20,
     riskLevel: 'medium',
@@ -182,7 +182,7 @@ export const SOURCE_CONFIG: Record<InternshipSource, {
   freshersworld: {
     name: 'FreshersWorld',
     color: '#4caf50',
-    icon: '🌱',
+    icon: 'freshersworld',
     maxBatchSize: 5,
     cooldownMinutes: 10,
     riskLevel: 'low',
@@ -190,7 +190,7 @@ export const SOURCE_CONFIG: Record<InternshipSource, {
   hirect: {
     name: 'Hirect',
     color: '#673ab7',
-    icon: '📱',
+    icon: 'hirect',
     maxBatchSize: 3,
     cooldownMinutes: 15,
     riskLevel: 'medium',
@@ -198,7 +198,7 @@ export const SOURCE_CONFIG: Record<InternshipSource, {
   cutshort: {
     name: 'CutShort',
     color: '#795548',
-    icon: '✂️',
+    icon: 'cutshort',
     maxBatchSize: 3,
     cooldownMinutes: 15,
     riskLevel: 'medium',
@@ -206,7 +206,7 @@ export const SOURCE_CONFIG: Record<InternshipSource, {
   wellfound: {
     name: 'Wellfound',
     color: '#000000',
-    icon: '🚀',
+    icon: 'wellfound',
     maxBatchSize: 3,
     cooldownMinutes: 20,
     riskLevel: 'medium',
@@ -214,7 +214,7 @@ export const SOURCE_CONFIG: Record<InternshipSource, {
   foundit: {
     name: 'Foundit',
     color: '#ff9800',
-    icon: '🔍',
+    icon: 'foundit',
     maxBatchSize: 5,
     cooldownMinutes: 15,
     riskLevel: 'low',
@@ -222,7 +222,7 @@ export const SOURCE_CONFIG: Record<InternshipSource, {
   shine: {
     name: 'Shine',
     color: '#9c27b0',
-    icon: '✨',
+    icon: 'shine',
     maxBatchSize: 5,
     cooldownMinutes: 10,
     riskLevel: 'low',
@@ -230,7 +230,7 @@ export const SOURCE_CONFIG: Record<InternshipSource, {
   apna: {
     name: 'Apna',
     color: '#3f51b5',
-    icon: '📲',
+    icon: 'apna',
     maxBatchSize: 5,
     cooldownMinutes: 10,
     riskLevel: 'low',
@@ -238,7 +238,7 @@ export const SOURCE_CONFIG: Record<InternshipSource, {
   company_direct: {
     name: 'Company Direct',
     color: '#607d8b',
-    icon: '🏛️',
+    icon: 'company_direct',
     maxBatchSize: 2,
     cooldownMinutes: 30,
     riskLevel: 'high',
@@ -315,13 +315,13 @@ export const RISK_WARNINGS: Record<string, string> = {
 
 // ===== COMPANY TIERS =====
 export const TIER_LABELS: Record<string, { label: string; color: string; icon: string }> = {
-  tier1: { label: 'Tier 1', color: '#f59e0b', icon: '👑' },
-  tier2: { label: 'Tier 2', color: '#8b5cf6', icon: '💎' },
-  tier3: { label: 'Tier 3', color: '#3b82f6', icon: '⭐' },
-  startup: { label: 'Startup', color: '#22c55e', icon: '🚀' },
-  mnc: { label: 'MNC', color: '#ef4444', icon: '🌍' },
-  govt: { label: 'Government', color: '#14b8a6', icon: '🏛️' },
-  ngo: { label: 'NGO', color: '#ec4899', icon: '💚' },
+  tier1: { label: 'Tier 1 Elite', color: '#f59e0b', icon: 'tier1' },
+  tier2: { label: 'Tier 2 MNC', color: '#8b5cf6', icon: 'tier2' },
+  tier3: { label: 'Tier 3 Growth', color: '#3b82f6', icon: 'tier3' },
+  startup: { label: 'Startup', color: '#22c55e', icon: 'wellfound' },
+  mnc: { label: 'MNC', color: '#ef4444', icon: 'mnc' },
+  govt: { label: 'Government', color: '#14b8a6', icon: 'company_direct' },
+  ngo: { label: 'NGO', color: '#ec4899', icon: 'ngo' },
 };
 
 // ===== POSTED WITHIN OPTIONS =====

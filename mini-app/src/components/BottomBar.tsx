@@ -1,5 +1,5 @@
 // ============================================================
-// BOTTOM BAR — Floating Action Bar
+// BOTTOM BAR — Ultra Premium Frosted Glass Navigation
 // ============================================================
 
 import React from 'react';
@@ -30,7 +30,11 @@ export default function BottomBar({ activeTab, onTabChange }: BottomBarProps) {
           >
             <button
               onClick={() => { setBatchPanelOpen(true); hapticFeedback('medium'); }}
-              className="w-full py-3.5 bg-accent text-white rounded-2xl font-bold text-sm flex items-center justify-center gap-2 shadow-elevated active:scale-[0.98] transition-transform"
+              className="w-full py-3.5 text-white rounded-2xl font-bold text-sm flex items-center justify-center gap-2 active:scale-[0.98] transition-transform"
+              style={{
+                background: 'var(--gradient-accent)',
+                boxShadow: '0 8px 30px rgba(26,26,46,0.3), 0 2px 8px rgba(0,0,0,0.1)',
+              }}
             >
               <Zap className="w-4.5 h-4.5" />
               Auto-Apply to {selectedIds.size} Internship{selectedIds.size > 1 ? 's' : ''}
@@ -39,64 +43,72 @@ export default function BottomBar({ activeTab, onTabChange }: BottomBarProps) {
         )}
       </AnimatePresence>
 
-      {/* Bottom Navigation */}
-      <nav className="bottom-bar flex items-center justify-around">
-        <NavItem
-          icon={<Home className="w-5 h-5" />}
-          label="Browse"
-          active={activeTab === 'browse'}
-          onClick={() => { onTabChange('browse'); hapticFeedback('light'); }}
-        />
-        <NavItem
-          icon={<Sparkles className="w-5 h-5" />}
-          label="AI Chat"
-          active={activeTab === 'ai'}
-          onClick={() => { setLLMPanelOpen(true); hapticFeedback('light'); }}
-        />
-        <NavItem
-          icon={<BarChart3 className="w-5 h-5" />}
-          label="Analytics"
-          active={activeTab === 'analytics'}
-          onClick={() => { onTabChange('analytics'); hapticFeedback('light'); }}
-        />
-        <NavItem
-          icon={<Settings className="w-5 h-5" />}
-          label="Settings"
-          active={activeTab === 'settings'}
-          onClick={() => { onTabChange('settings'); hapticFeedback('light'); }}
-        />
+      {/* Bottom Navigation - Frosted Glass */}
+      <nav className="bottom-bar">
+        <div className="flex items-center justify-around max-w-md mx-auto">
+          <NavItem
+            icon={<Home className="w-[20px] h-[20px]" />}
+            label="Browse"
+            active={activeTab === 'browse'}
+            onClick={() => { onTabChange('browse'); hapticFeedback('light'); }}
+          />
+          <NavItem
+            icon={<Sparkles className="w-[20px] h-[20px]" />}
+            label="AI Chat"
+            active={false}
+            onClick={() => { setLLMPanelOpen(true); hapticFeedback('light'); }}
+            hasIndicator
+          />
+          <NavItem
+            icon={<BarChart3 className="w-[20px] h-[20px]" />}
+            label="Analytics"
+            active={activeTab === 'analytics'}
+            onClick={() => { onTabChange('analytics'); hapticFeedback('light'); }}
+          />
+          <NavItem
+            icon={<Settings className="w-[20px] h-[20px]" />}
+            label="Settings"
+            active={activeTab === 'settings'}
+            onClick={() => { onTabChange('settings'); hapticFeedback('light'); }}
+          />
+        </div>
       </nav>
     </>
   );
 }
 
 function NavItem({
-  icon, label, active, onClick, badge,
+  icon, label, active, onClick, badge, hasIndicator,
 }: {
-  icon: React.ReactNode; label: string; active: boolean; onClick: () => void; badge?: number;
+  icon: React.ReactNode; label: string; active: boolean; onClick: () => void; badge?: number; hasIndicator?: boolean;
 }) {
   return (
     <button
       onClick={onClick}
-      className={`flex flex-col items-center gap-0.5 px-3 py-1 rounded-xl transition-all relative ${
-        active ? 'text-accent' : 'text-primary-400'
-      }`}
+      className="flex flex-col items-center gap-0.5 px-4 py-1.5 rounded-xl transition-all duration-200 relative"
     >
       <div className="relative">
-        {icon}
+        <span className={`transition-colors duration-200 ${active ? 'text-primary-900' : 'text-primary-400'}`}>
+          {icon}
+        </span>
         {badge && badge > 0 && (
-          <span className="absolute -top-1 -right-1 w-4 h-4 bg-status-danger rounded-full text-[8px] text-white font-bold flex items-center justify-center">
+          <span className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-status-danger rounded-full text-[8px] text-white font-bold flex items-center justify-center">
             {badge}
           </span>
         )}
+        {hasIndicator && (
+          <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-400 border border-white" />
+        )}
       </div>
-      <span className={`text-[10px] font-semibold ${active ? 'text-accent' : 'text-primary-400'}`}>
+      <span className={`text-[10px] font-semibold transition-colors duration-200 ${active ? 'text-primary-900' : 'text-primary-400'}`}>
         {label}
       </span>
       {active && (
         <motion.div
           layoutId="bottomBarIndicator"
-          className="absolute -top-0.5 w-6 h-0.5 bg-accent rounded-full"
+          className="absolute -top-0.5 w-8 h-0.5 rounded-full"
+          style={{ background: 'var(--gradient-accent)' }}
+          transition={{ type: 'spring', stiffness: 400, damping: 30 }}
         />
       )}
     </button>

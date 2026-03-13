@@ -6,7 +6,7 @@ import React from 'react';
 
 export function InternshipCardSkeleton() {
   return (
-    <div className="bg-white rounded-2xl border border-surface-border p-4 space-y-3 animate-pulse">
+    <div className="bg-white rounded-2xl p-4 space-y-3 animate-pulse" style={{ border: '1px solid rgba(0,0,0,0.05)', boxShadow: '0 1px 4px rgba(0,0,0,0.03)' }}>
       {/* Top row */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -45,7 +45,7 @@ export function InternshipCardSkeleton() {
       </div>
 
       {/* Bottom */}
-      <div className="pt-2.5 border-t border-surface-border flex items-center justify-between">
+      <div className="pt-2.5 flex items-center justify-between" style={{ borderTop: '1px solid rgba(0,0,0,0.04)' }}>
         <div className="flex gap-3">
           <div className="skeleton w-20 h-4 rounded-md" />
           <div className="skeleton w-20 h-4 rounded-md" />

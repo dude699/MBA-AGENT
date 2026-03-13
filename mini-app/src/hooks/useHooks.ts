@@ -196,20 +196,26 @@ export function useBatchApply() {
 
 // ===== LLM CHAT =====
 export function useLLMChat() {
-  const { addLLMMessage, setLLMLoading, llmLoading } = useAppStore();
+  const { addLLMMessage, setLLMLoading, llmLoading, llmMessages } = useAppStore();
 
-  const sendMessage = useCallback(async (message: string, internshipIds?: string[]) => {
+  const sendMessage = useCallback(async (message: string, profile: string = 'generalist', internshipIds?: string[]) => {
     addLLMMessage({ role: 'user', content: message });
     setLLMLoading(true);
 
+    // Build history from recent messages
+    const history = llmMessages.slice(-6).map((msg) => ({
+      role: msg.role,
+      content: msg.content,
+    }));
+
     try {
-      const response = await chatWithLLM(message, { internshipIds });
+      const response = await chatWithLLM(message, profile, history, { internshipIds });
       if (response.success) {
         addLLMMessage({
           role: 'assistant',
           content: response.data,
           metadata: {
-            model: 'groq-llama3',
+            model: (response as any).meta?.model || 'groq-llama3',
             internshipIds,
           },
         });
@@ -222,7 +228,7 @@ export function useLLMChat() {
     } finally {
       setLLMLoading(false);
     }
-  }, []);
+  }, [llmMessages]);
 
   return { sendMessage, isLoading: llmLoading };
 }

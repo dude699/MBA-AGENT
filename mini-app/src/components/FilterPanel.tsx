@@ -1,5 +1,5 @@
 // ============================================================
-// FILTER PANEL — Comprehensive Filter Sheet
+// FILTER PANEL — Premium Filter Sheet with Professional Icons
 // ============================================================
 
 import React, { useState } from 'react';
@@ -7,7 +7,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   X, RotateCcw, ChevronDown, ChevronUp, Check,
   MapPin, Clock, Briefcase, DollarSign, Shield, Star,
-  Building2, Tag, Calendar, TrendingUp, Users, Layers,
+  Building2, Tag, Calendar, Layers,
 } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { hapticFeedback } from '@/utils/helpers';
@@ -16,6 +16,7 @@ import {
   SOURCE_CONFIG, POSTED_WITHIN_OPTIONS, STIPEND_RANGES,
   TIER_LABELS,
 } from '@/utils/constants';
+import { SourceIcon, TierIcon } from '@/components/SourceIcons';
 import type { InternshipSource, CompanyTier } from '@/types';
 
 export default function FilterPanel() {
@@ -40,7 +41,7 @@ export default function FilterPanel() {
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="fixed inset-0 z-50 bg-black/30 backdrop-blur-sm"
+        className="fixed inset-0 z-50 bg-black/20 backdrop-blur-sm"
         onClick={() => setFilterOpen(false)}
       >
         <motion.div
@@ -49,6 +50,7 @@ export default function FilterPanel() {
           exit={{ y: '100%' }}
           transition={{ type: 'spring', damping: 30, stiffness: 300 }}
           className="absolute bottom-0 left-0 right-0 bg-white rounded-t-3xl max-h-[85vh] overflow-hidden flex flex-col"
+          style={{ boxShadow: '0 -8px 40px rgba(0,0,0,0.08)' }}
           onClick={(e) => e.stopPropagation()}
         >
           {/* Handle */}
@@ -57,11 +59,12 @@ export default function FilterPanel() {
           </div>
 
           {/* Header */}
-          <div className="flex items-center justify-between px-5 py-3 border-b border-surface-border">
-            <div className="flex items-center gap-2">
-              <h2 className="text-base font-bold text-primary-900">Filters</h2>
+          <div className="flex items-center justify-between px-5 py-3" style={{ borderBottom: '1px solid rgba(0,0,0,0.05)' }}>
+            <div className="flex items-center gap-2.5">
+              <h2 className="text-base font-bold text-primary-900 tracking-tight">Filters</h2>
               {activeFilterCount > 0 && (
-                <span className="bg-accent text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                <span className="text-white text-[10px] font-bold px-2 py-0.5 rounded-full min-w-[20px] text-center"
+                  style={{ background: 'var(--gradient-accent)' }}>
                   {activeFilterCount}
                 </span>
               )}
@@ -74,7 +77,7 @@ export default function FilterPanel() {
                 <RotateCcw className="w-3.5 h-3.5" /> Reset
               </button>
               <button onClick={() => setFilterOpen(false)} className="p-1">
-                <X className="w-5 h-5 text-primary-500" />
+                <X className="w-5 h-5 text-primary-400" />
               </button>
             </div>
           </div>
@@ -103,13 +106,14 @@ export default function FilterPanel() {
                         setFilters({ sources: next });
                         hapticFeedback('light');
                       }}
-                      className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium transition-all ${
+                      className={`flex items-center gap-2 px-3 py-2.5 rounded-xl text-xs font-medium transition-all duration-200 ${
                         active
-                          ? 'bg-accent text-white border border-accent'
-                          : 'bg-surface-muted text-primary-700 border border-surface-border hover:border-primary-400'
+                          ? 'text-white shadow-sm'
+                          : 'bg-white text-primary-700 border border-primary-200/60 hover:border-primary-300'
                       }`}
+                      style={active ? { background: config.color, borderColor: config.color } : {}}
                     >
-                      <span>{config.icon}</span>
+                      <SourceIcon source={source} size={14} />
                       <span className="truncate">{config.name}</span>
                       {active && <Check className="w-3 h-3 ml-auto flex-shrink-0" />}
                     </button>
@@ -129,7 +133,7 @@ export default function FilterPanel() {
               <div className="space-y-3">
                 <div className="flex items-center gap-3">
                   <div className="flex-1">
-                    <label className="text-[10px] font-semibold text-primary-500 uppercase mb-1 block">Min</label>
+                    <label className="text-[10px] font-semibold text-primary-400 uppercase mb-1 block tracking-wider">Min</label>
                     <input
                       type="range"
                       min={0}
@@ -137,12 +141,12 @@ export default function FilterPanel() {
                       step={5000}
                       value={filters.stipendMin}
                       onChange={(e) => setFilters({ stipendMin: Number(e.target.value) })}
-                      className="w-full accent-accent"
+                      className="w-full accent-primary-900"
                     />
-                    <span className="text-xs font-bold text-primary-800">₹{(filters.stipendMin / 1000).toFixed(0)}K</span>
+                    <span className="text-xs font-bold text-primary-800">INR {(filters.stipendMin / 1000).toFixed(0)}K</span>
                   </div>
                   <div className="flex-1">
-                    <label className="text-[10px] font-semibold text-primary-500 uppercase mb-1 block">Max</label>
+                    <label className="text-[10px] font-semibold text-primary-400 uppercase mb-1 block tracking-wider">Max</label>
                     <input
                       type="range"
                       min={0}
@@ -150,9 +154,9 @@ export default function FilterPanel() {
                       step={5000}
                       value={filters.stipendMax}
                       onChange={(e) => setFilters({ stipendMax: Number(e.target.value) })}
-                      className="w-full accent-accent"
+                      className="w-full accent-primary-900"
                     />
-                    <span className="text-xs font-bold text-primary-800">₹{(filters.stipendMax / 1000).toFixed(0)}K</span>
+                    <span className="text-xs font-bold text-primary-800">INR {(filters.stipendMax / 1000).toFixed(0)}K</span>
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-1.5">
@@ -163,11 +167,15 @@ export default function FilterPanel() {
                         setFilters({ stipendMin: range.min, stipendMax: range.max });
                         hapticFeedback('light');
                       }}
-                      className={`text-[10px] font-semibold px-2.5 py-1 rounded-lg transition-all ${
+                      className={`text-[10px] font-semibold px-2.5 py-1 rounded-lg transition-all duration-200 ${
                         filters.stipendMin === range.min && filters.stipendMax === range.max
-                          ? 'bg-accent text-white'
-                          : 'bg-surface-muted text-primary-600 border border-surface-border'
+                          ? 'text-white shadow-sm'
+                          : 'bg-white text-primary-600 border border-primary-200/60'
                       }`}
+                      style={
+                        filters.stipendMin === range.min && filters.stipendMax === range.max
+                          ? { background: 'var(--gradient-accent)' } : {}
+                      }
                     >
                       {range.label}
                     </button>
@@ -191,11 +199,11 @@ export default function FilterPanel() {
                   max={12}
                   value={filters.durationMax}
                   onChange={(e) => setFilters({ durationMax: Number(e.target.value) })}
-                  className="w-full accent-accent"
+                  className="w-full accent-primary-900"
                 />
                 <div className="flex justify-between text-xs text-primary-500">
                   <span>1 month</span>
-                  <span className="font-bold text-accent">{filters.durationMax} months max</span>
+                  <span className="font-bold text-primary-900">{filters.durationMax} months max</span>
                   <span>12 months</span>
                 </div>
                 <div className="flex gap-2">
@@ -203,13 +211,14 @@ export default function FilterPanel() {
                     <button
                       key={m}
                       onClick={() => { setFilters({ durationMax: m }); hapticFeedback('light'); }}
-                      className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                      className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 ${
                         filters.durationMax === m
-                          ? 'bg-accent text-white'
-                          : 'bg-surface-muted text-primary-600 border border-surface-border'
+                          ? 'text-white shadow-sm'
+                          : 'bg-white text-primary-600 border border-primary-200/60'
                       }`}
+                      style={filters.durationMax === m ? { background: 'var(--gradient-accent)' } : {}}
                     >
-                      ≤{m}mo
+                      {m}mo
                     </button>
                   ))}
                 </div>
@@ -251,11 +260,12 @@ export default function FilterPanel() {
                         setFilters({ locationTypes: next });
                         hapticFeedback('light');
                       }}
-                      className={`flex-1 py-2 rounded-xl text-xs font-semibold capitalize transition-all ${
+                      className={`flex-1 py-2 rounded-xl text-xs font-semibold capitalize transition-all duration-200 ${
                         filters.locationTypes.includes(type)
-                          ? 'bg-accent text-white'
-                          : 'bg-surface-muted text-primary-600 border border-surface-border'
+                          ? 'text-white shadow-sm'
+                          : 'bg-white text-primary-600 border border-primary-200/60'
                       }`}
+                      style={filters.locationTypes.includes(type) ? { background: 'var(--gradient-accent)' } : {}}
                     >
                       {type}
                     </button>
@@ -305,14 +315,14 @@ export default function FilterPanel() {
                         setFilters({ companyTiers: next });
                         hapticFeedback('light');
                       }}
-                      className={`flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-medium transition-all ${
+                      className={`flex items-center gap-2 px-3 py-2.5 rounded-xl text-xs font-medium transition-all duration-200 ${
                         active
-                          ? 'text-white border'
-                          : 'bg-surface-muted text-primary-700 border border-surface-border'
+                          ? 'text-white border shadow-sm'
+                          : 'bg-white text-primary-700 border border-primary-200/60'
                       }`}
                       style={active ? { backgroundColor: config.color, borderColor: config.color } : {}}
                     >
-                      <span>{config.icon}</span>
+                      <TierIcon tier={key} size={14} />
                       <span>{config.label}</span>
                     </button>
                   );
@@ -348,11 +358,12 @@ export default function FilterPanel() {
                   <button
                     key={opt.value}
                     onClick={() => { setFilters({ postedWithin: opt.value as any }); hapticFeedback('light'); }}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 ${
                       filters.postedWithin === opt.value
-                        ? 'bg-accent text-white'
-                        : 'bg-surface-muted text-primary-600 border border-surface-border'
+                        ? 'text-white shadow-sm'
+                        : 'bg-white text-primary-600 border border-primary-200/60'
                     }`}
+                    style={filters.postedWithin === opt.value ? { background: 'var(--gradient-accent)' } : {}}
                   >
                     {opt.label}
                   </button>
@@ -375,49 +386,45 @@ export default function FilterPanel() {
               }
             >
               <div className="space-y-4">
-                {/* Min Match Score */}
                 <div>
                   <div className="flex justify-between mb-1">
                     <label className="text-xs font-medium text-primary-600">Min Match Score</label>
-                    <span className="text-xs font-bold text-accent">{filters.minMatchScore}%</span>
+                    <span className="text-xs font-bold text-primary-900">{filters.minMatchScore}%</span>
                   </div>
                   <input
                     type="range" min={0} max={100} step={5}
                     value={filters.minMatchScore}
                     onChange={(e) => setFilters({ minMatchScore: Number(e.target.value) })}
-                    className="w-full accent-accent"
+                    className="w-full accent-primary-900"
                   />
                 </div>
 
-                {/* Max Ghost Score */}
                 <div>
                   <div className="flex justify-between mb-1">
                     <label className="text-xs font-medium text-primary-600">Max Ghost Score</label>
-                    <span className="text-xs font-bold text-status-warning">{filters.maxGhostScore}%</span>
+                    <span className="text-xs font-bold text-amber-600">{filters.maxGhostScore}%</span>
                   </div>
                   <input
                     type="range" min={0} max={100} step={5}
                     value={filters.maxGhostScore}
                     onChange={(e) => setFilters({ maxGhostScore: Number(e.target.value) })}
-                    className="w-full accent-status-warning"
+                    className="w-full accent-amber-500"
                   />
                 </div>
 
-                {/* Min Success Rate */}
                 <div>
                   <div className="flex justify-between mb-1">
                     <label className="text-xs font-medium text-primary-600">Min Success Rate</label>
-                    <span className="text-xs font-bold text-status-success">{filters.successRateMin}%</span>
+                    <span className="text-xs font-bold text-emerald-600">{filters.successRateMin}%</span>
                   </div>
                   <input
                     type="range" min={0} max={100} step={5}
                     value={filters.successRateMin}
                     onChange={(e) => setFilters({ successRateMin: Number(e.target.value) })}
-                    className="w-full accent-status-success"
+                    className="w-full accent-emerald-500"
                   />
                 </div>
 
-                {/* Toggle Switches */}
                 <div className="space-y-2">
                   <ToggleSwitch
                     label="Only Verified Listings"
@@ -445,7 +452,11 @@ export default function FilterPanel() {
           </div>
 
           {/* Apply Button */}
-          <div className="absolute bottom-0 left-0 right-0 p-4 bg-white/95 backdrop-blur-md border-t border-surface-border">
+          <div className="absolute bottom-0 left-0 right-0 p-4" style={{
+            background: 'rgba(255,255,255,0.95)',
+            backdropFilter: 'blur(20px)',
+            borderTop: '1px solid rgba(0,0,0,0.05)',
+          }}>
             <button
               onClick={() => { setFilterOpen(false); hapticFeedback('medium'); }}
               className="btn-primary w-full text-sm"
@@ -471,21 +482,22 @@ function FilterSection({
   children: React.ReactNode;
 }) {
   return (
-    <div className="border-b border-surface-border">
+    <div style={{ borderBottom: '1px solid rgba(0,0,0,0.04)' }}>
       <button
         onClick={onToggle}
-        className="flex items-center justify-between w-full px-5 py-3 hover:bg-surface-muted/50 transition-colors"
+        className="flex items-center justify-between w-full px-5 py-3.5 hover:bg-primary-50/50 transition-colors"
       >
         <div className="flex items-center gap-2">
-          <span className="text-primary-500">{icon}</span>
+          <span className="text-primary-400">{icon}</span>
           <span className="text-sm font-semibold text-primary-800">{title}</span>
           {count > 0 && (
-            <span className="bg-accent text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full">
+            <span className="text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full min-w-[16px] text-center"
+              style={{ background: 'var(--gradient-accent)' }}>
               {count}
             </span>
           )}
         </div>
-        {expanded ? <ChevronUp className="w-4 h-4 text-primary-400" /> : <ChevronDown className="w-4 h-4 text-primary-400" />}
+        {expanded ? <ChevronUp className="w-4 h-4 text-primary-300" /> : <ChevronDown className="w-4 h-4 text-primary-300" />}
       </button>
       <AnimatePresence>
         {expanded && (
@@ -526,11 +538,12 @@ function ChipGrid({
               onChange(next);
               hapticFeedback('light');
             }}
-            className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all ${
+            className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all duration-200 ${
               active
-                ? 'bg-accent text-white'
-                : 'bg-surface-muted text-primary-600 border border-surface-border hover:border-primary-400'
+                ? 'text-white shadow-sm'
+                : 'bg-white text-primary-600 border border-primary-200/60 hover:border-primary-300'
             }`}
+            style={active ? { background: 'var(--gradient-accent)' } : {}}
           >
             {item}
           </button>
@@ -552,8 +565,8 @@ function ToggleSwitch({
       className="flex items-center justify-between w-full py-1"
     >
       <span className="text-xs font-medium text-primary-700">{label}</span>
-      <div className={`w-9 h-5 rounded-full transition-colors relative ${checked ? 'bg-accent' : 'bg-primary-200'}`}>
-        <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-4' : 'translate-x-0.5'}`} />
+      <div className={`w-9 h-5 rounded-full transition-all duration-300 relative ${checked ? 'bg-primary-900' : 'bg-primary-200'}`}>
+        <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-300 ${checked ? 'translate-x-4' : 'translate-x-0.5'}`} />
       </div>
     </button>
   );
