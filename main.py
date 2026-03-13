@@ -399,6 +399,25 @@ class Application:
             self._db = db
             self._status.mark_ok('database', f"path={db.db_path}")
             logger.info(f"[Phase 2] Database ready: {db.db_path}")
+
+            # Initialize Supabase (persistent cloud database)
+            try:
+                from core.supabase_client import get_supabase, is_supabase_configured, get_status_summary
+                if is_supabase_configured():
+                    client = get_supabase()
+                    if client:
+                        self._status.mark_ok('supabase', get_status_summary())
+                        logger.info(f"[Phase 2] Supabase: {get_status_summary()}")
+                    else:
+                        self._status.mark_degraded('supabase', 'Client init failed')
+                        logger.warning("[Phase 2] Supabase client init failed (will retry)")
+                else:
+                    self._status.mark_degraded('supabase', 'Not configured (set SUPABASE_URL + key)')
+                    logger.info("[Phase 2] Supabase: not configured (optional)")
+            except Exception as e:
+                self._status.mark_degraded('supabase', str(e))
+                logger.warning(f"[Phase 2] Supabase init warning: {e}")
+
             return db
         except Exception as e:
             self._status.mark_failed('database', str(e))
@@ -684,6 +703,18 @@ class Application:
         self._watchdog_task = asyncio.create_task(self._watchdog_loop())
         self._gc_task = asyncio.create_task(self._gc_loop())
         self._status.mark_ok('watchdog', f'interval={WATCHDOG_INTERVAL_SEC}s')
+
+        # Start Supabase keepalive loop (Layer 1)
+        try:
+            from core.supabase_client import is_supabase_configured
+            if is_supabase_configured():
+                from core.supabase_keepalive import keepalive_loop
+                self._supabase_keepalive_task = asyncio.create_task(
+                    keepalive_loop(interval_hours=12.0)
+                )
+                logger.info("[Phase 8/9] Supabase keepalive L1 loop started")
+        except Exception as e:
+            logger.debug(f"[Phase 8/9] Supabase keepalive skip: {e}")
 
         gc.collect()
 

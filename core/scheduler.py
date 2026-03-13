@@ -240,6 +240,39 @@ class AgentScheduler:
         )
         self._job_count += 1
 
+        # ---- SUPABASE JOBS ----
+
+        # Supabase keep-alive ping (every 8 hours with jitter)
+        self._scheduler.add_job(
+            self._supabase_ping,
+            IntervalTrigger(hours=8, jitter=1800),
+            id='supabase_ping',
+            name='[SYS] Supabase Keep-Alive Ping',
+            misfire_grace_time=3600,
+            coalesce=True,
+        )
+        self._job_count += 1
+
+        # Supabase morning merge: latest_jobs -> all_jobs (5:00 AM IST)
+        self._scheduler.add_job(
+            self._supabase_morning_merge,
+            CronTrigger(hour=5, minute=0, timezone='Asia/Kolkata'),
+            id='supabase_morning_merge',
+            name='[SYS] Supabase Morning Merge',
+            misfire_grace_time=3600,
+        )
+        self._job_count += 1
+
+        # Supabase expired job cleanup (daily 4 AM IST)
+        self._scheduler.add_job(
+            self._supabase_cleanup,
+            CronTrigger(hour=4, minute=0, timezone='Asia/Kolkata'),
+            id='supabase_cleanup',
+            name='[SYS] Supabase Expired Cleanup',
+            misfire_grace_time=3600,
+        )
+        self._job_count += 1
+
         # Start scheduler
         self._scheduler.start()
         self._running = True
@@ -507,6 +540,8 @@ class AgentScheduler:
         # the scheduled dedup/ghost/enrich/PPO, this catches any
         # unprocessed listings.
         await self._auto_process_pipeline("after morning scrape")
+        # Sync processed listings to Supabase
+        await self._sync_to_supabase("morning_scrape")
 
     async def _run_afternoon_scrape(self):
         from agents.a03_primary_scraper import get_primary_scraper
@@ -517,6 +552,8 @@ class AgentScheduler:
         # AUTO-PROCESS: Run pipeline after afternoon scrape so data
         # doesn't sit unprocessed until next morning
         await self._auto_process_pipeline("after afternoon scrape")
+        # Sync processed listings to Supabase
+        await self._sync_to_supabase("afternoon_scrape")
 
     async def _run_dedup(self):
         from agents.a06_dedup_engine import get_dedup_engine
@@ -556,6 +593,8 @@ class AgentScheduler:
         await self._safe_run('A-04 ATS', get_ats_crawler().run_crawl)
         # AUTO-PROCESS: ATS crawl produces raw listings that need processing
         await self._auto_process_pipeline("after ATS crawl")
+        # Sync to Supabase
+        await self._sync_to_supabase("ats_crawl")
 
     async def _run_dark_channels(self):
         from agents.a02_dark_channel import get_dark_channel_listener
@@ -625,6 +664,110 @@ class AgentScheduler:
             logger.error(f"[SCHEDULER] Auto-PPO failed: {e}")
 
         logger.info(f"[SCHEDULER] Auto-processing pipeline complete")
+
+    async def _sync_to_supabase(self, trigger: str = ""):
+        """
+        After pipeline processing, sync clean_listings to Supabase latest_jobs.
+        This is the bridge between local SQLite and persistent Supabase storage.
+        """
+        try:
+            from core.supabase_client import is_operational
+            if not is_operational():
+                return
+
+            from core.database import get_db
+            from core.supabase_db import async_insert_latest_jobs
+
+            db = get_db()
+            # Get recent clean listings (last 24h)
+            recent = db.get_recent_clean_listings(days=1, limit=500)
+            if not recent:
+                logger.debug(f"[SCHEDULER] Supabase sync: no recent listings to sync")
+                return
+
+            # Convert SQLite rows to dicts for Supabase
+            jobs = []
+            for row in recent:
+                jobs.append({
+                    "title": row.get("title", ""),
+                    "company": row.get("company", ""),
+                    "location": row.get("location", ""),
+                    "source": row.get("source", ""),
+                    "source_url": row.get("url", ""),
+                    "category": row.get("category", ""),
+                    "stipend": int(row.get("stipend_monthly", 0) or 0),
+                    "duration": int(row.get("duration_months", 0) or 0),
+                    "applicants": int(row.get("applicants", 0) or 0),
+                    "description": row.get("description_text", ""),
+                    "ppo_score": float(row.get("ppo_score", 0) or 0),
+                    "ghost_score": float(row.get("ghost_score", 0) or 0),
+                    "match_score": float(row.get("ppo_score", 50) or 50),
+                    "is_expired": row.get("status", "") == "expired",
+                    "content_hash": row.get("content_hash", ""),
+                })
+
+            batch_id = f"sync_{trigger}_{datetime.now(IST).strftime('%Y%m%d_%H%M')}"
+            count = await async_insert_latest_jobs(jobs, batch_id)
+            logger.info(f"[SCHEDULER] Supabase sync: {count}/{len(jobs)} jobs synced ({trigger})")
+
+        except Exception as e:
+            logger.error(f"[SCHEDULER] Supabase sync error: {e}")
+
+    # ================================================================
+    # SUPABASE INTEGRATION JOBS
+    # ================================================================
+
+    async def _supabase_ping(self):
+        """Layer 2 Supabase keep-alive ping (every 8 hours)."""
+        try:
+            from core.supabase_keepalive import scheduler_ping
+            result = await scheduler_ping()
+            if result.get("success"):
+                logger.debug("[SCHEDULER] Supabase L2 ping OK")
+            elif result.get("skipped"):
+                logger.debug(f"[SCHEDULER] Supabase L2 ping skipped: {result.get('reason', '')}")
+            else:
+                logger.warning(f"[SCHEDULER] Supabase L2 ping failed: {result.get('reason', '')}")
+        except Exception as e:
+            logger.debug(f"[SCHEDULER] Supabase ping error: {e}")
+
+    async def _supabase_morning_merge(self):
+        """
+        Merge latest_jobs -> all_jobs at morning time.
+        Called ONCE per day before the morning scrape.
+        """
+        try:
+            from core.supabase_db import async_merge_latest_to_all, async_cleanup_expired_jobs
+            from core.supabase_client import is_operational
+
+            if not is_operational():
+                logger.info("[SCHEDULER] Supabase not operational, skipping merge")
+                return
+
+            logger.info("[SCHEDULER] Running Supabase morning merge (latest -> all)...")
+            merged, total = await async_merge_latest_to_all()
+            logger.info(f"[SCHEDULER] Supabase merge: {merged} new merged from {total} latest_jobs")
+
+            deleted = await async_cleanup_expired_jobs(days=7)
+            if deleted > 0:
+                logger.info(f"[SCHEDULER] Supabase cleanup: {deleted} expired jobs removed")
+
+        except Exception as e:
+            logger.error(f"[SCHEDULER] Supabase morning merge error: {e}")
+
+    async def _supabase_cleanup(self):
+        """Daily cleanup of expired jobs in Supabase."""
+        try:
+            from core.supabase_db import async_cleanup_expired_jobs
+            from core.supabase_client import is_operational
+
+            if not is_operational():
+                return
+
+            deleted = await async_cleanup_expired_jobs(days=7)
+            logger.info(f"[SCHEDULER] Supabase daily cleanup: {deleted} expired jobs removed")
+        except Exception as e:
+            logger.error(f"[SCHEDULER] Supabase cleanup error: {e}")
 
     async def _check_and_run_startup_pipeline(self):
         """

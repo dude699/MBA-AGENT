@@ -924,6 +924,10 @@ class TelegramReporter:
             # Mini-App access
             'miniapp': self._cmd_miniapp,
             'webapp': self._cmd_miniapp,  # alias
+            # Supabase database commands
+            'dbstatus': self._cmd_dbstatus,
+            'latestjobs': self._cmd_latestjobs,
+            'alljobs': self._cmd_alljobs,
             # Menu trigger
             'menu': self._cmd_menu,
         }
@@ -1501,7 +1505,12 @@ class TelegramReporter:
             "/settings — Preferences\n\n"
             "📱 <b>Mini App</b>\n"
             "/miniapp — Open InternHub Pro mini app\n"
-            "/webapp — Alias for /miniapp"
+            "/webapp — Alias for /miniapp\n\n"
+            "🗄️ <b>Supabase Cloud DB</b>\n"
+            "/dbstatus — Database status & stats\n"
+            "/latestjobs [page] — Latest scraping session jobs\n"
+            "/alljobs [page] — All jobs archive\n"
+            "/alljobs applied — Applied jobs only"
         )
         
         if is_admin:
@@ -3757,6 +3766,196 @@ class TelegramReporter:
             else:
                 context.args = []
             await handler(update, context)
+
+    # ================================================================
+    # SUPABASE DATABASE COMMANDS
+    # ================================================================
+
+    @command_error_boundary
+    async def _cmd_dbstatus(self, update, context):
+        """Show Supabase database status and statistics."""
+        try:
+            from core.supabase_client import is_operational, get_status_summary, health_check
+            from core.supabase_db import SupabaseJobDB
+            from core.supabase_keepalive import get_keepalive_status
+
+            status_line = get_status_summary()
+            msg_parts = [
+                "🗄️ <b>Supabase Database Status</b>",
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+                f"Status: {status_line}",
+                "",
+            ]
+
+            if is_operational():
+                stats = SupabaseJobDB.get_stats()
+                msg_parts.extend([
+                    f"📋 Latest Jobs: <b>{stats.get('latest_jobs_count', 0)}</b>",
+                    f"📦 All Jobs: <b>{stats.get('all_jobs_count', 0)}</b>",
+                    f"  ├ Active: {stats.get('all_jobs_active', 0)}",
+                    f"  ├ Expired: {stats.get('all_jobs_expired', 0)}",
+                    f"  └ Applied: {stats.get('all_jobs_applied', 0)}",
+                    "",
+                ])
+
+                ka = get_keepalive_status()
+                msg_parts.extend([
+                    "🏓 <b>Keep-Alive</b>",
+                    f"  Total pings: {ka.get('total_pings', 0)}",
+                ])
+                if ka.get('last_ping_time'):
+                    msg_parts.append(f"  Last ping: {ka['last_ping_time'][:19]}")
+                msg_parts.append(f"  Failures: {ka.get('consecutive_failures', 0)}")
+
+                hc = health_check()
+                if hc.get("connected"):
+                    msg_parts.append(f"  Latency: {hc.get('latency_ms', 0)}ms")
+            else:
+                msg_parts.append("⚠️ Supabase not configured or not operational")
+                msg_parts.append("Set SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY in env vars")
+
+            await update.message.reply_text(
+                "\n".join(msg_parts), parse_mode="HTML",
+            )
+        except Exception as e:
+            await update.message.reply_text(f"❌ Error: {str(e)[:200]}", parse_mode="HTML")
+
+    @command_error_boundary
+    async def _cmd_latestjobs(self, update, context):
+        """Show latest jobs from Supabase (current scraping session)."""
+        try:
+            from core.supabase_client import is_operational
+            if not is_operational():
+                await update.message.reply_text("⚠️ Supabase not configured/available")
+                return
+
+            from core.supabase_db import SupabaseJobDB
+
+            page = 1
+            if context.args:
+                try:
+                    page = int(context.args[0])
+                except ValueError:
+                    pass
+
+            per_page = 10
+            offset = (page - 1) * per_page
+            jobs, total = SupabaseJobDB.get_latest_jobs(limit=per_page, offset=offset)
+
+            if not jobs:
+                await update.message.reply_text(
+                    "📋 <b>Latest Jobs</b> (Supabase)\n\nNo jobs in latest table. Run a scrape first!",
+                    parse_mode="HTML",
+                )
+                return
+
+            lines = [
+                f"📋 <b>Latest Jobs</b> — Page {page} ({total} total)",
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━", "",
+            ]
+
+            for i, job in enumerate(jobs, start=offset + 1):
+                stipend = job.get("stipend", 0) or 0
+                stipend_str = f"₹{stipend:,}/mo" if stipend > 0 else "Unpaid"
+                company = (job.get("company", "?") or "?")[:25]
+                title = (job.get("title", "?") or "?")[:40]
+                source = (job.get("source", "?") or "?")[:12]
+                location = (job.get("location", "?") or "?")[:20]
+                url = job.get("source_url", "")
+
+                lines.append(
+                    f"<b>{i}.</b> {title}\n"
+                    f"   🏢 {company} | 📍 {location}\n"
+                    f"   💰 {stipend_str} | 🔗 {source}"
+                )
+                if url:
+                    lines.append(f"   <a href=\"{url}\">Apply</a>")
+                lines.append("")
+
+            nav = []
+            if page > 1:
+                nav.append(f"⬅️ /latestjobs {page - 1}")
+            if offset + per_page < total:
+                nav.append(f"➡️ /latestjobs {page + 1}")
+            if nav:
+                lines.append(" | ".join(nav))
+
+            await update.message.reply_text(
+                "\n".join(lines), parse_mode="HTML", disable_web_page_preview=True,
+            )
+        except Exception as e:
+            await update.message.reply_text(f"❌ Error: {str(e)[:200]}")
+
+    @command_error_boundary
+    async def _cmd_alljobs(self, update, context):
+        """Show all jobs from Supabase archive. Usage: /alljobs [page] or /alljobs applied"""
+        try:
+            from core.supabase_client import is_operational
+            if not is_operational():
+                await update.message.reply_text("⚠️ Supabase not configured/available")
+                return
+
+            from core.supabase_db import SupabaseJobDB
+
+            page = 1
+            applied_only = False
+            if context.args:
+                for arg in context.args:
+                    if arg.lower() == "applied":
+                        applied_only = True
+                    elif arg.isdigit():
+                        page = int(arg)
+
+            per_page = 10
+            offset = (page - 1) * per_page
+            jobs, total = SupabaseJobDB.get_all_jobs(
+                limit=per_page, offset=offset, applied_only=applied_only,
+            )
+
+            title_text = "Applied Jobs" if applied_only else "All Jobs Archive"
+            if not jobs:
+                await update.message.reply_text(
+                    f"📦 <b>{title_text}</b> (Supabase)\n\nNo jobs found.",
+                    parse_mode="HTML",
+                )
+                return
+
+            lines = [
+                f"📦 <b>{title_text}</b> — Page {page} ({total} total)",
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━", "",
+            ]
+
+            for i, job in enumerate(jobs, start=offset + 1):
+                stipend = job.get("stipend", 0) or 0
+                stipend_str = f"₹{stipend:,}/mo" if stipend > 0 else "Unpaid"
+                company = (job.get("company", "?") or "?")[:25]
+                title = (job.get("title", "?") or "?")[:40]
+                source = (job.get("source", "?") or "?")[:12]
+                applied = "✅" if job.get("applied") else ""
+                url = job.get("source_url", "")
+
+                lines.append(
+                    f"<b>{i}.</b> {applied} {title}\n"
+                    f"   🏢 {company} | 💰 {stipend_str} | 🔗 {source}"
+                )
+                if url:
+                    lines.append(f"   <a href=\"{url}\">View/Apply</a>")
+                lines.append("")
+
+            nav = []
+            applied_flag = " applied" if applied_only else ""
+            if page > 1:
+                nav.append(f"⬅️ /alljobs{applied_flag} {page - 1}")
+            if offset + per_page < total:
+                nav.append(f"➡️ /alljobs{applied_flag} {page + 1}")
+            if nav:
+                lines.append(" | ".join(nav))
+
+            await update.message.reply_text(
+                "\n".join(lines), parse_mode="HTML", disable_web_page_preview=True,
+            )
+        except Exception as e:
+            await update.message.reply_text(f"❌ Error: {str(e)[:200]}")
 
     @command_error_boundary
     async def _cmd_menu(self, update, context):
