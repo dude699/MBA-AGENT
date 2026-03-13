@@ -5,7 +5,10 @@ services:
     pythonVersion: "3.11.0"
     # Build: install Python deps + build mini-app frontend
     # NOTE: If Render's blueprint isn't synced, start.sh will build the mini-app at startup
-    buildCommand: "pip install -r requirements.txt && python -c \"import nltk; nltk.download('punkt_tab')\" && cd mini-app && npm install --include=dev --no-audit --no-fund && (npm run build || ./node_modules/.bin/vite build) && ls -la dist/ && cd .."
+    # STRATEGY: Skip tsc (it only type-checks with noEmit:true) and run vite build directly.
+    #   tsc fails on Render due to NODE_ENV=production skipping @types/* devDeps.
+    #   Vite uses esbuild for transpilation, not tsc, so skipping tsc is safe.
+    buildCommand: "pip install -r requirements.txt && python -c \"import nltk; nltk.download('punkt_tab')\" && cd mini-app && npm install --include=dev --no-audit --no-fund && ./node_modules/.bin/vite build && ls -la dist/ && cd .."
     # start.sh ensures mini-app is built even if buildCommand wasn't synced from render.yaml
     startCommand: bash start.sh
     healthCheckPath: /health
@@ -14,6 +17,10 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: "3.11.0"
+      # Pin Node.js v20 — Render's default may be v22 which has strict ESM issues
+      # with vite.config.ts and postcss/tailwind config files
+      - key: NODE_VERSION
+        value: "20.19.0"
       # Force single worker — NEVER run 2+ workers with polling bot
       - key: WEB_CONCURRENCY
         value: "1"

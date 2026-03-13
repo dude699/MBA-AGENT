@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# OPERATION FIRST MOVER — START SCRIPT (v5.4.1)
+# OPERATION FIRST MOVER — START SCRIPT (v5.4.2)
 # ============================================================
 # This script ensures the mini-app frontend is built before
 # starting the Python backend. It's the startCommand for Render.
@@ -21,7 +21,7 @@
 set -e
 
 echo "========================================================"
-echo "  OPERATION FIRST MOVER v5.4.1 — Startup Script"
+echo "  OPERATION FIRST MOVER v5.4.2 — Startup Script"
 echo "========================================================"
 
 MINI_APP_DIR="mini-app"
@@ -50,25 +50,23 @@ else
             echo "[START] Installing dependencies (including devDependencies)..."
             npm install --include=dev --no-audit --no-fund 2>&1 | tail -5
 
-            echo "[START] Building mini-app..."
+            echo "[START] Building mini-app (vite only, tsc skipped)..."
 
-            # Try 1: Full build (tsc + vite)
+            # Try 1: npm run build (now just vite build)
             if npm run build 2>&1; then
-                echo "[START] Full build (tsc + vite) succeeded!"
+                echo "[START] Build succeeded!"
             else
-                echo "[START] Full build failed, trying vite-only (npm run build:vite)..."
-                # Try 2: Vite-only build via npm script (uses local node_modules)
-                if npm run build:vite 2>&1; then
-                    echo "[START] Vite-only build succeeded!"
-                else
-                    echo "[START] npm run build:vite failed, trying direct vite binary..."
-                    # Try 3: Direct vite binary from node_modules
-                    if [ -x "node_modules/.bin/vite" ]; then
-                        node_modules/.bin/vite build 2>&1 || echo "[START] All build methods failed"
+                echo "[START] npm run build failed, trying direct vite binary..."
+                # Try 2: Direct vite binary from node_modules
+                if [ -x "node_modules/.bin/vite" ]; then
+                    if node_modules/.bin/vite build 2>&1; then
+                        echo "[START] Direct vite binary build succeeded!"
                     else
-                        echo "[START] vite binary not found in node_modules/.bin/"
-                        echo "[START] Mini-app will show 'Not Built' error"
+                        echo "[START] All build methods failed!"
                     fi
+                else
+                    echo "[START] vite binary not found in node_modules/.bin/"
+                    echo "[START] Mini-app will show 'Not Built' error"
                 fi
             fi
 

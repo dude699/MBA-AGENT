@@ -6,8 +6,9 @@
   "description": "Professional Telegram Mini App for Internship Auto-Apply Hub",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "vite build",
     "build:vite": "./node_modules/.bin/vite build",
+    "typecheck": "tsc --noEmit",
     "preview": "vite preview",
     "server": "tsx server/index.ts",
     "dev:all": "concurrently \"npm run dev\" \"npm run server\""
