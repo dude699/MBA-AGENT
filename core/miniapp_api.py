@@ -409,17 +409,24 @@ async def handle_cors_preflight(request: web.Request) -> web.Response:
 # STATIC FILE SERVING FOR MINI-APP
 # ============================================================
 
-# Cache the dist path once found to avoid repeated filesystem checks
+# Cache the dist path — gets invalidated and re-checked if None
 _cached_dist_path: Optional[str] = None
 
 
 def _get_miniapp_dist_path() -> Optional[str]:
-    """Find the mini-app dist directory. Caches result after first successful find."""
+    """
+    Find the mini-app dist directory. 
+    Caches result after first successful find.
+    Re-scans every time if not found (in case build completed after startup).
+    """
     global _cached_dist_path
     
     # Return cached path if still valid
-    if _cached_dist_path and os.path.isdir(_cached_dist_path):
+    if _cached_dist_path and os.path.isdir(_cached_dist_path) and os.path.isfile(os.path.join(_cached_dist_path, 'index.html')):
         return _cached_dist_path
+    
+    # Reset cache if invalid
+    _cached_dist_path = None
     
     candidates = [
         # Relative to this file: core/miniapp_api.py -> project_root/mini-app/dist
@@ -433,29 +440,83 @@ def _get_miniapp_dist_path() -> Optional[str]:
         # Sandbox path
         '/home/user/webapp/mini-app/dist',
     ]
+    # De-duplicate candidates (normpath)
+    seen = set()
+    unique_candidates = []
     for path in candidates:
+        normed = os.path.normpath(path)
+        if normed not in seen:
+            seen.add(normed)
+            unique_candidates.append(normed)
+    
+    for path in unique_candidates:
         if os.path.isdir(path) and os.path.isfile(os.path.join(path, 'index.html')):
             _cached_dist_path = path
             logger.info(f"[{MODULE_ID}] Found mini-app dist at: {path}")
             return path
     
-    # Log all checked paths for debugging
-    logger.warning(f"[{MODULE_ID}] mini-app dist/ not found in any candidate path:")
-    for path in candidates:
-        exists = os.path.isdir(path)
-        has_index = os.path.isfile(os.path.join(path, 'index.html')) if exists else False
-        logger.warning(f"[{MODULE_ID}]   {path} -> dir={exists}, index.html={has_index}")
-    
     return None
+
+
+def invalidate_dist_cache():
+    """Call this after building the mini-app to force re-scan on next request."""
+    global _cached_dist_path
+    _cached_dist_path = None
+
+
+async def handle_miniapp_static(request: web.Request) -> web.Response:
+    """
+    Serve static files from mini-app dist/ directory.
+    This handles /app/assets/*, /app/favicon.svg, etc. DYNAMICALLY
+    so it works even if dist/ was built after server startup.
+    """
+    import mimetypes
+    
+    req_path = request.match_info.get('path', '')
+    
+    # Security: prevent path traversal
+    if '..' in req_path or req_path.startswith('/'):
+        return web.Response(text="Forbidden", status=403)
+    
+    dist = _get_miniapp_dist_path()
+    if not dist:
+        return web.Response(text="Not Found", status=404)
+    
+    file_path = os.path.normpath(os.path.join(dist, req_path))
+    
+    # Security: ensure resolved path is within dist
+    if not file_path.startswith(os.path.normpath(dist)):
+        return web.Response(text="Forbidden", status=403)
+    
+    if not os.path.isfile(file_path):
+        return web.Response(text="Not Found", status=404)
+    
+    content_type, _ = mimetypes.guess_type(file_path)
+    if content_type is None:
+        content_type = 'application/octet-stream'
+    
+    try:
+        with open(file_path, 'rb') as f:
+            content = f.read()
+        
+        resp = web.Response(body=content, content_type=content_type)
+        # Cache static assets aggressively (they have hashed filenames)
+        if '/assets/' in req_path:
+            resp.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+        else:
+            resp.headers['Cache-Control'] = 'public, max-age=3600'
+        return resp
+    except Exception as e:
+        logger.error(f"[{MODULE_ID}] Error serving static file {file_path}: {e}")
+        return web.Response(text="Internal Server Error", status=500)
 
 
 async def handle_miniapp_index(request: web.Request) -> web.Response:
     """Serve the mini-app index.html for /app/ route."""
-    import os
     dist = _get_miniapp_dist_path()
     if not dist:
         return web.Response(
-            text="<h1>Mini App Not Built</h1><p>Run: cd mini-app && npm install && npm run build</p>",
+            text=_get_not_built_page(),
             content_type='text/html',
             status=503,
         )
@@ -463,15 +524,22 @@ async def handle_miniapp_index(request: web.Request) -> web.Response:
     index_path = os.path.join(dist, 'index.html')
     if not os.path.isfile(index_path):
         return web.Response(
-            text="<h1>Mini App Not Found</h1><p>index.html missing from dist/</p>",
+            text=_get_not_built_page(),
             content_type='text/html',
             status=503,
         )
     
-    with open(index_path, 'r') as f:
-        html = f.read()
-    
-    return web.Response(text=html, content_type='text/html')
+    try:
+        with open(index_path, 'r') as f:
+            html = f.read()
+        return web.Response(text=html, content_type='text/html')
+    except Exception as e:
+        logger.error(f"[{MODULE_ID}] Error reading index.html: {e}")
+        return web.Response(
+            text=_get_not_built_page(),
+            content_type='text/html',
+            status=503,
+        )
 
 
 async def handle_miniapp_spa_catchall(request: web.Request) -> web.Response:
@@ -481,12 +549,81 @@ async def handle_miniapp_spa_catchall(request: web.Request) -> web.Response:
     """
     path = request.match_info.get('path', '')
     
-    # If the path looks like a static file (has extension), return 404
-    if '.' in path.split('/')[-1]:
-        return web.Response(text="Not Found", status=404)
+    # If the path looks like a static file (has extension), try serving it
+    last_segment = path.split('/')[-1] if path else ''
+    if '.' in last_segment:
+        # Try to serve as static file first
+        return await handle_miniapp_static(request)
     
     # Otherwise, serve index.html (React Router will handle the route)
     return await handle_miniapp_index(request)
+
+
+def _get_not_built_page() -> str:
+    """Return a user-friendly error page when mini-app isn't built."""
+    return """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>InternHub Pro — Loading</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #ffffff;
+            color: #212529;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            text-align: center;
+            max-width: 380px;
+        }
+        .icon { font-size: 64px; margin-bottom: 16px; }
+        h1 { font-size: 20px; font-weight: 700; margin-bottom: 8px; }
+        p { font-size: 14px; color: #868e96; line-height: 1.5; margin-bottom: 16px; }
+        .retry-btn {
+            display: inline-block;
+            padding: 12px 24px;
+            background: #1a1a2e;
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            text-decoration: none;
+        }
+        .retry-btn:hover { opacity: 0.9; }
+        .hint { font-size: 12px; color: #adb5bd; margin-top: 16px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="icon">🔨</div>
+        <h1>Setting Up InternHub Pro</h1>
+        <p>The app is being built for the first time. This usually takes 1-2 minutes after a fresh deploy.</p>
+        <button class="retry-btn" onclick="location.reload()">Retry</button>
+        <p class="hint">If this persists, use /jobs in the Telegram bot to browse internships.</p>
+    </div>
+    <script>
+        try {
+            const tg = window.Telegram?.WebApp;
+            if (tg) {
+                tg.ready();
+                tg.expand();
+            }
+        } catch(e) {}
+        // Auto-retry after 30 seconds
+        setTimeout(() => location.reload(), 30000);
+    </script>
+</body>
+</html>"""
 
 
 # ============================================================
@@ -592,39 +729,19 @@ def register_miniapp_routes(app):
     app.router.add_get('/api/sources', handle_sources)
     app.router.add_get('/api/filters', handle_filters)
 
-    # Serve mini-app static assets FIRST (before catch-all)
+    # Mini-app: All static file serving is DYNAMIC (not add_static)
+    # This way, even if dist/ is built AFTER server startup, files will be served.
+    # The handle_miniapp_spa_catchall handles both static files and SPA routes.
     dist = _get_miniapp_dist_path()
-    if dist and os.path.isdir(dist):
-        # Serve /app/assets/* from dist/assets/
-        assets_dir = os.path.join(dist, 'assets')
-        if os.path.isdir(assets_dir):
-            app.router.add_static('/app/assets', assets_dir, follow_symlinks=True)
-        # Serve favicon and other root-level files
-        for fname in ['favicon.svg', 'favicon.ico', 'robots.txt', 'manifest.json']:
-            fpath = os.path.join(dist, fname)
-            if os.path.isfile(fpath):
-                app.router.add_get(f'/app/{fname}', _make_static_handler(fpath))
-        logger.info(f"[{MODULE_ID}] Mini-app static files registered from {dist}")
+    if dist:
+        logger.info(f"[{MODULE_ID}] Mini-app dist found at: {dist}")
     else:
-        logger.warning(f"[{MODULE_ID}] Mini-app dist/ not found — /app/ will show error page")
+        logger.warning(f"[{MODULE_ID}] Mini-app dist/ not found at startup — will check dynamically on each request")
 
-    # SPA catch-all: /app/ and /app/{anything} -> serve index.html
-    # This handles React Router client-side navigation
+    # SPA: /app/ and /app -> serve index.html
     app.router.add_get('/app/', handle_miniapp_index)
     app.router.add_get('/app', handle_miniapp_index)
+    # SPA catch-all: /app/{anything} -> serve static file or index.html
     app.router.add_get('/app/{path:.*}', handle_miniapp_spa_catchall)
 
     logger.info(f"[{MODULE_ID}] Mini-app API routes registered: /api/internships, /api/analytics, /api/apply, /api/llm/chat, /api/sources, /api/filters, /app/")
-
-
-def _make_static_handler(file_path: str):
-    """Create a handler that serves a specific static file."""
-    import mimetypes
-    content_type, _ = mimetypes.guess_type(file_path) or ('application/octet-stream', None)
-
-    async def handler(request):
-        with open(file_path, 'rb') as f:
-            content = f.read()
-        return web.Response(body=content, content_type=content_type or 'application/octet-stream')
-
-    return handler

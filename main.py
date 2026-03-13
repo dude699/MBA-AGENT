@@ -124,12 +124,16 @@ def build_miniapp_if_needed():
     """
     Build the mini-app frontend if dist/ doesn't exist.
     
-    ROOT CAUSE FIX:
-        Render's render.yaml buildCommand changes require a manual 
-        "Sync Blueprint" in the Dashboard. If the service was created 
-        before the npm build step was added to buildCommand, the 
-        mini-app never gets built. This function ensures it's built 
-        at startup regardless of Render's blueprint sync state.
+    ROOT CAUSE FIX (v5.4.1):
+        The previous build attempts failed because:
+        1. postcss.config.js and tailwind.config.js used ESM 'export default'
+           syntax with .js extensions — Node v22 strict ESM resolution breaks
+        2. The fallback used 'npx vite build' which fails when npx can't find
+           the local vite binary (PATH doesn't include node_modules/.bin)
+        3. stderr was truncated so the actual error was invisible in logs
+        
+        Now fixed: configs use .cjs (CommonJS), fallback uses 'npm run build:vite',
+        and full stdout+stderr are logged on failure.
     
     This runs synchronously BEFORE the async event loop starts,
     so it won't block health checks (web server isn't up yet).
@@ -142,23 +146,28 @@ def build_miniapp_if_needed():
     # Already built? Skip.
     if index_html.is_file():
         asset_count = sum(1 for _ in dist_dir.rglob("*") if _.is_file())
-        logger.info(f"[MINIAPP-BUILD] ✅ dist/ exists ({asset_count} files) — skipping build")
+        logger.info(f"[MINIAPP-BUILD] dist/ exists ({asset_count} files) — skipping build")
         return True
     
-    logger.warning("[MINIAPP-BUILD] ⚠️  mini-app/dist/ not found — building now...")
+    logger.warning("[MINIAPP-BUILD] mini-app/dist/ not found — building now...")
     
     # Check prerequisites
     if not (miniapp_dir / "package.json").is_file():
-        logger.error("[MINIAPP-BUILD] ❌ mini-app/package.json not found — cannot build")
+        logger.error("[MINIAPP-BUILD] mini-app/package.json not found — cannot build")
         return False
     
     npm_path = shutil.which("npm")
     node_path = shutil.which("node")
     
     if not npm_path or not node_path:
-        logger.error(f"[MINIAPP-BUILD] ❌ Node.js/npm not found (node={node_path}, npm={npm_path})")
+        logger.error(f"[MINIAPP-BUILD] Node.js/npm not found (node={node_path}, npm={npm_path})")
         logger.error("[MINIAPP-BUILD]    Mini-app will show 'Not Built' error")
         return False
+    
+    # Build environment: ensure node_modules/.bin is on PATH
+    build_env = os.environ.copy()
+    node_modules_bin = str(miniapp_dir / "node_modules" / ".bin")
+    build_env["PATH"] = node_modules_bin + os.pathsep + build_env.get("PATH", "")
     
     # Log versions
     try:
@@ -169,70 +178,79 @@ def build_miniapp_if_needed():
         pass
     
     # Step 1: npm install
-    logger.info("[MINIAPP-BUILD] 📦 Running npm install...")
+    logger.info("[MINIAPP-BUILD] Running npm install...")
     try:
         result = subprocess.run(
             [npm_path, "install", "--no-audit", "--no-fund"],
             cwd=str(miniapp_dir),
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=180,
+            env=build_env,
         )
         if result.returncode != 0:
-            logger.error(f"[MINIAPP-BUILD] npm install failed:\n{result.stderr[-500:]}")
+            logger.error(f"[MINIAPP-BUILD] npm install failed (exit {result.returncode}):")
+            logger.error(f"[MINIAPP-BUILD] stdout: {result.stdout[-1000:]}")
+            logger.error(f"[MINIAPP-BUILD] stderr: {result.stderr[-1000:]}")
             return False
-        logger.info("[MINIAPP-BUILD] 📦 npm install complete")
+        logger.info("[MINIAPP-BUILD] npm install complete")
     except subprocess.TimeoutExpired:
-        logger.error("[MINIAPP-BUILD] ❌ npm install timed out (120s)")
+        logger.error("[MINIAPP-BUILD] npm install timed out (180s)")
         return False
     except Exception as e:
-        logger.error(f"[MINIAPP-BUILD] ❌ npm install error: {e}")
+        logger.error(f"[MINIAPP-BUILD] npm install error: {e}")
         return False
     
-    # Step 2: npm run build (tsc + vite)
-    logger.info("[MINIAPP-BUILD] 🔨 Running npm run build (tsc + vite)...")
-    try:
-        result = subprocess.run(
-            [npm_path, "run", "build"],
-            cwd=str(miniapp_dir),
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        if result.returncode != 0:
-            logger.warning(f"[MINIAPP-BUILD] Full build failed (tsc errors?), trying vite-only...")
-            logger.warning(f"[MINIAPP-BUILD] stderr: {result.stderr[-300:]}")
-            
-            # Fallback: skip TypeScript checks, just run vite build
-            npx_path = shutil.which("npx")
-            if npx_path:
-                result = subprocess.run(
-                    [npx_path, "vite", "build"],
-                    cwd=str(miniapp_dir),
-                    capture_output=True,
-                    text=True,
-                    timeout=120,
-                )
-                if result.returncode != 0:
-                    logger.error(f"[MINIAPP-BUILD] ❌ vite build also failed:\n{result.stderr[-500:]}")
-                    return False
+    # Step 2: Try full build first (tsc + vite), then vite-only fallback
+    build_commands = [
+        ("npm run build (tsc + vite)", [npm_path, "run", "build"]),
+        ("npm run build:vite (vite only)", [npm_path, "run", "build:vite"]),
+    ]
+    
+    for desc, cmd in build_commands:
+        logger.info(f"[MINIAPP-BUILD] Running {desc}...")
+        try:
+            result = subprocess.run(
+                cmd,
+                cwd=str(miniapp_dir),
+                capture_output=True,
+                text=True,
+                timeout=180,
+                env=build_env,
+            )
+            if result.returncode == 0:
+                # Check if dist was actually created
+                if index_html.is_file():
+                    asset_count = sum(1 for _ in dist_dir.rglob("*") if _.is_file())
+                    logger.info(f"[MINIAPP-BUILD] Build successful via '{desc}'! {asset_count} files in dist/")
+                    return True
+                else:
+                    logger.warning(f"[MINIAPP-BUILD] '{desc}' exited 0 but dist/index.html not found, trying next...")
+                    continue
             else:
-                logger.error("[MINIAPP-BUILD] ❌ npx not found for fallback build")
-                return False
-    except subprocess.TimeoutExpired:
-        logger.error("[MINIAPP-BUILD] ❌ Build timed out (120s)")
-        return False
-    except Exception as e:
-        logger.error(f"[MINIAPP-BUILD] ❌ Build error: {e}")
-        return False
+                logger.warning(f"[MINIAPP-BUILD] '{desc}' failed (exit {result.returncode})")
+                if result.stdout.strip():
+                    logger.warning(f"[MINIAPP-BUILD] stdout: {result.stdout[-1500:]}")
+                if result.stderr.strip():
+                    logger.warning(f"[MINIAPP-BUILD] stderr: {result.stderr[-1500:]}")
+                # Continue to next fallback
+                continue
+        except subprocess.TimeoutExpired:
+            logger.error(f"[MINIAPP-BUILD] '{desc}' timed out (180s)")
+            continue
+        except Exception as e:
+            logger.error(f"[MINIAPP-BUILD] '{desc}' error: {e}")
+            continue
     
-    # Verify build output
+    # Final check
     if index_html.is_file():
         asset_count = sum(1 for _ in dist_dir.rglob("*") if _.is_file())
-        logger.info(f"[MINIAPP-BUILD] ✅ Build successful! {asset_count} files in dist/")
+        logger.info(f"[MINIAPP-BUILD] Build successful! {asset_count} files in dist/")
         return True
     else:
-        logger.error("[MINIAPP-BUILD] ❌ Build completed but dist/index.html not found")
+        logger.error("[MINIAPP-BUILD] All build attempts failed. dist/index.html not found.")
+        logger.error("[MINIAPP-BUILD] The /app/ endpoint will show an error page.")
+        logger.error("[MINIAPP-BUILD] To fix: ensure Node.js v20 is available and run 'cd mini-app && npm install && npm run build'")
         return False
 
 
@@ -616,6 +634,12 @@ class Application:
         logger.info("[Phase 1.5/9] Checking mini-app build status...")
         miniapp_built = build_miniapp_if_needed()
         if miniapp_built:
+            # Invalidate any cached dist path so the web server picks up the fresh build
+            try:
+                from core.miniapp_api import invalidate_dist_cache
+                invalidate_dist_cache()
+            except ImportError:
+                pass
             self._status.mark_ok('miniapp_build', 'dist/ ready')
         else:
             self._status.mark_degraded('miniapp_build', 'dist/ not available — /app/ will show error')
