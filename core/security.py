@@ -59,7 +59,7 @@ except ImportError:
 MODULE_ID = "SEC"
 
 # Admin Telegram ID (sole admin)
-ADMIN_TELEGRAM_ID = int(os.getenv('ADMIN_TELEGRAM_ID', '1284698336'))
+ADMIN_TELEGRAM_ID = int(os.getenv('ADMIN_TELEGRAM_ID', '1284690336'))
 ADMIN_USERNAME = os.getenv('ADMIN_USERNAME', 'abuzarkhan999')
 
 # Security settings
@@ -976,7 +976,7 @@ if __name__ == "__main__":
     print("=" * 60)
     
     # Test code generation (fully random)
-    code1 = generate_access_code("abuzarkhan999", 1284698336)
+    code1 = generate_access_code("abuzarkhan999", 1284690336)
     print(f"  Code 1 (random): {code1}")
     assert len(code1) == 11, f"Code length should be 11, got {len(code1)}"
     
@@ -985,7 +985,7 @@ if __name__ == "__main__":
     assert len(code2) == 11
     
     # Verify all components are random (no username/ID leakage)
-    code3 = generate_access_code("abuzarkhan999", 1284698336)
+    code3 = generate_access_code("abuzarkhan999", 1284690336)
     print(f"  Code 3 (random, same user): {code3}")
     assert code1 != code3, "Two codes for same user should be different (random)"
     

@@ -107,7 +107,8 @@ def command_error_boundary(func):
             
             # These commands handle their own auth or are always public
             always_allowed = {'start', 'adduser', 'removeuser', 'readduser', 
-                            'listusers', 'gencode', 'secstatus'}
+                            'listusers', 'gencode', 'secstatus',
+                            'startpipeline', 'stoppipeline', 'menu'}
             
             if cmd_name not in always_allowed:
                 telegram_id = update.effective_user.id if update.effective_user else 0
@@ -578,6 +579,9 @@ class TelegramReporter:
         
         # Instance lock for single-instance guarantee
         self._lock_fd = None
+        
+        # Pipeline control flag for admin stop
+        self._pipeline_stop_requested = False
 
     # ================================================================
     # PRE-FLIGHT: CLEAN STALE SESSIONS
@@ -835,7 +839,7 @@ class TelegramReporter:
         # Register custom error handler for runtime Conflict errors
         app.add_error_handler(self._on_telegram_error)
 
-        # Register all command handlers (26 user + 6 admin)
+        # Register all command handlers (26 user + 6 admin + pipeline admin)
         commands = {
             'start': self._cmd_start,
             'help': self._cmd_help,
@@ -880,13 +884,25 @@ class TelegramReporter:
             'listusers': self._cmd_listusers,
             'gencode': self._cmd_gencode,
             'secstatus': self._cmd_secstatus,
+            # Admin pipeline control
+            'startpipeline': self._cmd_startpipeline,
+            'stoppipeline': self._cmd_stoppipeline,
             # Mini-App access
             'miniapp': self._cmd_miniapp,
             'webapp': self._cmd_miniapp,  # alias
+            # Menu trigger
+            'menu': self._cmd_menu,
         }
 
         for cmd_name, handler_fn in commands.items():
             app.add_handler(CommandHandler(cmd_name, handler_fn))
+
+        # Add text message handler for menu button presses
+        from telegram.ext import MessageHandler, filters as tg_filters
+        app.add_handler(MessageHandler(
+            tg_filters.TEXT & ~tg_filters.COMMAND,
+            self._handle_menu_button_press
+        ))
 
         return app
 
@@ -1020,6 +1036,10 @@ class TelegramReporter:
                     f"[{AGENT_ID}] Telegram bot is running! "
                     f"(started on attempt {attempt}/{BOT_START_MAX_RETRIES})"
                 )
+                
+                # Set up bot commands menu and Open App button
+                await self._setup_bot_menu()
+                
                 return  # SUCCESS
 
             except Conflict as e:
@@ -1347,10 +1367,13 @@ class TelegramReporter:
         )
         
         # Send with inline keyboard for Mini App if URL is configured
+        # ALSO always send persistent reply keyboard
+        keyboard_reply = self._get_main_reply_keyboard(is_admin=is_admin)
+        
         if MINI_APP_URL:
             try:
                 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
-                keyboard = InlineKeyboardMarkup([
+                inline_keyboard = InlineKeyboardMarkup([
                     [InlineKeyboardButton(
                         "📱 Open InternHub Pro",
                         web_app=WebAppInfo(url=MINI_APP_URL)
@@ -1361,14 +1384,25 @@ class TelegramReporter:
                         "📊 Morning Brief", callback_data="cmd_morning"
                     )],
                 ])
+                # Send first message with inline keyboard
                 await update.message.reply_text(
-                    msg, parse_mode='HTML', reply_markup=keyboard
+                    msg, parse_mode='HTML', reply_markup=inline_keyboard
+                )
+                # Then send a follow-up with the persistent reply keyboard
+                await update.message.reply_text(
+                    "👇 <b>Quick access menu below!</b>\nTap any button for instant commands.",
+                    parse_mode='HTML',
+                    reply_markup=keyboard_reply,
                 )
             except Exception as e:
                 logger.debug(f"[{AGENT_ID}] Inline keyboard failed, sending plain: {e}")
-                await update.message.reply_text(msg, parse_mode='HTML')
+                await update.message.reply_text(
+                    msg, parse_mode='HTML', reply_markup=keyboard_reply
+                )
         else:
-            await update.message.reply_text(msg, parse_mode='HTML')
+            await update.message.reply_text(
+                msg, parse_mode='HTML', reply_markup=keyboard_reply
+            )
 
     @command_error_boundary
     async def _cmd_help(self, update, context):
@@ -1443,7 +1477,11 @@ class TelegramReporter:
                 "/readduser <id> — Re-enable user\n"
                 "/listusers — All authorized users\n"
                 "/gencode <id> — Regenerate access code\n"
-                "/secstatus — Security dashboard"
+                "/secstatus — Security dashboard\n\n"
+                "🚀 <b>Pipeline Control (Admin)</b>\n"
+                "/startpipeline — Start full pipeline\n"
+                "/stoppipeline — Stop running pipeline\n"
+                "/run <agent> — Run individual agent"
             )
         
         await update.message.reply_text(msg, parse_mode='HTML')
@@ -2273,9 +2311,19 @@ class TelegramReporter:
     async def _cmd_run(self, update, context):
         """
         Run an agent or the full pipeline manually.
+        ADMIN ONLY — only admins can trigger pipeline/scrape operations.
         Runs in the BACKGROUND so Telegram stays responsive.
         Streams real-time progress updates to the chat.
         """
+        # Admin-only check for pipeline control
+        telegram_id = update.effective_user.id if update.effective_user else 0
+        if not self.security.is_admin(telegram_id):
+            await update.message.reply_text(
+                "🔒 Pipeline control is admin-only.\n"
+                "Contact the admin to run agents."
+            )
+            return
+
         if not context.args:
             lines = [
                 "🚀 <b>Manual Agent Runner</b>",
@@ -3494,6 +3542,250 @@ class TelegramReporter:
                 except Exception as e:
                     logger.error(f"[{AGENT_ID}] Message send error: {e}")
                     break
+
+    # ================================================================
+    # BOT MENU SETUP — Persistent keyboard + Open App button
+    # ================================================================
+
+    async def _setup_bot_menu(self):
+        """
+        Set up the Telegram bot menu:
+        1. Register /commands with BotFather via setMyCommands
+        2. Set MenuButtonWebApp if MINI_APP_URL is configured
+           (shows 'Open App' button at bottom-left like screenshot 3)
+        """
+        if not self._app or not self._app.bot:
+            return
+
+        try:
+            from telegram import BotCommand, MenuButtonWebApp, WebAppInfo, MenuButtonCommands
+            
+            # Step 1: Set bot commands (shows in / menu)
+            bot_commands = [
+                BotCommand("jobs", "📋 Browse filtered internships"),
+                BotCommand("morning", "🌅 Morning brief report"),
+                BotCommand("top", "🏆 Top listings by PPO score"),
+                BotCommand("ocean", "🌊 Blue Ocean opportunities"),
+                BotCommand("run", "🚀 Run agents/pipeline"),
+                BotCommand("health", "💚 System health check"),
+                BotCommand("stats", "📈 Weekly statistics"),
+                BotCommand("export", "📤 Export to Excel"),
+                BotCommand("miniapp", "📱 Open InternHub Pro"),
+                BotCommand("menu", "📋 Show command menu"),
+                BotCommand("help", "📖 Full command reference"),
+                BotCommand("startpipeline", "▶️ Start full pipeline (admin)"),
+                BotCommand("stoppipeline", "⏹ Stop pipeline (admin)"),
+                BotCommand("secstatus", "🔐 Security dashboard (admin)"),
+            ]
+            await self._app.bot.set_my_commands(bot_commands)
+            logger.info(f"[{AGENT_ID}] Bot commands registered ({len(bot_commands)} commands)")
+            
+            # Step 2: Set Mini App button if configured
+            if MINI_APP_URL:
+                try:
+                    menu_button = MenuButtonWebApp(
+                        text="Open App",
+                        web_app=WebAppInfo(url=MINI_APP_URL)
+                    )
+                    await self._app.bot.set_chat_menu_button(menu_button=menu_button)
+                    logger.info(f"[{AGENT_ID}] Mini App menu button set: {MINI_APP_URL}")
+                except Exception as e:
+                    logger.warning(f"[{AGENT_ID}] Failed to set MenuButtonWebApp: {e}")
+                    # Fallback to regular commands menu
+                    try:
+                        await self._app.bot.set_chat_menu_button(
+                            menu_button=MenuButtonCommands()
+                        )
+                    except Exception:
+                        pass
+            else:
+                # Set standard commands menu button
+                try:
+                    await self._app.bot.set_chat_menu_button(
+                        menu_button=MenuButtonCommands()
+                    )
+                except Exception:
+                    pass
+                    
+        except ImportError as e:
+            logger.warning(f"[{AGENT_ID}] Menu setup import error: {e}")
+        except Exception as e:
+            logger.warning(f"[{AGENT_ID}] Menu setup error (non-fatal): {e}")
+
+    def _get_main_reply_keyboard(self, is_admin: bool = False):
+        """
+        Build a persistent ReplyKeyboardMarkup with organized command buttons.
+        Layout matches the 3-column grid style from the reference screenshot.
+        """
+        from telegram import ReplyKeyboardMarkup, KeyboardButton, WebAppInfo
+        
+        # Row 1: Core browsing
+        row1 = [
+            KeyboardButton("📋 Jobs"),
+            KeyboardButton("🏆 Top 20"),
+            KeyboardButton("🌊 Ocean"),
+        ]
+        
+        # Row 2: Reports
+        row2 = [
+            KeyboardButton("🌅 Morning"),
+            KeyboardButton("📈 Stats"),
+            KeyboardButton("💚 Health"),
+        ]
+        
+        # Row 3: Actions
+        row3 = [
+            KeyboardButton("🚀 Run Pipeline"),
+            KeyboardButton("📤 Export"),
+            KeyboardButton("🔍 Sources"),
+        ]
+        
+        # Row 4: Tools
+        row4 = [
+            KeyboardButton("📂 Browse"),
+            KeyboardButton("💰 Quota"),
+            KeyboardButton("📖 Help"),
+        ]
+        
+        rows = [row1, row2, row3, row4]
+        
+        # Row 5: Mini App + Admin (if applicable)
+        if MINI_APP_URL:
+            row5 = [KeyboardButton("📱 Mini App")]
+        else:
+            row5 = []
+            
+        if is_admin:
+            row5.extend([
+                KeyboardButton("🔐 Security"),
+                KeyboardButton("⏹ Stop Pipeline"),
+            ])
+        
+        if row5:
+            rows.append(row5)
+        
+        return ReplyKeyboardMarkup(
+            rows,
+            resize_keyboard=True,
+            is_persistent=True,
+            input_field_placeholder="Type a command or tap a button..."
+        )
+
+    async def _handle_menu_button_press(self, update, context):
+        """
+        Handle text messages from the persistent reply keyboard buttons.
+        Maps button text to the corresponding command handler.
+        """
+        if not update.message or not update.message.text:
+            return
+        
+        text = update.message.text.strip()
+        
+        # Map button labels to command handlers
+        button_map = {
+            "📋 Jobs": self._cmd_jobs,
+            "🏆 Top 20": self._cmd_top,
+            "🌊 Ocean": self._cmd_ocean,
+            "🌅 Morning": self._cmd_morning,
+            "📈 Stats": self._cmd_stats,
+            "💚 Health": self._cmd_health,
+            "🚀 Run Pipeline": self._cmd_startpipeline,
+            "📤 Export": self._cmd_export,
+            "🔍 Sources": self._cmd_sources,
+            "📂 Browse": self._cmd_browse,
+            "💰 Quota": self._cmd_quota,
+            "📖 Help": self._cmd_help,
+            "📱 Mini App": self._cmd_miniapp,
+            "🔐 Security": self._cmd_secstatus,
+            "⏹ Stop Pipeline": self._cmd_stoppipeline,
+        }
+        
+        handler = button_map.get(text)
+        if handler:
+            # Set default args for commands that need them
+            if text == "🏆 Top 20":
+                context.args = ['20']
+            elif text in ("🚀 Run Pipeline",):
+                context.args = ['pipeline']
+            else:
+                context.args = []
+            await handler(update, context)
+
+    @command_error_boundary
+    async def _cmd_menu(self, update, context):
+        """Send the persistent reply keyboard menu."""
+        telegram_id = update.effective_user.id if update.effective_user else 0
+        is_admin = self.security.is_admin(telegram_id)
+        
+        keyboard = self._get_main_reply_keyboard(is_admin=is_admin)
+        await update.message.reply_text(
+            "📋 <b>Command Menu</b>\n"
+            "Tap any button below to execute a command.\n"
+            "You can also type /commands directly.\n\n"
+            "💡 The menu stays at the bottom for quick access.",
+            parse_mode='HTML',
+            reply_markup=keyboard,
+        )
+
+    # ================================================================
+    # ADMIN PIPELINE COMMANDS — start/stop pipeline (admin only)
+    # ================================================================
+
+    @command_error_boundary
+    async def _cmd_startpipeline(self, update, context):
+        """Start the full pipeline (admin only).
+        Usage: /startpipeline
+        Alias: 🚀 Run Pipeline button
+        """
+        telegram_id = update.effective_user.id if update.effective_user else 0
+        if not self.security.is_admin(telegram_id):
+            await update.message.reply_text("🔒 Pipeline control is admin-only.")
+            return
+
+        self._pipeline_stop_requested = False
+        # Delegate to /run pipeline
+        context.args = ['pipeline']
+        await self._cmd_run(update, context)
+
+    @command_error_boundary
+    async def _cmd_stoppipeline(self, update, context):
+        """Stop a running pipeline (admin only).
+        Usage: /stoppipeline
+        Cancels all running pipeline tasks.
+        """
+        telegram_id = update.effective_user.id if update.effective_user else 0
+        if not self.security.is_admin(telegram_id):
+            await update.message.reply_text("🔒 Pipeline control is admin-only.")
+            return
+
+        self._pipeline_stop_requested = True
+        stopped = []
+        
+        async with self._task_lock:
+            for name, info in list(self._running_tasks.items()):
+                task = info.get('task')
+                if task and not task.done():
+                    task.cancel()
+                    stopped.append(name)
+        
+        if stopped:
+            await update.message.reply_text(
+                f"⏹ <b>Pipeline Stop Requested</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"Stopping: {', '.join(stopped)}\n"
+                f"Tasks will finish their current operation and stop.\n\n"
+                f"Use /status to verify all tasks stopped.",
+                parse_mode='HTML'
+            )
+        else:
+            await update.message.reply_text(
+                "💤 No pipeline tasks are currently running.\n"
+                "Use /startpipeline or /run pipeline to start."
+            )
+
+    # ================================================================
+    # UTILITY METHODS
+    # ================================================================
 
     @staticmethod
     def _parse_listing_id(args) -> Optional[int]:

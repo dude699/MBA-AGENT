@@ -49,6 +49,12 @@ services:
       # Grace period before starting Telegram polling (seconds).
       # Shorter now because the /close API call handles session release.
       - key: RENDER_OVERLAP_GRACE_SEC
-        value: "15"
+        value: "20"
+      - key: ADMIN_TELEGRAM_ID
+        sync: false
+      - key: ADMIN_USERNAME
+        sync: false
+      - key: MINI_APP_URL
+        sync: false
     plan: free
     region: oregon
