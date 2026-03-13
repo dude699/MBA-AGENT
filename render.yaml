@@ -3,7 +3,7 @@ services:
     name: operation-firstmover
     runtime: python
     pythonVersion: "3.11.0"
-    buildCommand: pip install -r requirements.txt && python -c "import nltk; nltk.download('punkt_tab')" && cd mini-app && npm install && npm run build && cd ..
+    buildCommand: pip install -r requirements.txt && python -c "import nltk; nltk.download('punkt_tab')" && cd mini-app && npm install && npm run build && ls -la dist/ && cd ..
     startCommand: python main.py
     healthCheckPath: /health
     # Ensure only ONE instance runs (critical for Telegram polling)

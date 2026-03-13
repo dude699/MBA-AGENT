@@ -76,18 +76,40 @@ AGENT_NAME = "Telegram Reporter"
 # Mini-App URL — set via MINI_APP_URL env var, or auto-derive from RENDER_EXTERNAL_URL
 # The mini-app is served from the same aiohttp server at /app/ path.
 # Priority: MINI_APP_URL env > RENDER_EXTERNAL_URL/app/ > '' (disabled)
+#
+# IMPORTANT: This must be resolved lazily (not at import time) because on Render
+# the RENDER_EXTERNAL_URL env var is only available AFTER the service starts binding.
+# If resolved at module load time, it may not be set yet, leading to '' (disabled).
+_cached_mini_app_url: Optional[str] = None
+
 def _resolve_mini_app_url() -> str:
-    """Resolve the mini app URL with intelligent auto-detection."""
+    """Resolve the mini app URL with intelligent auto-detection.
+    Called lazily on first use to ensure RENDER_EXTERNAL_URL is available."""
+    global _cached_mini_app_url
+    if _cached_mini_app_url is not None:
+        return _cached_mini_app_url
+
     explicit = os.getenv('MINI_APP_URL', '').strip()
     if explicit:
-        return explicit.rstrip('/')
+        _cached_mini_app_url = explicit.rstrip('/')
+        return _cached_mini_app_url
     # Auto-derive from Render external URL (mini-app served at /app/)
     render_url = os.getenv('RENDER_EXTERNAL_URL', '').strip()
     if render_url:
-        return f"{render_url.rstrip('/')}/app/"
-    return ''
+        _cached_mini_app_url = f"{render_url.rstrip('/')}/app/"
+        return _cached_mini_app_url
+    _cached_mini_app_url = ''
+    return _cached_mini_app_url
 
-MINI_APP_URL = _resolve_mini_app_url()
+
+def get_mini_app_url() -> str:
+    """Get the mini app URL, resolving lazily on first call."""
+    return _resolve_mini_app_url()
+
+
+# Keep MINI_APP_URL as a module-level variable for backward compat,
+# but it will be '' initially. All runtime code should use get_mini_app_url().
+MINI_APP_URL = ''
 
 # Valid outcome statuses
 VALID_OUTCOMES = ['applied', 'shortlisted', 'interview', 'rejected', 'offer', 'ppo', 'withdrawn']
@@ -1349,7 +1371,8 @@ class TelegramReporter:
         access_code = user_data.get('access_code', '') if user_data else ''
         
         miniapp_section = ""
-        if MINI_APP_URL:
+        mini_app_url = get_mini_app_url()
+        if mini_app_url:
             miniapp_section = (
                 "\n\n📱 <b>InternHub Pro (Mini App):</b>\n"
                 "/miniapp — Open the Mini App\n"
@@ -1382,13 +1405,13 @@ class TelegramReporter:
         # ALSO always send persistent reply keyboard
         keyboard_reply = self._get_main_reply_keyboard(is_admin=is_admin)
         
-        if MINI_APP_URL:
+        if mini_app_url:
             try:
                 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
                 inline_keyboard = InlineKeyboardMarkup([
                     [InlineKeyboardButton(
                         "📱 Open InternHub Pro",
-                        web_app=WebAppInfo(url=MINI_APP_URL)
+                        web_app=WebAppInfo(url=mini_app_url)
                     )],
                     [InlineKeyboardButton(
                         "📋 Browse Jobs", callback_data="cmd_jobs"
@@ -3216,7 +3239,12 @@ class TelegramReporter:
         """
         telegram_id = update.effective_user.id if update.effective_user else 0
         
-        if not MINI_APP_URL:
+        # Force re-resolve in case env vars became available after first resolution
+        global _cached_mini_app_url
+        _cached_mini_app_url = None  # Reset cache to force fresh resolution
+        mini_app_url = get_mini_app_url()
+        
+        if not mini_app_url:
             # Check if we can auto-derive
             render_url = os.getenv('RENDER_EXTERNAL_URL', '').strip()
             if render_url:
@@ -3266,7 +3294,7 @@ class TelegramReporter:
         
         msg += (
             f"🌐 <b>Direct URL:</b>\n"
-            f"  <a href=\"{MINI_APP_URL}\">{MINI_APP_URL}</a>\n\n"
+            f"  <a href=\"{mini_app_url}\">{mini_app_url}</a>\n\n"
             "👆 <b>Tap the button below to open the app!</b>"
         )
         
@@ -3276,7 +3304,7 @@ class TelegramReporter:
             keyboard_buttons = [
                 [InlineKeyboardButton(
                     "📱 Open InternHub Pro",
-                    web_app=WebAppInfo(url=MINI_APP_URL)
+                    web_app=WebAppInfo(url=mini_app_url)
                 )],
             ]
             
@@ -3284,7 +3312,7 @@ class TelegramReporter:
             keyboard_buttons.append([
                 InlineKeyboardButton(
                     "🌐 Open in Browser",
-                    url=MINI_APP_URL
+                    url=mini_app_url
                 ),
             ])
             
@@ -3575,72 +3603,56 @@ class TelegramReporter:
         """
         Set up the Telegram bot menu:
         1. Register /commands with BotFather via setMyCommands
-        2. Set MenuButtonWebApp if MINI_APP_URL is configured
-           (shows 'Menu' button at bottom-left that opens the Mini App)
-        3. Falls back to MenuButtonCommands (shows command list on '/' tap)
+        2. Set MenuButtonCommands (shows command list when 'Menu' is tapped)
         
-        IMPORTANT: The Menu button (bottom-left in Telegram) can either:
-        - Open a WebApp (MenuButtonWebApp) — shows as 'Menu' text button
-        - Show the command list (MenuButtonCommands) — shows as '/' icon
+        DESIGN DECISION: The bottom-left "Menu" button ALWAYS shows the
+        command list (MenuButtonCommands). The Mini App is accessible via:
+        - /miniapp command
+        - "📱 Mini App" button in the persistent reply keyboard
+        - InlineKeyboardButton in /start message
         
-        We want the WebApp button when MINI_APP_URL is configured,
-        which gives us the proper 'Menu' button like in the reference screenshot.
+        This gives users two clear entry points:
+        - Menu button → command list (browse, reports, admin, etc.)
+        - Mini App button → full InternHub Pro web app
+        
+        Previously this was set to MenuButtonWebApp which caused the Menu
+        button to open the Mini App directly, confusing users who wanted
+        to see the command list.
         """
         if not self._app or not self._app.bot:
             return
 
         try:
-            from telegram import BotCommand, MenuButtonWebApp, WebAppInfo, MenuButtonCommands, MenuButtonDefault
+            from telegram import BotCommand, MenuButtonCommands
             
             # Step 1: Set bot commands (shows in / menu and command autocomplete)
-            # These appear when user types '/' in the chat input
+            # These appear when user types '/' in the chat input or taps Menu
             bot_commands = [
                 BotCommand("jobs", "Browse filtered internships"),
                 BotCommand("morning", "Morning brief report"),
                 BotCommand("top", "Top listings by PPO score"),
                 BotCommand("ocean", "Blue Ocean opportunities"),
-                BotCommand("miniapp", "Open InternHub Pro"),
+                BotCommand("miniapp", "Open InternHub Pro Mini App"),
                 BotCommand("run", "Run agents/pipeline"),
                 BotCommand("health", "System health check"),
                 BotCommand("stats", "Weekly statistics"),
                 BotCommand("export", "Export to Excel"),
-                BotCommand("menu", "Show command menu"),
+                BotCommand("menu", "Show quick-access keyboard"),
                 BotCommand("help", "Full command reference"),
             ]
             await self._app.bot.set_my_commands(bot_commands)
             logger.info(f"[{AGENT_ID}] Bot commands registered ({len(bot_commands)} commands)")
             
-            # Step 2: Set the chat menu button (bottom-left button)
-            # This is the KEY fix for getting the 'Menu' button like in screenshot 2
-            if MINI_APP_URL:
-                try:
-                    # MenuButtonWebApp creates a labeled button (e.g., 'Menu')
-                    # that opens the mini app when tapped
-                    menu_button = MenuButtonWebApp(
-                        text="Menu",
-                        web_app=WebAppInfo(url=MINI_APP_URL)
-                    )
-                    await self._app.bot.set_chat_menu_button(menu_button=menu_button)
-                    logger.info(f"[{AGENT_ID}] Menu button set as WebApp: {MINI_APP_URL}")
-                except Exception as e:
-                    logger.warning(f"[{AGENT_ID}] Failed to set MenuButtonWebApp: {e}")
-                    # Fallback: set commands menu so at least '/' button works
-                    try:
-                        await self._app.bot.set_chat_menu_button(
-                            menu_button=MenuButtonCommands()
-                        )
-                        logger.info(f"[{AGENT_ID}] Fallback: commands menu button set")
-                    except Exception:
-                        pass
-            else:
-                # No mini app URL — use standard commands button
-                try:
-                    await self._app.bot.set_chat_menu_button(
-                        menu_button=MenuButtonCommands()
-                    )
-                    logger.info(f"[{AGENT_ID}] Commands menu button set (no MINI_APP_URL)")
-                except Exception:
-                    pass
+            # Step 2: Set Menu button to show command list (NOT WebApp)
+            # This ensures the bottom-left "Menu" button opens the command list,
+            # while the Mini App is accessible via /miniapp or the reply keyboard button.
+            try:
+                await self._app.bot.set_chat_menu_button(
+                    menu_button=MenuButtonCommands()
+                )
+                logger.info(f"[{AGENT_ID}] Menu button set to Commands (Mini App via /miniapp or keyboard)")
+            except Exception as e:
+                logger.warning(f"[{AGENT_ID}] Failed to set menu button: {e}")
                     
         except ImportError as e:
             logger.warning(f"[{AGENT_ID}] Menu setup import error: {e}")
@@ -3685,7 +3697,7 @@ class TelegramReporter:
         rows = [row1, row2, row3, row4]
         
         # Row 5: Mini App + Admin (if applicable)
-        if MINI_APP_URL:
+        if get_mini_app_url():
             row5 = [KeyboardButton("📱 Mini App")]
         else:
             row5 = []
@@ -3748,19 +3760,40 @@ class TelegramReporter:
 
     @command_error_boundary
     async def _cmd_menu(self, update, context):
-        """Send the persistent reply keyboard menu."""
+        """Send the persistent reply keyboard menu + Mini App inline button."""
         telegram_id = update.effective_user.id if update.effective_user else 0
         is_admin = self.security.is_admin(telegram_id)
         
         keyboard = self._get_main_reply_keyboard(is_admin=is_admin)
+        
+        # First: send the reply keyboard with command buttons
         await update.message.reply_text(
             "📋 <b>Command Menu</b>\n"
             "Tap any button below to execute a command.\n"
-            "You can also type /commands directly.\n\n"
+            "You can also type / to see the full command list.\n\n"
             "💡 The menu stays at the bottom for quick access.",
             parse_mode='HTML',
             reply_markup=keyboard,
         )
+        
+        # Second: if Mini App URL is configured, also send an inline button to open it
+        mini_app_url = get_mini_app_url()
+        if mini_app_url:
+            try:
+                from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+                inline_keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton(
+                        "📱 Open InternHub Pro Mini App",
+                        web_app=WebAppInfo(url=mini_app_url)
+                    )],
+                ])
+                await update.message.reply_text(
+                    "📱 <b>InternHub Pro</b> — Tap below to open the full web app:",
+                    parse_mode='HTML',
+                    reply_markup=inline_keyboard,
+                )
+            except Exception as e:
+                logger.debug(f"[{AGENT_ID}] Menu mini-app button failed: {e}")
 
     # ================================================================
     # ADMIN PIPELINE COMMANDS — start/stop pipeline (admin only)
