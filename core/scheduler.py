@@ -249,6 +249,11 @@ class AgentScheduler:
             f"({len(DAILY_SCHEDULE)} daily + 2 infrastructure)"
         )
 
+        # ---- STARTUP PIPELINE ----
+        # If we missed the morning scrape (e.g., Render restart after 05:30 IST),
+        # trigger an immediate pipeline run so the morning brief has data.
+        await self._check_and_run_startup_pipeline()
+
     async def stop(self):
         """Stop the scheduler gracefully."""
         if self._scheduler:
@@ -620,6 +625,88 @@ class AgentScheduler:
             logger.error(f"[SCHEDULER] Auto-PPO failed: {e}")
 
         logger.info(f"[SCHEDULER] Auto-processing pipeline complete")
+
+    async def _check_and_run_startup_pipeline(self):
+        """
+        On startup, check if the system missed the morning scrape window.
+        If so, run a quick scrape + full pipeline immediately so the
+        morning brief (or any user command) has actual data.
+        
+        This fixes the issue where Render restarts after 05:30 IST
+        cause the morning brief to show 0 listings.
+        """
+        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+        try:
+            IST_TZ = _tz(_td(hours=5, minutes=30))
+            now_ist = _dt.now(IST_TZ)
+            
+            # Check if we have any clean listings at all
+            from core.database import get_db
+            db = get_db()
+            total_active = 0
+            total_raw = 0
+            try:
+                with db.get_cursor() as cur:
+                    cur.execute(
+                        "SELECT COUNT(*) FROM clean_listings WHERE status = 'active'"
+                    )
+                    total_active = cur.fetchone()[0]
+                    cur.execute("SELECT COUNT(*) FROM raw_listings")
+                    total_raw = cur.fetchone()[0]
+            except Exception:
+                pass
+
+            # Decision logic
+            should_scrape = False
+            should_process = False
+            reason = ""
+
+            if total_active == 0 and total_raw == 0:
+                should_scrape = True
+                should_process = True
+                reason = "no data at all (fresh start)"
+            elif total_active == 0 and total_raw > 0:
+                # Raw exists but not processed — just run processing
+                should_process = True
+                reason = f"{total_raw} raw listings need processing"
+            elif 6 <= now_ist.hour <= 12 and total_active == 0:
+                should_scrape = True
+                should_process = True
+                reason = (
+                    f"no active listings during morning window "
+                    f"({now_ist.hour}:{now_ist.minute:02d} IST)"
+                )
+
+            if not should_scrape and not should_process:
+                logger.info(
+                    f"[SCHEDULER] Startup pipeline check: SKIP "
+                    f"(active={total_active}, raw={total_raw}, "
+                    f"hour={now_ist.hour})"
+                )
+                return
+
+            logger.info(
+                f"[SCHEDULER] STARTUP PIPELINE TRIGGERED: {reason}"
+            )
+            
+            if should_scrape:
+                # Run afternoon scrape (Naukri + IIMjobs — faster)
+                try:
+                    from agents.a03_primary_scraper import get_primary_scraper
+                    await self._safe_run(
+                        'A-03 Startup Scrape',
+                        get_primary_scraper().run_afternoon_scrape
+                    )
+                except Exception as e:
+                    logger.error(f"[SCHEDULER] Startup scrape error: {e}")
+            
+            if should_process:
+                await self._auto_process_pipeline("startup pipeline")
+            
+            logger.info("[SCHEDULER] Startup pipeline complete")
+
+        except Exception as e:
+            logger.error(f"[SCHEDULER] Startup pipeline check error: {e}")
 
     async def _keep_alive(self):
         """
