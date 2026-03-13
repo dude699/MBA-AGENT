@@ -94,7 +94,7 @@ export default function App() {
   }, [browseMode, activeTab, loadSupabaseJobs]);
 
   return (
-    <div className="min-h-screen pb-20" style={{ background: '#fafbfc' }}>
+    <div className="min-h-screen" style={{ background: '#fafbfc', paddingBottom: 'calc(72px + env(safe-area-inset-bottom, 0px))' }}>
       {/* Header with Search + Filters */}
       <Header />
 
@@ -359,7 +359,7 @@ export default function App() {
         </AnimatePresence>
       </main>
 
-      {/* Panels & Modals */}
+      {/* Panels & Modals — z-index: Filter/Sort 50, LLM 60, Detail 50 */}
       <FilterPanel />
       <SortPanel />
       <BatchApplyPanel />
@@ -369,7 +369,7 @@ export default function App() {
       {/* Bottom Navigation */}
       <BottomBar activeTab={activeTab} onTabChange={setActiveTab} />
 
-      {/* Scroll to Top */}
+      {/* Scroll to Top — stays above content but below bottom bar */}
       <AnimatePresence>
         {showScrollTop && (
           <motion.button
@@ -377,7 +377,8 @@ export default function App() {
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.8 }}
             onClick={scrollToTop}
-            className="fixed bottom-24 right-4 z-30 w-10 h-10 bg-white border border-surface-border rounded-full shadow-elevated flex items-center justify-center hover:bg-surface-muted transition-colors"
+            className="fixed right-4 z-30 w-10 h-10 bg-white border border-surface-border rounded-full shadow-elevated flex items-center justify-center hover:bg-surface-muted transition-colors"
+            style={{ bottom: 'calc(80px + env(safe-area-inset-bottom, 0px))' }}
           >
             <ChevronUp className="w-5 h-5 text-primary-600" />
           </motion.button>

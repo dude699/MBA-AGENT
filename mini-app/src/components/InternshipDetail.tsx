@@ -15,6 +15,7 @@ import {
   formatDeadline, formatNumber, getMatchScoreColor, hapticFeedback,
 } from '@/utils/helpers';
 import { SOURCE_CONFIG, TIER_LABELS } from '@/utils/constants';
+import { SourceIcon, TierIcon } from '@/components/SourceIcons';
 import type { Internship } from '@/types';
 
 export default function InternshipDetail() {
@@ -68,17 +69,18 @@ export default function InternshipDetail() {
             </div>
           </div>
 
-          {/* Content */}
-          <div className="flex-1 overflow-y-auto pb-24">
+          {/* Content — padding-bottom accounts for fixed bottom action bar */}
+          <div className="flex-1 overflow-y-auto" style={{ paddingBottom: 'calc(80px + env(safe-area-inset-bottom, 0px))' }}>
             {/* Hero Section */}
             <div className="px-5 pt-4 pb-3">
               {/* Source & Status */}
               <div className="flex items-center gap-2 mb-3">
                 <span
-                  className="text-[10px] font-bold px-2.5 py-0.5 rounded-md"
+                  className="inline-flex items-center gap-1 text-[10px] font-bold px-2.5 py-0.5 rounded-md"
                   style={{ backgroundColor: sourceConfig.color + '15', color: sourceConfig.color }}
                 >
-                  {sourceConfig.icon} {sourceConfig.name}
+                  <SourceIcon source={item.source} size={12} />
+                  {sourceConfig.name}
                 </span>
                 {item.isVerified && (
                   <span className="badge-status"><Shield className="w-3 h-3 mr-0.5" /> Verified</span>
@@ -105,7 +107,10 @@ export default function InternshipDetail() {
                       </span>
                     )}
                     {tierConfig && (
-                      <span style={{ color: tierConfig.color }}>{tierConfig.icon} {tierConfig.label}</span>
+                      <span className="inline-flex items-center gap-0.5" style={{ color: tierConfig.color }}>
+                        <TierIcon tier={item.companyTier} size={10} className="opacity-80" />
+                        {tierConfig.label}
+                      </span>
                     )}
                     {item.companySize && <span>{item.companySize} employees</span>}
                   </div>
@@ -245,8 +250,11 @@ export default function InternshipDetail() {
             )}
           </div>
 
-          {/* Bottom Action Bar */}
-          <div className="absolute bottom-0 left-0 right-0 p-4 bg-white/95 backdrop-blur-md border-t border-surface-border flex gap-3">
+          {/* Bottom Action Bar — fixed with safe area padding */}
+          <div
+            className="absolute bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-surface-border flex gap-3"
+            style={{ padding: '1rem 1rem calc(1rem + env(safe-area-inset-bottom, 0px))' }}
+          >
             <button
               onClick={() => { toggleSelect(item.id); hapticFeedback('medium'); }}
               className={`flex-1 py-3 rounded-xl font-semibold text-sm transition-all ${

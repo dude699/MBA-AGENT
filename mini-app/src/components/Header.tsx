@@ -28,8 +28,8 @@ export default function Header() {
   };
 
   return (
-    <header className="sticky top-0 z-40" style={{
-      background: 'rgba(255,255,255,0.88)',
+    <header className="sticky top-0 z-30" style={{
+      background: 'rgba(255,255,255,0.92)',
       backdropFilter: 'blur(20px) saturate(180%)',
       WebkitBackdropFilter: 'blur(20px) saturate(180%)',
       borderBottom: '1px solid rgba(0,0,0,0.06)',
