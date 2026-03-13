@@ -2,11 +2,13 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies including Node.js for mini-app build
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     curl \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for layer caching
@@ -18,6 +20,9 @@ RUN python -c "import nltk; nltk.download('punkt_tab'); nltk.download('stopwords
 
 # Copy application code
 COPY . .
+
+# Build the mini-app frontend
+RUN cd mini-app && npm install --production=false && npm run build && cd ..
 
 # Create data and logs directories
 RUN mkdir -p data logs

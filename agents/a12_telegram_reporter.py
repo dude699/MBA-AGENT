@@ -73,9 +73,21 @@ from core.security import (
 AGENT_ID = "A-12"
 AGENT_NAME = "Telegram Reporter"
 
-# Mini-App URL — set via RENDER_EXTERNAL_URL or MINI_APP_URL env var
-# The mini-app should be hosted at this URL (e.g. Cloudflare Pages, Vercel, etc.)
-MINI_APP_URL = os.getenv('MINI_APP_URL', '')
+# Mini-App URL — set via MINI_APP_URL env var, or auto-derive from RENDER_EXTERNAL_URL
+# The mini-app is served from the same aiohttp server at /app/ path.
+# Priority: MINI_APP_URL env > RENDER_EXTERNAL_URL/app/ > '' (disabled)
+def _resolve_mini_app_url() -> str:
+    """Resolve the mini app URL with intelligent auto-detection."""
+    explicit = os.getenv('MINI_APP_URL', '').strip()
+    if explicit:
+        return explicit.rstrip('/')
+    # Auto-derive from Render external URL (mini-app served at /app/)
+    render_url = os.getenv('RENDER_EXTERNAL_URL', '').strip()
+    if render_url:
+        return f"{render_url.rstrip('/')}/app/"
+    return ''
+
+MINI_APP_URL = _resolve_mini_app_url()
 
 # Valid outcome statuses
 VALID_OUTCOMES = ['applied', 'shortlisted', 'interview', 'rejected', 'offer', 'ppo', 'withdrawn']
@@ -1312,7 +1324,7 @@ class TelegramReporter:
         
         if not is_authorized:
             msg = (
-                "🔒 <b>Operation First Mover v5.3</b>\n"
+                "🔒 <b>Operation First Mover v5.4</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
                 "This bot requires authorization.\n"
                 "Please contact the admin to get access.\n\n"
@@ -1348,7 +1360,7 @@ class TelegramReporter:
                 )
         
         msg = (
-            "⚡ <b>Operation First Mover v5.3</b>\n"
+            "⚡ <b>Operation First Mover v5.4</b>\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "Your zero-cost MBA internship hunting agent.\n\n"
             "🤖 <b>12 AI agents</b> working 24/7\n"
@@ -3205,10 +3217,22 @@ class TelegramReporter:
         telegram_id = update.effective_user.id if update.effective_user else 0
         
         if not MINI_APP_URL:
+            # Check if we can auto-derive
+            render_url = os.getenv('RENDER_EXTERNAL_URL', '').strip()
+            if render_url:
+                hint = f"\n\n💡 <b>Auto-detection available!</b>\nYour Render URL is set. The mini-app should be served at:\n<code>{render_url}/app/</code>\n\nMake sure the mini-app is built:\n<code>cd mini-app && npm install && npm run build</code>"
+            else:
+                hint = ""
+            
             await update.message.reply_text(
                 "⚠️ <b>Mini App Not Configured</b>\n\n"
                 "The InternHub Pro mini app URL has not been set.\n"
-                "Ask the admin to configure <code>MINI_APP_URL</code> in environment variables.\n\n"
+                "The system auto-derives it from <code>RENDER_EXTERNAL_URL</code>.\n\n"
+                "To fix:\n"
+                "1. Ensure <code>RENDER_EXTERNAL_URL</code> is set by Render\n"
+                "2. Build the mini-app: <code>cd mini-app && npm install && npm run build</code>\n"
+                "3. Or set <code>MINI_APP_URL</code> env var explicitly\n"
+                f"{hint}\n\n"
                 "💡 In the meantime, use these bot commands:\n"
                 "/jobs — Browse filtered internships\n"
                 "/top 20 — Top 20 by PPO score\n"
@@ -3552,58 +3576,69 @@ class TelegramReporter:
         Set up the Telegram bot menu:
         1. Register /commands with BotFather via setMyCommands
         2. Set MenuButtonWebApp if MINI_APP_URL is configured
-           (shows 'Open App' button at bottom-left like screenshot 3)
+           (shows 'Menu' button at bottom-left that opens the Mini App)
+        3. Falls back to MenuButtonCommands (shows command list on '/' tap)
+        
+        IMPORTANT: The Menu button (bottom-left in Telegram) can either:
+        - Open a WebApp (MenuButtonWebApp) — shows as 'Menu' text button
+        - Show the command list (MenuButtonCommands) — shows as '/' icon
+        
+        We want the WebApp button when MINI_APP_URL is configured,
+        which gives us the proper 'Menu' button like in the reference screenshot.
         """
         if not self._app or not self._app.bot:
             return
 
         try:
-            from telegram import BotCommand, MenuButtonWebApp, WebAppInfo, MenuButtonCommands
+            from telegram import BotCommand, MenuButtonWebApp, WebAppInfo, MenuButtonCommands, MenuButtonDefault
             
-            # Step 1: Set bot commands (shows in / menu)
+            # Step 1: Set bot commands (shows in / menu and command autocomplete)
+            # These appear when user types '/' in the chat input
             bot_commands = [
-                BotCommand("jobs", "📋 Browse filtered internships"),
-                BotCommand("morning", "🌅 Morning brief report"),
-                BotCommand("top", "🏆 Top listings by PPO score"),
-                BotCommand("ocean", "🌊 Blue Ocean opportunities"),
-                BotCommand("run", "🚀 Run agents/pipeline"),
-                BotCommand("health", "💚 System health check"),
-                BotCommand("stats", "📈 Weekly statistics"),
-                BotCommand("export", "📤 Export to Excel"),
-                BotCommand("miniapp", "📱 Open InternHub Pro"),
-                BotCommand("menu", "📋 Show command menu"),
-                BotCommand("help", "📖 Full command reference"),
-                BotCommand("startpipeline", "▶️ Start full pipeline (admin)"),
-                BotCommand("stoppipeline", "⏹ Stop pipeline (admin)"),
-                BotCommand("secstatus", "🔐 Security dashboard (admin)"),
+                BotCommand("jobs", "Browse filtered internships"),
+                BotCommand("morning", "Morning brief report"),
+                BotCommand("top", "Top listings by PPO score"),
+                BotCommand("ocean", "Blue Ocean opportunities"),
+                BotCommand("miniapp", "Open InternHub Pro"),
+                BotCommand("run", "Run agents/pipeline"),
+                BotCommand("health", "System health check"),
+                BotCommand("stats", "Weekly statistics"),
+                BotCommand("export", "Export to Excel"),
+                BotCommand("menu", "Show command menu"),
+                BotCommand("help", "Full command reference"),
             ]
             await self._app.bot.set_my_commands(bot_commands)
             logger.info(f"[{AGENT_ID}] Bot commands registered ({len(bot_commands)} commands)")
             
-            # Step 2: Set Mini App button if configured
+            # Step 2: Set the chat menu button (bottom-left button)
+            # This is the KEY fix for getting the 'Menu' button like in screenshot 2
             if MINI_APP_URL:
                 try:
+                    # MenuButtonWebApp creates a labeled button (e.g., 'Menu')
+                    # that opens the mini app when tapped
                     menu_button = MenuButtonWebApp(
-                        text="Open App",
+                        text="Menu",
                         web_app=WebAppInfo(url=MINI_APP_URL)
                     )
                     await self._app.bot.set_chat_menu_button(menu_button=menu_button)
-                    logger.info(f"[{AGENT_ID}] Mini App menu button set: {MINI_APP_URL}")
+                    logger.info(f"[{AGENT_ID}] Menu button set as WebApp: {MINI_APP_URL}")
                 except Exception as e:
                     logger.warning(f"[{AGENT_ID}] Failed to set MenuButtonWebApp: {e}")
-                    # Fallback to regular commands menu
+                    # Fallback: set commands menu so at least '/' button works
                     try:
                         await self._app.bot.set_chat_menu_button(
                             menu_button=MenuButtonCommands()
                         )
+                        logger.info(f"[{AGENT_ID}] Fallback: commands menu button set")
                     except Exception:
                         pass
             else:
-                # Set standard commands menu button
+                # No mini app URL — use standard commands button
                 try:
                     await self._app.bot.set_chat_menu_button(
                         menu_button=MenuButtonCommands()
                     )
+                    logger.info(f"[{AGENT_ID}] Commands menu button set (no MINI_APP_URL)")
                 except Exception:
                     pass
                     
