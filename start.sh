@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# OPERATION FIRST MOVER — START SCRIPT
+# OPERATION FIRST MOVER — START SCRIPT (v5.4.1)
 # ============================================================
 # This script ensures the mini-app frontend is built before
 # starting the Python backend. It's the startCommand for Render.
@@ -13,71 +13,84 @@
 #   mini-app is built regardless of Render's blueprint state.
 #
 # BEHAVIOR:
-#   1. If mini-app/dist/ exists → skip build (already built)
-#   2. If mini-app/dist/ missing → run npm install + build
+#   1. If mini-app/dist/ exists -> skip build (already built)
+#   2. If mini-app/dist/ missing -> run npm install + build
 #   3. Start Python main.py
 # ============================================================
 
 set -e
 
 echo "========================================================"
-echo "  OPERATION FIRST MOVER — Startup Script"
+echo "  OPERATION FIRST MOVER v5.4.1 — Startup Script"
 echo "========================================================"
 
 MINI_APP_DIR="mini-app"
 DIST_DIR="$MINI_APP_DIR/dist"
 
-# ── Step 1: Build mini-app if dist/ doesn't exist ──────────
+# -- Step 1: Build mini-app if dist/ doesn't exist -----------
 if [ -d "$DIST_DIR" ] && [ -f "$DIST_DIR/index.html" ]; then
-    echo "[START] ✅ Mini-app already built (dist/index.html exists)"
-    echo "[START]    $(ls -la $DIST_DIR/index.html)"
+    ASSET_COUNT=$(find "$DIST_DIR" -type f | wc -l)
+    echo "[START] Mini-app already built ($ASSET_COUNT files in dist/)"
 else
-    echo "[START] ⚠️  Mini-app dist/ not found — building now..."
+    echo "[START] Mini-app dist/ not found — building now..."
 
     if [ -d "$MINI_APP_DIR" ] && [ -f "$MINI_APP_DIR/package.json" ]; then
-        echo "[START] 📦 Installing mini-app dependencies..."
-        cd "$MINI_APP_DIR"
-
         # Check if node/npm are available
         if command -v node &> /dev/null && command -v npm &> /dev/null; then
-            echo "[START]    Node $(node --version), npm $(npm --version)"
+            echo "[START] Node $(node --version), npm $(npm --version)"
 
+            cd "$MINI_APP_DIR"
+
+            # Add node_modules/.bin to PATH for direct binary access
+            export PATH="$(pwd)/node_modules/.bin:$PATH"
+
+            echo "[START] Installing dependencies..."
             npm install --no-audit --no-fund 2>&1 | tail -5
-            echo "[START] 🔨 Building mini-app (tsc + vite)..."
 
-            # Try the full build (tsc + vite)
+            echo "[START] Building mini-app..."
+
+            # Try 1: Full build (tsc + vite)
             if npm run build 2>&1; then
-                echo "[START] ✅ Mini-app built successfully!"
-                ls -la dist/ 2>/dev/null || true
+                echo "[START] Full build (tsc + vite) succeeded!"
             else
-                echo "[START] ⚠️  TypeScript compilation failed, trying vite-only build..."
-                # Fallback: skip tsc, just run vite build directly
-                npx vite build 2>&1 || echo "[START] ❌ Mini-app build failed completely"
+                echo "[START] Full build failed, trying vite-only (npm run build:vite)..."
+                # Try 2: Vite-only build via npm script (uses local node_modules)
+                if npm run build:vite 2>&1; then
+                    echo "[START] Vite-only build succeeded!"
+                else
+                    echo "[START] npm run build:vite failed, trying direct vite binary..."
+                    # Try 3: Direct vite binary from node_modules
+                    if [ -x "node_modules/.bin/vite" ]; then
+                        node_modules/.bin/vite build 2>&1 || echo "[START] All build methods failed"
+                    else
+                        echo "[START] vite binary not found in node_modules/.bin/"
+                        echo "[START] Mini-app will show 'Not Built' error"
+                    fi
+                fi
             fi
-        else
-            echo "[START] ❌ Node.js/npm not available — cannot build mini-app"
-            echo "[START]    The mini-app will show 'Not Built' error"
-            echo "[START]    To fix: sync the Render blueprint or add Node.js"
-        fi
 
-        cd ..
+            cd ..
+        else
+            echo "[START] Node.js/npm not available — cannot build mini-app"
+            echo "[START] The mini-app will show 'Not Built' error"
+        fi
     else
-        echo "[START] ❌ mini-app/ directory or package.json not found"
+        echo "[START] mini-app/ directory or package.json not found"
     fi
 fi
 
-# Verify final state
+# -- Verify final state --------------------------------------
 if [ -f "$DIST_DIR/index.html" ]; then
     ASSET_COUNT=$(find "$DIST_DIR" -type f | wc -l)
-    echo "[START] 📱 Mini-app ready: $ASSET_COUNT files in dist/"
+    echo "[START] Mini-app ready: $ASSET_COUNT files in dist/"
 else
-    echo "[START] ⚠️  Mini-app NOT available (dist/index.html missing)"
-    echo "[START]    The /app/ endpoint will show an error page"
+    echo "[START] WARNING: Mini-app NOT available (dist/index.html missing)"
+    echo "[START] The /app/ endpoint will show an error page"
 fi
 
 echo "========================================================"
-echo "[START] 🚀 Starting Python backend..."
+echo "[START] Starting Python backend..."
 echo "========================================================"
 
-# ── Step 2: Start the Python application ───────────────────
+# -- Step 2: Start the Python application ---------------------
 exec python main.py
