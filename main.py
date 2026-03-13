@@ -94,7 +94,7 @@ except ImportError:
 # CONSTANTS
 # ============================================================
 
-VERSION = "5.3.2"
+VERSION = "5.4.0"
 RENDER_OVERLAP_GRACE_SEC = int(os.getenv('RENDER_OVERLAP_GRACE_SEC', '20'))
 WATCHDOG_INTERVAL_SEC = 120
 STARTUP_TIMEOUT_SEC = 120
@@ -103,11 +103,11 @@ GC_INTERVAL_SEC = 300
 BANNER = """
 +============================================================+
 |                                                              |
-|   OPERATION FIRST MOVER v5.3 — Zero Cost MBA Agent          |
+|   OPERATION FIRST MOVER v5.4 — Zero Cost MBA Agent          |
 |                                                              |
 |   12 AI Agents | 1081 Companies | 8+ Job Boards             |
 |   Groq + Cerebras Dual-Brain | Telegram Command Center      |
-|   Render Web Service + 5-Layer Keep-Alive                    |
+|   InternHub Pro Mini App | 5-Layer Keep-Alive               |
 |   Industrial-Grade Orchestration | Total Daily Cost: $0      |
 |                                                              |
 +============================================================+
@@ -522,6 +522,7 @@ class Application:
 
         render_url = os.getenv('RENDER_EXTERNAL_URL', '')
         port = os.getenv('PORT', '10000')
+        mini_app_url = os.getenv('MINI_APP_URL', '')
 
         logger.info("=" * 60)
         logger.info(f"  STARTUP COMPLETE in {duration:.1f}s")
@@ -530,6 +531,9 @@ class Application:
         if render_url:
             logger.info(f"  Render URL: {render_url}")
             logger.info(f"  Health: {render_url}/health")
+            logger.info(f"  Mini App: {render_url}/app/")
+        if mini_app_url:
+            logger.info(f"  Mini App URL: {mini_app_url}")
         logger.info(f"  Keep-Alive: 5 layers active")
         logger.info(f"  Version: {VERSION}")
         logger.info("=" * 60)
@@ -549,12 +553,19 @@ class Application:
 
         try:
             render_url = os.getenv('RENDER_EXTERNAL_URL', 'N/A')
+            # Detect mini app URL
+            mini_app_url = os.getenv('MINI_APP_URL', '')
+            if not mini_app_url and render_url != 'N/A':
+                mini_app_url = f"{render_url.rstrip('/')}/app/"
+            miniapp_line = f"📱 Mini App: {'✅ ' + mini_app_url if mini_app_url else '❌ Not configured'}"
+            
             msg = (
                 f"🚀 <b>SYSTEM STARTUP COMPLETE</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
                 f"⏱ Duration: <b>{duration:.1f}s</b>\n"
                 f"🔗 {render_url}\n"
-                f"📦 Version: {VERSION}\n\n"
+                f"📦 Version: {VERSION}\n"
+                f"{miniapp_line}\n\n"
                 f"<b>Subsystem Status:</b>\n"
                 f"{self._status.to_telegram_msg()}\n\n"
                 f"{'✅ All systems operational' if self._status.all_ok else '⚠️ Some subsystems degraded'}\n"

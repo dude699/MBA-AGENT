@@ -299,6 +299,16 @@ class WebServer:
         except Exception as e:
             logger.warning(f"[WEBSERVER] Auth route registration failed: {e}")
         
+        # Register Mini-App API routes + static file serving
+        try:
+            from core.miniapp_api import register_miniapp_routes
+            register_miniapp_routes(app)
+            logger.info("[WEBSERVER] Mini-App API routes registered")
+        except ImportError as e:
+            logger.warning(f"[WEBSERVER] Mini-App API module not available: {e}")
+        except Exception as e:
+            logger.warning(f"[WEBSERVER] Mini-App route registration failed: {e}")
+        
         return app
 
     async def start(self):
@@ -314,7 +324,7 @@ class WebServer:
         )
         await self._site.start()
         logger.info(f"[WEBSERVER] Listening on 0.0.0.0:{self._port}")
-        logger.info(f"[WEBSERVER] Endpoints: / /health /status /ping /telegram-status")
+        logger.info(f"[WEBSERVER] Endpoints: / /health /status /ping /telegram-status /app/ /api/*")
 
     async def stop(self):
         if self._site:
