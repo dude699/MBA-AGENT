@@ -8,7 +8,7 @@ and user whitelist management.
 
 Admin: Designated by Telegram ID (sole admin)
 Users: Managed via admin commands, stored in SQLite
-Access Codes: username[:3] + telegram_id[chars] + random(4)
+Access Codes: random(3 letters) + random(4 digits) + random(4 alphanum)
 Protects: Bot commands, Mini-App API access
 
 Commands (admin-only in admin chat):
@@ -64,7 +64,7 @@ ADMIN_USERNAME = os.getenv('ADMIN_USERNAME', 'abuzarkhan999')
 
 # Security settings
 MAX_FAILED_AUTH_ATTEMPTS = 10       # Per user, per hour
-ACCESS_CODE_LENGTH = 11             # 3 + 4 + 4 chars
+ACCESS_CODE_LENGTH = 11             # 3 random letters + 4 random digits + 4 random alphanum
 CODE_EXPIRY_HOURS = 720             # 30 days
 MAX_ACTIVE_SESSIONS = 3             # Per user
 RATE_LIMIT_WINDOW_SEC = 3600        # 1 hour
@@ -106,30 +106,28 @@ class AuthEvent:
 # ACCESS CODE GENERATION
 # ============================================================
 
-def generate_access_code(username: str, telegram_id: int) -> str:
+def generate_access_code(username: str = "", telegram_id: int = 0) -> str:
     """
-    Generate a one-time access code:
-    Format: first 3 chars of username + middle chars of telegram_id + random 4 digits
+    Generate a fully random one-time access code.
     
-    Example: @abuzarkhan999 + 1284698336 -> abu4698 + 7291 -> abu46987291
+    Format: 3 random lowercase letters + 4 random digits + 4 random alphanumeric
+    Total: 11 characters, all random — no username or ID derivation.
+    
+    Example: xkf8271m3qp
+    
+    NOTE: username and telegram_id params kept for API compatibility
+    but are NOT used in code generation. All components are random.
     """
-    # First 3 chars of username (lowercase, strip @)
-    clean_username = username.lower().strip().lstrip('@')
-    prefix = clean_username[:3].ljust(3, 'x')
+    # Part 1: 3 random lowercase letters
+    part1 = ''.join(random.choices(string.ascii_lowercase, k=3))
     
-    # Middle chars of telegram_id
-    id_str = str(telegram_id)
-    if len(id_str) >= 6:
-        # Take 4 chars from middle
-        mid_start = (len(id_str) - 4) // 2
-        id_part = id_str[mid_start:mid_start + 4]
-    else:
-        id_part = id_str[:4].ljust(4, '0')
+    # Part 2: 4 random digits
+    part2 = ''.join(random.choices(string.digits, k=4))
     
-    # Random 4-digit number
-    random_part = ''.join(random.choices(string.digits, k=4))
+    # Part 3: 4 random alphanumeric (lowercase + digits)
+    part3 = ''.join(random.choices(string.ascii_lowercase + string.digits, k=4))
     
-    code = f"{prefix}{id_part}{random_part}"
+    code = f"{part1}{part2}{part3}"
     return code
 
 
@@ -977,20 +975,26 @@ if __name__ == "__main__":
     print("  Security Module -- Self-Test")
     print("=" * 60)
     
-    # Test code generation
+    # Test code generation (fully random)
     code1 = generate_access_code("abuzarkhan999", 1284698336)
-    print(f"  Code for @abuzarkhan999 (1284698336): {code1}")
+    print(f"  Code 1 (random): {code1}")
     assert len(code1) == 11, f"Code length should be 11, got {len(code1)}"
     
     code2 = generate_access_code("testuser", 9876543210)
-    print(f"  Code for @testuser (9876543210): {code2}")
+    print(f"  Code 2 (random): {code2}")
     assert len(code2) == 11
+    
+    # Verify all components are random (no username/ID leakage)
+    code3 = generate_access_code("abuzarkhan999", 1284698336)
+    print(f"  Code 3 (random, same user): {code3}")
+    assert code1 != code3, "Two codes for same user should be different (random)"
     
     # Test verification
     assert verify_access_code(code1, code1)
     assert not verify_access_code(code1, code2)
     
-    print(f"\n  Admin ID: {ADMIN_TELEGRAM_ID}")
+    print(f"\n  All codes are fully random — no username/ID derivation")
+    print(f"  Admin ID: {ADMIN_TELEGRAM_ID}")
     print(f"  Admin Username: @{ADMIN_USERNAME}")
     print(f"\n  Security module ready!")
     print("=" * 60)

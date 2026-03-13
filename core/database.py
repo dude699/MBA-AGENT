@@ -2347,19 +2347,37 @@ class DatabaseManager:
         Exclusion is done at the SQL level using LIKE patterns for speed.
         """
         SALES_EXCLUDE_PATTERNS = [
+            # === ALL SALES (zero tolerance) ===
+            '%sales%',                      # ANY title containing 'sales'
+            # === ALL BUSINESS DEVELOPMENT (zero tolerance) ===
+            '%business development%',       # ANY title with 'business development'
+            '%business-development%',       # hyphenated variant
+            '% bde %', '% bdm %', '% bda %',   # BDE/BDM/BDA abbreviations
+            'bde %', 'bdm %', 'bda %',          # At start of title
+            '% bde', '% bdm', '% bda',          # At end of title
+            '% bd intern%', '% bd executive%', '% bd manager%',
+            # === COLD CALLING / TELESALES ===
             '%telesales%', '%telecaller%', '%cold call%',
-            '%door to door%', '%field sales%', '%direct sales%',
-            '%sales executive%', '%sales officer%', '%sales associate%',
-            '%sales representative%', '%inside sales%',
-            '%area sales manager%', '%territory sales%',
-            '%bde %', '% bdm %', '%business development executive%',
-            '%business development manager%',
+            '%door to door%', '%tele marketing%', '%telemarketing%',
+            # === INSURANCE / REAL ESTATE ===
             '%insurance agent%', '%insurance advisor%', '%insurance sales%',
+            '%insurance intern%', '%insurance consultant%',
             '%real estate agent%', '%real estate sales%', '%real estate broker%',
-            '%commission based%', '%target based sales%',
+            '%real estate intern%',
+            # === COMMISSION / TARGET BASED ===
+            '%commission based%', '%commission-based%',
+            '%target based sales%', '%incentive based%',
+            '%commission only%',
+            # === WALK-IN / CALL CENTER ===
             '%walk in%', '%walkin%', '%call center%', '%bpo%', '%kpo%',
+            # === MLM / NETWORK MARKETING ===
             '%mlm%', '%network marketing%', '%direct selling%',
+            # === NON-MBA ROLES ===
             '%data entry%', '%typing job%',
+            # === LEAD GENERATION / CLIENT ACQUISITION ===
+            '%lead generation intern%', '%lead generation executive%',
+            '%client acquisition intern%', '%customer acquisition intern%',
+            '%revenue generation intern%',
         ]
 
         where_clauses = [
