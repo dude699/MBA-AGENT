@@ -704,6 +704,38 @@ class DatabaseConfig:
     checkpoint_interval_minutes: int = 30
 
 
+@dataclass(frozen=True)
+class SupabaseConfig:
+    """
+    Supabase PostgreSQL configuration for persistent cloud job storage.
+
+    Free Tier Limits (2026):
+        - 500 MB database storage
+        - Unlimited API requests
+        - 5 GB bandwidth/month
+        - Projects pause after 7 days of inactivity
+        - 2 active free projects max
+    """
+    url: str = ""
+    anon_key: str = ""
+    service_role_key: str = ""
+
+    # Keepalive settings
+    ping_interval_hours: float = 12.0
+    min_ping_gap_hours: float = 4.0
+
+    # Merge settings
+    merge_after_morning_scrape: bool = True
+
+    # Cleanup settings
+    expire_days_past_deadline: int = 7
+
+    @property
+    def is_configured(self) -> bool:
+        """Check if Supabase credentials are present."""
+        return bool(self.url and (self.service_role_key or self.anon_key))
+
+
 # ============================================================
 # SECTION 7: SCRAPING SOURCE CONFIGURATION
 # ============================================================
@@ -1691,12 +1723,28 @@ class Config:
             description='X/Twitter Bearer Token'
         )
 
-        # Database
+        # Database (SQLite -- local ephemeral)
         db_path = _get_env(
             'DATABASE_PATH', default='data/firstmover.db',
             description='SQLite database file path'
         )
         self.database = DatabaseConfig(path=db_path)
+
+        # Supabase (PostgreSQL -- persistent cloud storage)
+        self.supabase = SupabaseConfig(
+            url=_get_env(
+                'SUPABASE_URL', default='',
+                description='Supabase project URL (https://xxx.supabase.co)'
+            ),
+            anon_key=_get_env(
+                'SUPABASE_ANON_KEY', default='',
+                description='Supabase anon/public key'
+            ),
+            service_role_key=_get_env(
+                'SUPABASE_SERVICE_ROLE_KEY', default='',
+                description='Supabase service_role key (full access, server-side only)'
+            ),
+        )
 
         # Rate Limits
         self.rate_limits = RateLimitConfig()
@@ -1750,6 +1798,7 @@ class Config:
             'telethon_api_hash': bool(self.telethon.api_hash),
             'x_bearer_token': bool(self.x_bearer_token),
             'bing_api_key': bool(self.bing.api_key),
+            'supabase_configured': self.supabase.is_configured,
         }
         return checks
 

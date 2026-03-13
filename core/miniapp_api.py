@@ -708,6 +708,272 @@ def _transform_listing(listing: Dict, detailed: bool = False) -> Dict:
 
 
 # ============================================================
+# SUPABASE LISTING TRANSFORMER
+# ============================================================
+
+def _transform_supabase_listing(row: Dict) -> Dict:
+    """Transform a Supabase job row to frontend-friendly Internship format."""
+    import json as _json
+
+    def _parse_json_list(val):
+        if isinstance(val, list):
+            return val
+        if isinstance(val, str):
+            try:
+                parsed = _json.loads(val)
+                return parsed if isinstance(parsed, list) else []
+            except Exception:
+                return [v.strip() for v in val.split(",") if v.strip()] if val else []
+        return []
+
+    lid = row.get("id", 0)
+    stipend = row.get("stipend", 0) or 0
+    match_score = row.get("match_score", 50) or 50
+    ghost_score = row.get("ghost_score", 0) or 0
+    applicants = row.get("applicants", 0) or 0
+    duration = row.get("duration", 0) or 0
+
+    return {
+        "id": f"sb_{lid}",
+        "title": row.get("title", "Unknown"),
+        "company": row.get("company", "Unknown"),
+        "companyLogo": row.get("company_logo") or None,
+        "companySize": row.get("company_size", ""),
+        "companyRating": row.get("company_rating", 0) or 0,
+        "source": row.get("source", ""),
+        "sourceUrl": row.get("source_url", ""),
+        "stipend": stipend,
+        "stipendCurrency": row.get("stipend_currency", "INR") or "INR",
+        "stipendType": row.get("stipend_type", "monthly") if stipend > 0 else "unpaid",
+        "duration": duration,
+        "durationUnit": row.get("duration_unit", "months"),
+        "location": row.get("location", "") or "Not specified",
+        "locationType": row.get("location_type", "onsite"),
+        "category": row.get("category", "") or "general",
+        "skills": _parse_json_list(row.get("skills", "[]")),
+        "description": row.get("description", ""),
+        "responsibilities": _parse_json_list(row.get("responsibilities", "[]")),
+        "requirements": _parse_json_list(row.get("requirements", "[]")),
+        "perks": _parse_json_list(row.get("perks", "[]")),
+        "openings": row.get("openings", 1) or 1,
+        "applicants": applicants,
+        "postedDate": row.get("posted_date", row.get("created_at", "")),
+        "deadline": row.get("deadline", ""),
+        "startDate": row.get("start_date", ""),
+        "isExpired": bool(row.get("is_expired", False)),
+        "isPremium": bool(row.get("is_premium", False)),
+        "isVerified": bool(row.get("is_verified", True)),
+        "matchScore": min(100, int(match_score)),
+        "ghostScore": int(ghost_score),
+        "successRate": max(5, 100 - int(ghost_score)),
+        "avgResponseDays": 5,
+        "alreadyApplied": bool(row.get("applied", False)),
+        "appliedDate": row.get("applied_at", ""),
+        "applicationStatus": row.get("application_status", "not_applied"),
+        "companyTier": row.get("company_tier", "startup"),
+        "sector": row.get("sector", ""),
+        "tags": _parse_json_list(row.get("tags", "[]")),
+        "lastUpdated": row.get("updated_at", row.get("created_at", "")),
+        "hash": row.get("content_hash", f"sb-{lid}"),
+    }
+
+
+# ============================================================
+# SUPABASE API HANDLERS
+# ============================================================
+
+async def handle_supabase_latest_jobs(request: web.Request) -> web.Response:
+    """GET /api/supabase/latest-jobs — Current scraping session jobs."""
+    try:
+        from core.supabase_client import is_operational
+        if not is_operational():
+            return _json_response({"success": False, "error": "Supabase not available", "data": []}, 503)
+
+        from core.supabase_db import SupabaseJobDB
+
+        page = int(request.query.get("page", "1"))
+        per_page = min(int(request.query.get("per_page", "20")), 50)
+        source = request.query.get("source", "")
+        category = request.query.get("category", "")
+        location = request.query.get("location", "")
+        search = request.query.get("search", "")
+        sort_by = request.query.get("sort", "scraped_at")
+
+        sort_map = {
+            "ppo": "ppo_score", "stipend": "stipend", "date": "scraped_at",
+            "applicants": "applicants", "duration": "duration",
+        }
+        sort_col = sort_map.get(sort_by, "scraped_at")
+        offset = (page - 1) * per_page
+
+        jobs, total = SupabaseJobDB.get_latest_jobs(
+            limit=per_page, offset=offset,
+            source=source, category=category,
+            location=location, search=search,
+            sort_by=sort_col,
+        )
+
+        items = [_transform_supabase_listing(j) for j in jobs]
+        return _json_response({
+            "success": True,
+            "data": items,
+            "meta": {
+                "total": total, "page": page, "pageSize": per_page,
+                "hasMore": offset + per_page < total, "table": "latest_jobs",
+            },
+            "timestamp": datetime.now(IST).isoformat(),
+        })
+    except Exception as e:
+        logger.error(f"[{MODULE_ID}] handle_supabase_latest_jobs error: {e}")
+        return _json_response({"success": False, "error": str(e)[:200], "data": []}, 500)
+
+
+async def handle_supabase_all_jobs(request: web.Request) -> web.Response:
+    """GET /api/supabase/all-jobs — Complete job archive."""
+    try:
+        from core.supabase_client import is_operational
+        if not is_operational():
+            return _json_response({"success": False, "error": "Supabase not available", "data": []}, 503)
+
+        from core.supabase_db import SupabaseJobDB
+
+        page = int(request.query.get("page", "1"))
+        per_page = min(int(request.query.get("per_page", "20")), 50)
+        source = request.query.get("source", "")
+        category = request.query.get("category", "")
+        location = request.query.get("location", "")
+        search = request.query.get("search", "")
+        applied_only = request.query.get("applied", "").lower() in ("true", "1")
+        include_expired = request.query.get("include_expired", "").lower() in ("true", "1")
+        sort_by = request.query.get("sort", "created_at")
+
+        sort_map = {
+            "ppo": "ppo_score", "stipend": "stipend", "date": "created_at",
+            "applicants": "applicants", "duration": "duration", "applied": "applied_at",
+        }
+        sort_col = sort_map.get(sort_by, "created_at")
+        offset = (page - 1) * per_page
+
+        jobs, total = SupabaseJobDB.get_all_jobs(
+            limit=per_page, offset=offset,
+            source=source, category=category,
+            location=location, search=search,
+            applied_only=applied_only,
+            exclude_expired=not include_expired,
+            sort_by=sort_col,
+        )
+
+        items = [_transform_supabase_listing(j) for j in jobs]
+        return _json_response({
+            "success": True,
+            "data": items,
+            "meta": {
+                "total": total, "page": page, "pageSize": per_page,
+                "hasMore": offset + per_page < total, "table": "all_jobs",
+            },
+            "timestamp": datetime.now(IST).isoformat(),
+        })
+    except Exception as e:
+        logger.error(f"[{MODULE_ID}] handle_supabase_all_jobs error: {e}")
+        return _json_response({"success": False, "error": str(e)[:200], "data": []}, 500)
+
+
+async def handle_supabase_apply(request: web.Request) -> web.Response:
+    """POST /api/supabase/apply/{id} — Mark a Supabase job as applied."""
+    try:
+        from core.supabase_client import is_operational
+        if not is_operational():
+            return _json_response({"success": False, "error": "Supabase not available"}, 503)
+
+        from core.supabase_db import SupabaseJobDB
+
+        raw_id = request.match_info.get("id", "")
+        job_id = int(raw_id.replace("sb_", "")) if raw_id.replace("sb_", "").isdigit() else 0
+
+        body = {}
+        try:
+            body = await request.json()
+        except Exception:
+            pass
+        notes = str(body.get("notes", ""))[:1000]
+
+        if not job_id:
+            return _json_response({"success": False, "error": "Invalid job ID"}, 400)
+
+        # Try to find the job to get content_hash
+        job = SupabaseJobDB.get_job_by_id(job_id, "all_jobs")
+        if not job:
+            job = SupabaseJobDB.get_job_by_id(job_id, "latest_jobs")
+
+        if job:
+            success = SupabaseJobDB.mark_applied(
+                content_hash=job["content_hash"],
+                status="applied", notes=notes,
+            )
+        else:
+            success = SupabaseJobDB.mark_applied(
+                job_id=job_id, status="applied", notes=notes,
+            )
+
+        return _json_response({
+            "success": success,
+            "data": {"status": "applied" if success else "not_applied"},
+            "timestamp": datetime.now(IST).isoformat(),
+        })
+    except Exception as e:
+        logger.error(f"[{MODULE_ID}] handle_supabase_apply error: {e}")
+        return _json_response({"success": False, "error": str(e)[:200]}, 500)
+
+
+async def handle_supabase_stats(request: web.Request) -> web.Response:
+    """GET /api/supabase/stats — Database statistics."""
+    try:
+        from core.supabase_client import is_operational
+        if not is_operational():
+            return _json_response({"success": False, "error": "Supabase not available"}, 503)
+
+        from core.supabase_db import SupabaseJobDB
+        stats = SupabaseJobDB.get_stats()
+        return _json_response({
+            "success": True, "data": stats,
+            "timestamp": datetime.now(IST).isoformat(),
+        })
+    except Exception as e:
+        logger.error(f"[{MODULE_ID}] handle_supabase_stats error: {e}")
+        return _json_response({"success": False, "error": str(e)[:200]}, 500)
+
+
+async def handle_supabase_job_detail(request: web.Request) -> web.Response:
+    """GET /api/supabase/job/{id} — Single job detail from Supabase."""
+    try:
+        from core.supabase_client import is_operational
+        if not is_operational():
+            return _json_response({"success": False, "error": "Supabase not available"}, 503)
+
+        from core.supabase_db import SupabaseJobDB
+
+        raw_id = request.match_info.get("id", "")
+        job_id = int(raw_id.replace("sb_", "")) if raw_id.replace("sb_", "").isdigit() else 0
+        if not job_id:
+            return _json_response({"success": False, "error": "Invalid job ID"}, 400)
+
+        job = SupabaseJobDB.get_job_by_id(job_id, "all_jobs")
+        if not job:
+            job = SupabaseJobDB.get_job_by_id(job_id, "latest_jobs")
+        if not job:
+            return _json_response({"success": False, "error": "Job not found"}, 404)
+
+        return _json_response({
+            "success": True,
+            "data": _transform_supabase_listing(job),
+            "timestamp": datetime.now(IST).isoformat(),
+        })
+    except Exception as e:
+        logger.error(f"[{MODULE_ID}] handle_supabase_job_detail error: {e}")
+        return _json_response({"success": False, "error": str(e)[:200]}, 500)
+
+
+# ============================================================
 # ROUTE REGISTRATION
 # ============================================================
 
@@ -728,6 +994,13 @@ def register_miniapp_routes(app):
     app.router.add_post('/api/llm/chat', handle_llm_chat)
     app.router.add_get('/api/sources', handle_sources)
     app.router.add_get('/api/filters', handle_filters)
+
+    # Supabase persistent database API endpoints
+    app.router.add_get('/api/supabase/latest-jobs', handle_supabase_latest_jobs)
+    app.router.add_get('/api/supabase/all-jobs', handle_supabase_all_jobs)
+    app.router.add_get('/api/supabase/job/{id}', handle_supabase_job_detail)
+    app.router.add_post('/api/supabase/apply/{id}', handle_supabase_apply)
+    app.router.add_get('/api/supabase/stats', handle_supabase_stats)
 
     # Mini-app: All static file serving is DYNAMIC (not add_static)
     # This way, even if dist/ is built AFTER server startup, files will be served.

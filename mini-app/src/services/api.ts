@@ -262,6 +262,145 @@ export async function fetchSearchSuggestions(query: string): Promise<string[]> {
   return [];
 }
 
+// ===== SUPABASE PERSISTENT DATABASE API =====
+
+export async function fetchSupabaseLatestJobs(
+  page: number = 1,
+  pageSize: number = ITEMS_PER_PAGE,
+  filters: Partial<FilterState> = {},
+  sort: string = 'date'
+): Promise<PaginatedResponse<Internship>> {
+  try {
+    const params = new URLSearchParams();
+    params.set('page', String(page));
+    params.set('per_page', String(pageSize));
+    params.set('sort', sort);
+
+    if (filters.sources?.length === 1) params.set('source', filters.sources[0]);
+    if (filters.categories?.length === 1) params.set('category', filters.categories[0]);
+    if (filters.locations?.length === 1) params.set('location', filters.locations[0]);
+    if (filters.search) params.set('search', filters.search);
+
+    const resp = await fetch(`${getApiUrl('/supabase/latest-jobs')}?${params.toString()}`, {
+      headers: getHeaders(),
+    });
+
+    if (!resp.ok) throw new Error(`API error: ${resp.status}`);
+    const data = await resp.json();
+    if (!data.success) throw new Error(data.error || 'API error');
+
+    const items: Internship[] = (data.data || []).map((item: any) => ensureInternshipFields(item));
+    return {
+      success: true,
+      data: items,
+      meta: {
+        total: data.meta?.total || items.length,
+        page: data.meta?.page || page,
+        pageSize: data.meta?.pageSize || pageSize,
+        hasMore: data.meta?.hasMore || false,
+        filters: filters as FilterState,
+        sort: sort as any,
+      },
+      timestamp: data.timestamp || new Date().toISOString(),
+    };
+  } catch (error) {
+    console.warn('[API] fetchSupabaseLatestJobs failed:', error);
+    return {
+      success: true, data: [],
+      meta: { total: 0, page, pageSize, hasMore: false, filters: filters as FilterState, sort: sort as any },
+      timestamp: new Date().toISOString(),
+    };
+  }
+}
+
+export async function fetchSupabaseAllJobs(
+  page: number = 1,
+  pageSize: number = ITEMS_PER_PAGE,
+  filters: Partial<FilterState> = {},
+  sort: string = 'date',
+  appliedOnly: boolean = false
+): Promise<PaginatedResponse<Internship>> {
+  try {
+    const params = new URLSearchParams();
+    params.set('page', String(page));
+    params.set('per_page', String(pageSize));
+    params.set('sort', sort);
+    if (appliedOnly) params.set('applied', 'true');
+
+    if (filters.sources?.length === 1) params.set('source', filters.sources[0]);
+    if (filters.categories?.length === 1) params.set('category', filters.categories[0]);
+    if (filters.locations?.length === 1) params.set('location', filters.locations[0]);
+    if (filters.search) params.set('search', filters.search);
+
+    const resp = await fetch(`${getApiUrl('/supabase/all-jobs')}?${params.toString()}`, {
+      headers: getHeaders(),
+    });
+
+    if (!resp.ok) throw new Error(`API error: ${resp.status}`);
+    const data = await resp.json();
+    if (!data.success) throw new Error(data.error || 'API error');
+
+    const items: Internship[] = (data.data || []).map((item: any) => ensureInternshipFields(item));
+    return {
+      success: true,
+      data: items,
+      meta: {
+        total: data.meta?.total || items.length,
+        page: data.meta?.page || page,
+        pageSize: data.meta?.pageSize || pageSize,
+        hasMore: data.meta?.hasMore || false,
+        filters: filters as FilterState,
+        sort: sort as any,
+      },
+      timestamp: data.timestamp || new Date().toISOString(),
+    };
+  } catch (error) {
+    console.warn('[API] fetchSupabaseAllJobs failed:', error);
+    return {
+      success: true, data: [],
+      meta: { total: 0, page, pageSize, hasMore: false, filters: filters as FilterState, sort: sort as any },
+      timestamp: new Date().toISOString(),
+    };
+  }
+}
+
+export async function applyToSupabaseJob(id: string, notes: string = ''): Promise<APIResponse<{ status: ApplicationStatus }>> {
+  try {
+    const resp = await fetch(getApiUrl(`/supabase/apply/${id}`), {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ notes }),
+    });
+
+    if (!resp.ok) throw new Error(`API error: ${resp.status}`);
+    const data = await resp.json();
+    return {
+      success: data.success,
+      data: { status: data.success ? 'applied' : 'not_applied' },
+      error: data.error,
+      timestamp: data.timestamp || new Date().toISOString(),
+    };
+  } catch (error) {
+    return {
+      success: false,
+      data: { status: 'not_applied' },
+      error: 'Failed to mark as applied',
+      timestamp: new Date().toISOString(),
+    };
+  }
+}
+
+export async function fetchSupabaseStats(): Promise<APIResponse<any>> {
+  try {
+    const resp = await fetch(getApiUrl('/supabase/stats'), { headers: getHeaders() });
+    if (!resp.ok) throw new Error(`API error: ${resp.status}`);
+    const data = await resp.json();
+    return { success: data.success, data: data.data, timestamp: data.timestamp || new Date().toISOString() };
+  } catch (error) {
+    return { success: false, data: null, timestamp: new Date().toISOString() };
+  }
+}
+
 // ===== FIELD NORMALIZER =====
 function ensureInternshipFields(item: any): Internship {
   return {

@@ -66,5 +66,12 @@ services:
         sync: false
       - key: MINI_APP_URL
         sync: false
+      # === SUPABASE (Persistent Cloud Database) ===
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
     plan: free
     region: oregon

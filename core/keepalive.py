@@ -125,6 +125,16 @@ class HealthTracker:
         self._db_healthy = healthy
         self._subsystem_status['database'] = 'healthy' if healthy else 'unhealthy'
 
+    def _get_supabase_status(self) -> str:
+        """Get Supabase operational status for health report."""
+        try:
+            from core.supabase_client import is_operational, is_supabase_configured
+            if not is_supabase_configured():
+                return "not_configured"
+            return "operational" if is_operational() else "degraded"
+        except Exception:
+            return "unknown"
+
     def set_shutdown_requested(self):
         self._shutdown_requested = True
 
@@ -210,6 +220,7 @@ class HealthTracker:
                 "scheduler": self._scheduler_running,
                 "telegram": self._telegram_running,
                 "database": self._db_healthy,
+                "supabase": self._get_supabase_status(),
                 **{k: v for k, v in self._subsystem_status.items()
                    if k not in ('scheduler', 'telegram', 'database')},
             },
