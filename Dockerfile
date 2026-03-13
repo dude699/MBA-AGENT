@@ -44,4 +44,5 @@ HEALTHCHECK --interval=60s --timeout=10s --start-period=60s --retries=3 \
 
 # Use exec form so SIGTERM goes directly to the Python process
 # (not to a shell wrapper that would swallow the signal)
-CMD ["python", "main.py"]
+# start.sh will build mini-app if needed, then exec python main.py
+CMD ["bash", "start.sh"]

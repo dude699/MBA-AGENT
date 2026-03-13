@@ -21,6 +21,7 @@ except /api/health-check which is public.
 """
 
 import json
+import os
 import traceback
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
@@ -408,17 +409,43 @@ async def handle_cors_preflight(request: web.Request) -> web.Response:
 # STATIC FILE SERVING FOR MINI-APP
 # ============================================================
 
+# Cache the dist path once found to avoid repeated filesystem checks
+_cached_dist_path: Optional[str] = None
+
+
 def _get_miniapp_dist_path() -> Optional[str]:
-    """Find the mini-app dist directory."""
-    import os
+    """Find the mini-app dist directory. Caches result after first successful find."""
+    global _cached_dist_path
+    
+    # Return cached path if still valid
+    if _cached_dist_path and os.path.isdir(_cached_dist_path):
+        return _cached_dist_path
+    
     candidates = [
-        os.path.join(os.path.dirname(os.path.dirname(__file__)), 'mini-app', 'dist'),
+        # Relative to this file: core/miniapp_api.py -> project_root/mini-app/dist
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'mini-app', 'dist'),
+        # Relative to CWD
         os.path.join(os.getcwd(), 'mini-app', 'dist'),
+        # Render's default project path
+        '/opt/render/project/src/mini-app/dist',
+        # Docker WORKDIR
+        '/app/mini-app/dist',
+        # Sandbox path
         '/home/user/webapp/mini-app/dist',
     ]
     for path in candidates:
-        if os.path.isdir(path):
+        if os.path.isdir(path) and os.path.isfile(os.path.join(path, 'index.html')):
+            _cached_dist_path = path
+            logger.info(f"[{MODULE_ID}] Found mini-app dist at: {path}")
             return path
+    
+    # Log all checked paths for debugging
+    logger.warning(f"[{MODULE_ID}] mini-app dist/ not found in any candidate path:")
+    for path in candidates:
+        exists = os.path.isdir(path)
+        has_index = os.path.isfile(os.path.join(path, 'index.html')) if exists else False
+        logger.warning(f"[{MODULE_ID}]   {path} -> dir={exists}, index.html={has_index}")
+    
     return None
 
 
@@ -445,6 +472,21 @@ async def handle_miniapp_index(request: web.Request) -> web.Response:
         html = f.read()
     
     return web.Response(text=html, content_type='text/html')
+
+
+async def handle_miniapp_spa_catchall(request: web.Request) -> web.Response:
+    """
+    SPA catch-all: serve index.html for any /app/* path that isn't a static asset.
+    This enables React Router client-side navigation.
+    """
+    path = request.match_info.get('path', '')
+    
+    # If the path looks like a static file (has extension), return 404
+    if '.' in path.split('/')[-1]:
+        return web.Response(text="Not Found", status=404)
+    
+    # Otherwise, serve index.html (React Router will handle the route)
+    return await handle_miniapp_index(request)
 
 
 # ============================================================
@@ -550,20 +592,13 @@ def register_miniapp_routes(app):
     app.router.add_get('/api/sources', handle_sources)
     app.router.add_get('/api/filters', handle_filters)
 
-    # Mini-app static file serving at /app/
-    app.router.add_get('/app/', handle_miniapp_index)
-    app.router.add_get('/app', handle_miniapp_index)
-
-    # Serve mini-app static assets
-    import os
+    # Serve mini-app static assets FIRST (before catch-all)
     dist = _get_miniapp_dist_path()
     if dist and os.path.isdir(dist):
         # Serve /app/assets/* from dist/assets/
         assets_dir = os.path.join(dist, 'assets')
         if os.path.isdir(assets_dir):
             app.router.add_static('/app/assets', assets_dir, follow_symlinks=True)
-        # Serve other static files from dist/
-        app.router.add_static('/app/static', dist, follow_symlinks=True)
         # Serve favicon and other root-level files
         for fname in ['favicon.svg', 'favicon.ico', 'robots.txt', 'manifest.json']:
             fpath = os.path.join(dist, fname)
@@ -571,7 +606,13 @@ def register_miniapp_routes(app):
                 app.router.add_get(f'/app/{fname}', _make_static_handler(fpath))
         logger.info(f"[{MODULE_ID}] Mini-app static files registered from {dist}")
     else:
-        logger.warning(f"[{MODULE_ID}] Mini-app dist/ not found. Run: cd mini-app && npm install && npm run build")
+        logger.warning(f"[{MODULE_ID}] Mini-app dist/ not found — /app/ will show error page")
+
+    # SPA catch-all: /app/ and /app/{anything} -> serve index.html
+    # This handles React Router client-side navigation
+    app.router.add_get('/app/', handle_miniapp_index)
+    app.router.add_get('/app', handle_miniapp_index)
+    app.router.add_get('/app/{path:.*}', handle_miniapp_spa_catchall)
 
     logger.info(f"[{MODULE_ID}] Mini-app API routes registered: /api/internships, /api/analytics, /api/apply, /api/llm/chat, /api/sources, /api/filters, /app/")
 
