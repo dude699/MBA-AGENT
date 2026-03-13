@@ -4,7 +4,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { RefreshCw, Wifi, WifiOff, ChevronUp, Clock, Archive, Database } from 'lucide-react';
+import { RefreshCw, ChevronUp, Clock, Archive, Database } from 'lucide-react';
 
 import Header from '@/components/Header';
 import InternshipCard from '@/components/InternshipCard';
@@ -17,6 +17,7 @@ import AnalyticsDashboard from '@/components/AnalyticsDashboard';
 import BottomBar from '@/components/BottomBar';
 import SettingsPage from '@/components/SettingsPage';
 import { ListSkeleton } from '@/components/Skeletons';
+import { SourceIcon } from '@/components/SourceIcons';
 
 import { useInternships, useFilteredInternships, useInfiniteScroll } from '@/hooks/useHooks';
 import { useAppStore } from '@/store/useAppStore';
@@ -93,7 +94,7 @@ export default function App() {
   }, [browseMode, activeTab, loadSupabaseJobs]);
 
   return (
-    <div className="min-h-screen bg-surface-white pb-20">
+    <div className="min-h-screen pb-20" style={{ background: '#fafbfc' }}>
       {/* Header with Search + Filters */}
       <Header />
 
@@ -110,12 +111,12 @@ export default function App() {
             >
               {/* Browse Mode Tabs: Live | Latest (Supabase) | Archive (Supabase) */}
               <div className="px-4 pt-3 pb-1">
-                <div className="flex gap-1 bg-surface-muted rounded-xl p-1">
+                <div className="flex gap-1 bg-primary-50 rounded-xl p-1">
                   <button
                     onClick={() => { setBrowseMode('live'); hapticFeedback('light'); }}
                     className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-[11px] font-bold transition-all ${
                       browseMode === 'live'
-                        ? 'bg-white text-accent shadow-sm'
+                        ? 'bg-white text-primary-900 shadow-sm'
                         : 'text-primary-500'
                     }`}
                   >
@@ -157,9 +158,10 @@ export default function App() {
                         onClick={() => { deselectAll(); hapticFeedback('light'); }}
                         className={`flex-shrink-0 px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all whitespace-nowrap ${
                           !lockedSource
-                            ? 'bg-accent text-white'
-                            : 'bg-surface-muted text-primary-600 border border-surface-border'
+                            ? 'text-white shadow-sm'
+                            : 'bg-white text-primary-600 border border-primary-200/60'
                         }`}
+                        style={!lockedSource ? { background: 'var(--gradient-accent)' } : {}}
                       >
                         All Sources
                       </button>
@@ -179,12 +181,12 @@ export default function App() {
                             }}
                             className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all whitespace-nowrap ${
                               lockedSource === source
-                                ? 'text-white'
-                                : 'bg-surface-muted text-primary-600 border border-surface-border hover:border-primary-400'
+                                ? 'text-white shadow-sm'
+                                : 'bg-white text-primary-600 border border-primary-200/60 hover:border-primary-300'
                             }`}
                             style={lockedSource === source ? { backgroundColor: config.color } : {}}
                           >
-                            {config.icon} {config.name}
+                            <SourceIcon source={source} size={12} /> {config.name}
                             <span className="opacity-70">({count})</span>
                           </button>
                         );
@@ -275,8 +277,8 @@ export default function App() {
                       <ListSkeleton count={5} />
                     ) : sbJobs.length === 0 ? (
                       <div className="py-16 text-center">
-                        <div className="w-20 h-20 bg-surface-muted rounded-3xl flex items-center justify-center mx-auto mb-4">
-                          <span className="text-3xl">{browseMode === 'latest' ? '\u{1F550}' : '\u{1F4E6}'}</span>
+                        <div className="w-20 h-20 bg-primary-50 rounded-3xl flex items-center justify-center mx-auto mb-4">
+                          <Clock className="w-8 h-8 text-primary-300" />
                         </div>
                         <h3 className="text-base font-bold text-primary-800 mb-2">
                           {browseMode === 'latest' ? 'No Latest Jobs' : 'No Archived Jobs'}
@@ -391,11 +393,14 @@ function EmptyState() {
 
   return (
     <div className="py-16 text-center px-8">
-      <div className="w-20 h-20 bg-surface-muted rounded-3xl flex items-center justify-center mx-auto mb-4">
-        <span className="text-3xl">{'\u{1F50D}'}</span>
+      <div className="w-20 h-20 bg-primary-50 rounded-3xl flex items-center justify-center mx-auto mb-4">
+        <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="#adb5bd" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="11" cy="11" r="8" />
+          <path d="m21 21-4.35-4.35" />
+        </svg>
       </div>
       <h3 className="text-base font-bold text-primary-800 mb-2">No internships found</h3>
-      <p className="text-xs text-primary-500 mb-4 leading-relaxed">
+      <p className="text-xs text-primary-400 mb-4 leading-relaxed">
         Try adjusting your filters or search terms to discover more opportunities.
       </p>
       <button

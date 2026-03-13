@@ -1,10 +1,10 @@
 // ============================================================
-// SORT PANEL — Sort Options Sheet
+// SORT PANEL — Premium Sort Options Sheet
 // ============================================================
 
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Check } from 'lucide-react';
+import { X, Check, ArrowUpDown } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { SORT_OPTIONS } from '@/utils/constants';
 import { hapticFeedback } from '@/utils/helpers';
@@ -21,7 +21,7 @@ export default function SortPanel() {
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="fixed inset-0 z-50 bg-black/30 backdrop-blur-sm"
+        className="fixed inset-0 z-50 bg-black/20 backdrop-blur-sm"
         onClick={() => setSortOpen(false)}
       >
         <motion.div
@@ -30,6 +30,7 @@ export default function SortPanel() {
           exit={{ y: '100%' }}
           transition={{ type: 'spring', damping: 30, stiffness: 300 }}
           className="absolute bottom-0 left-0 right-0 bg-white rounded-t-3xl max-h-[70vh] overflow-hidden"
+          style={{ boxShadow: '0 -8px 40px rgba(0,0,0,0.08)' }}
           onClick={(e) => e.stopPropagation()}
         >
           {/* Handle */}
@@ -38,10 +39,13 @@ export default function SortPanel() {
           </div>
 
           {/* Header */}
-          <div className="flex items-center justify-between px-5 py-3 border-b border-surface-border">
-            <h2 className="text-base font-bold text-primary-900">Sort By</h2>
+          <div className="flex items-center justify-between px-5 py-3" style={{ borderBottom: '1px solid rgba(0,0,0,0.05)' }}>
+            <div className="flex items-center gap-2">
+              <ArrowUpDown className="w-4 h-4 text-primary-400" />
+              <h2 className="text-base font-bold text-primary-900 tracking-tight">Sort By</h2>
+            </div>
             <button onClick={() => setSortOpen(false)} className="p-1">
-              <X className="w-5 h-5 text-primary-500" />
+              <X className="w-5 h-5 text-primary-400" />
             </button>
           </div>
 
@@ -57,19 +61,23 @@ export default function SortPanel() {
                     hapticFeedback('light');
                     setTimeout(() => setSortOpen(false), 150);
                   }}
-                  className={`flex items-center gap-3 w-full px-5 py-3 transition-all ${
-                    active ? 'bg-accent/5' : 'hover:bg-surface-muted/50'
+                  className={`flex items-center gap-3 w-full px-5 py-3 transition-all duration-200 ${
+                    active ? 'bg-primary-50' : 'hover:bg-primary-50/50'
                   }`}
                 >
-                  <span className="text-lg">{option.icon}</span>
+                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                    active ? 'bg-primary-900 text-white' : 'bg-primary-50 text-primary-400'
+                  }`}>
+                    <ArrowUpDown className="w-3.5 h-3.5" />
+                  </div>
                   <div className="flex-1 text-left">
-                    <p className={`text-sm font-semibold ${active ? 'text-accent' : 'text-primary-800'}`}>
+                    <p className={`text-sm font-semibold ${active ? 'text-primary-900' : 'text-primary-700'}`}>
                       {option.label}
                     </p>
-                    <p className="text-[11px] text-primary-500">{option.description}</p>
+                    <p className="text-[11px] text-primary-400">{option.description}</p>
                   </div>
                   {active && (
-                    <div className="w-5 h-5 bg-accent rounded-full flex items-center justify-center">
+                    <div className="w-5 h-5 rounded-full flex items-center justify-center" style={{ background: 'var(--gradient-accent)' }}>
                       <Check className="w-3 h-3 text-white" />
                     </div>
                   )}

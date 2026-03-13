@@ -270,9 +270,15 @@ async def handle_apply(request: web.Request) -> web.Response:
 async def handle_llm_chat(request: web.Request) -> web.Response:
     """
     POST /api/llm/chat
-    Body: { "message": "...", "context": { "internshipIds": [...] } }
+    Body: {
+        "message": "...",
+        "profile": "generalist|resume_builder|ats_checker|career_counselor",
+        "context": { "internshipIds": [...] },
+        "history": [{"role":"user","content":"..."},...]
+    }
 
-    AI-powered chat for cover letters, advice, comparisons.
+    AI-powered chat with specialist profiles and job database context.
+    Groq is primary, Cerebras is automatic fallback.
     """
     try:
         body = await request.json()
@@ -283,51 +289,208 @@ async def handle_llm_chat(request: web.Request) -> web.Response:
     if not message:
         return _json_response({"success": False, "error": "Message required"}, status=400)
 
+    profile = body.get('profile', 'generalist')
+    history = body.get('history', [])
+    context = body.get('context', {})
+
+    # ---- Build job context from database ----
+    job_context = ""
+    try:
+        from core.database import get_db
+        db = get_db()
+        listings, total = db.get_management_internships(limit=10, offset=0, sort_by='ppo')
+        if listings:
+            job_lines = []
+            for j in listings[:8]:
+                title = j.get('title', 'N/A')
+                company = j.get('company', 'N/A')
+                stipend = j.get('stipend', 0)
+                location = j.get('location', 'N/A')
+                source = j.get('source', 'N/A')
+                duration = j.get('duration', 0)
+                job_lines.append(
+                    f"- {title} at {company} | INR {stipend}/mo | {location} | {duration}mo | via {source}"
+                )
+            job_context = (
+                f"\n\n--- CURRENT JOB DATABASE ({total} total listings) ---\n"
+                f"Top listings by relevance:\n" + "\n".join(job_lines)
+            )
+    except Exception as e:
+        logger.debug(f"[{MODULE_ID}] Job context fetch skipped: {e}")
+
+    # ---- Profile-specific system prompts ----
+    SYSTEM_PROMPTS = {
+        "generalist": (
+            "You are InternHub Pro AI -- a senior career counselor and student advisor "
+            "specializing in MBA internship placements in India. You have 15+ years of experience "
+            "placing students at Tier-1 companies (McKinsey, Goldman Sachs, Google, HUL, P&G, etc.) "
+            "and deep knowledge of the Indian internship ecosystem.\n\n"
+            "CORE EXPERTISE:\n"
+            "- Internship search strategy and application prioritization\n"
+            "- Company culture analysis and fit assessment\n"
+            "- Stipend negotiation and offer evaluation\n"
+            "- Career path planning for MBA students (finance, consulting, marketing, ops, tech)\n"
+            "- Platform-specific tips (Internshala, LinkedIn, Naukri, Unstop, etc.)\n"
+            "- Understanding of PPO conversion rates and ghost posting detection\n\n"
+            "BEHAVIORAL GUIDELINES:\n"
+            "- Be direct, actionable, and data-driven. No fluff.\n"
+            "- Reference specific companies, programs, and timelines when relevant.\n"
+            "- If asked about a specific listing, analyze its strengths and red flags.\n"
+            "- Proactively suggest better alternatives when appropriate.\n"
+            "- Use bullet points and markdown for clarity.\n"
+            "- Keep responses concise (150-300 words) unless detailed analysis is requested.\n"
+            "- Always consider the user's time constraints (MBA programs are demanding).\n"
+            f"{job_context}"
+        ),
+        "resume_builder": (
+            "You are ResumeForge AI -- an elite resume and application materials specialist "
+            "with deep expertise in MBA-level professional documents. You have personally reviewed "
+            "5,000+ resumes and helped candidates land roles at BCG, Bain, JP Morgan, Amazon, "
+            "Flipkart, Swiggy, Razorpay, and other top firms.\n\n"
+            "CORE EXPERTISE:\n"
+            "- Resume optimization for ATS (Applicant Tracking Systems)\n"
+            "- Cover letter generation tailored to specific roles and companies\n"
+            "- LinkedIn profile optimization for recruiter visibility\n"
+            "- Statement of Purpose (SOP) and motivation letter writing\n"
+            "- Action verb optimization and quantification of achievements\n"
+            "- Industry-specific resume formatting (consulting, finance, tech, FMCG)\n\n"
+            "DOCUMENT STANDARDS:\n"
+            "- Harvard Business School resume format as baseline\n"
+            "- STAR method for all bullet points (Situation, Task, Action, Result)\n"
+            "- Quantify every achievement (revenue, users, efficiency, %, $)\n"
+            "- Tailor keywords to match JD requirements (ATS optimization)\n"
+            "- One page max for internship resumes\n\n"
+            "BEHAVIORAL GUIDELINES:\n"
+            "- When generating a cover letter, ask for the role details if not provided.\n"
+            "- Always provide before/after examples when editing resume bullets.\n"
+            "- Flag weak verbs and vague statements immediately.\n"
+            "- Suggest role-specific keywords for ATS optimization.\n"
+            "- Format output in clean markdown with clear sections.\n"
+            f"{job_context}"
+        ),
+        "ats_checker": (
+            "You are ATScan Pro -- an advanced Applicant Tracking System analyzer and "
+            "optimization engine. You reverse-engineer how Workday, Greenhouse, Lever, "
+            "iCIMS, Taleo, and other ATS platforms parse and rank resumes.\n\n"
+            "CORE EXPERTISE:\n"
+            "- ATS compatibility scoring (0-100) with detailed breakdown\n"
+            "- Keyword density analysis and gap identification\n"
+            "- Format compliance checking (fonts, headers, sections, file type)\n"
+            "- Industry-specific keyword databases\n"
+            "- Section ordering optimization for maximum ATS score\n"
+            "- Hidden ATS requirements that most candidates miss\n\n"
+            "ANALYSIS FRAMEWORK:\n"
+            "When analyzing a resume or application:\n"
+            "1. **Keyword Match Score**: Compare resume keywords vs. JD requirements\n"
+            "2. **Format Score**: Check ATS-friendly formatting\n"
+            "3. **Section Score**: Verify required sections exist\n"
+            "4. **Quantification Score**: Measure data-driven achievements\n"
+            "5. **Action Verb Score**: Evaluate verb strength and variety\n"
+            "6. **Overall ATS Score**: Weighted composite (0-100)\n\n"
+            "BEHAVIORAL GUIDELINES:\n"
+            "- Always provide a numerical score with detailed breakdown.\n"
+            "- List exact missing keywords from the job description.\n"
+            "- Suggest specific replacement phrases (not vague advice).\n"
+            "- Warn about ATS-breaking formatting issues.\n"
+            "- Provide the optimized version alongside the analysis.\n"
+            f"{job_context}"
+        ),
+        "career_counselor": (
+            "You are PathFinder AI -- a specialized career strategist for MBA students in India, "
+            "with deep domain knowledge of campus placements, summer internships, and lateral moves. "
+            "You understand the nuances of IIM/ISB/XLRI/FMS/MDI placement processes and have "
+            "advised 1,000+ students on career pivots and specialization choices.\n\n"
+            "CORE EXPERTISE:\n"
+            "- MBA specialization selection (Finance, Marketing, Ops, HR, Strategy, Analytics)\n"
+            "- Internship-to-PPO conversion strategies (industry-specific conversion rates)\n"
+            "- Salary and stipend benchmarking across sectors and tiers\n"
+            "- Day Zero / Day One / Day Two placement strategy\n"
+            "- Career pivot strategies (Engineering to Consulting, etc.)\n"
+            "- Industry trend analysis (which sectors are hiring, compensation trends)\n"
+            "- Short-listing strategy based on student profile, prior experience, and goals\n\n"
+            "ADVISORY FRAMEWORK:\n"
+            "1. Understand the student's background (prior experience, MBA year, college tier)\n"
+            "2. Assess career goals (short-term vs long-term)\n"
+            "3. Map target companies and roles to the student's profile\n"
+            "4. Create a prioritized application strategy with timelines\n"
+            "5. Provide preparation guidance (case interviews, GDs, technical rounds)\n\n"
+            "BEHAVIORAL GUIDELINES:\n"
+            "- Ask clarifying questions when background info is missing.\n"
+            "- Provide honest, realistic advice (don't sugarcoat weak profiles).\n"
+            "- Reference specific company names, stipend ranges, and timelines.\n"
+            "- Consider ROI (brand value + stipend + PPO probability).\n"
+            "- Use data from the job database to make recommendations concrete.\n"
+            f"{job_context}"
+        ),
+    }
+
+    system_prompt = SYSTEM_PROMPTS.get(profile, SYSTEM_PROMPTS["generalist"])
+
+    # ---- Build conversation with history ----
+    conversation_context = ""
+    if history and len(history) > 0:
+        recent = history[-6:]  # Last 3 exchanges
+        for msg in recent:
+            role = msg.get('role', 'user')
+            content = msg.get('content', '')[:500]  # Truncate long messages
+            conversation_context += f"\n[{role.upper()}]: {content}"
+        conversation_context = f"\n\n--- CONVERSATION HISTORY ---{conversation_context}\n---\n"
+
+    full_prompt = f"{conversation_context}\nUser: {message}"
+
     try:
         from core.ai_router import get_router
         router = get_router()
 
-        # Use a general-purpose AI call
-        prompt = (
-            f"You are InternHub Pro AI assistant, helping MBA students with internship applications.\n"
-            f"User question: {message}\n\n"
-            f"Provide helpful, actionable advice. Be concise but thorough.\n"
-            f"If asked about cover letters, provide a template.\n"
-            f"If asked about comparisons, analyze the key factors.\n"
-            f"Format your response with markdown for readability."
+        response = router.call(
+            task='cover_letter',  # Use heavy-analysis task routing (Groq primary)
+            prompt=full_prompt,
+            system_prompt=system_prompt,
+            max_tokens=1200,
+            temperature=0.7,
+            use_cache=False,
         )
 
-        response = router.quick_classify(prompt)
         if response and response.success:
             return _json_response({
                 "success": True,
                 "data": response.content,
+                "meta": {
+                    "model": response.model or "unknown",
+                    "provider": response.provider or "unknown",
+                    "profile": profile,
+                    "tokens": response.tokens_used or 0,
+                    "latency_ms": response.latency_ms or 0,
+                    "fallback": getattr(response, 'fallback_used', False),
+                },
             })
         else:
-            # Fallback response
             return _json_response({
                 "success": True,
                 "data": (
-                    "**Internship Application Tips:**\n\n"
-                    "1. **Customize each application** to the company and role\n"
-                    "2. **Apply within 48 hours** of posting for 3x higher response rate\n"
-                    "3. **Focus on Tier-1 companies** for brand value (long-term ROI)\n"
-                    "4. **Use /package [id]** in the bot for AI-generated application materials\n\n"
-                    "Try asking me to help with a specific listing!"
+                    "I'm processing your request but the AI engine is momentarily busy. "
+                    "Please try again in a few seconds.\n\n"
+                    "**Meanwhile, you can:**\n"
+                    "- Use /package [id] in Telegram for application materials\n"
+                    "- Use /cover [id] for AI-generated cover letters\n"
+                    "- Use /ats [id] for ATS keyword analysis"
                 ),
+                "meta": {"profile": profile, "model": "fallback"},
             })
 
     except Exception as e:
-        logger.error(f"[{MODULE_ID}] /api/llm/chat error: {e}")
+        logger.error(f"[{MODULE_ID}] /api/llm/chat error: {e}\n{traceback.format_exc()}")
         return _json_response({
             "success": True,
             "data": (
-                "I'm having trouble connecting to the AI backend right now.\n\n"
-                "**Quick Tips:**\n"
+                "I encountered a temporary connection issue with the AI engine.\n\n"
+                "**Quick alternatives:**\n"
                 "- Use /package [id] in the Telegram bot for full application packages\n"
                 "- Use /cover [id] for AI cover letters\n"
-                "- Use /ats [id] for ATS keyword analysis"
+                "- Use /ats [id] for ATS keyword analysis\n\n"
+                "*Tip: The Telegram bot has direct access to the AI engine and may work better.*"
             ),
+            "meta": {"profile": profile, "model": "error"},
         })
 
 
