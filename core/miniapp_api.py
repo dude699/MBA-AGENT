@@ -277,11 +277,12 @@ async def handle_llm_chat(request: web.Request) -> web.Response:
         "history": [{"role":"user","content":"..."},...]
     }
 
-    Resource-aware AI chat with specialist profiles and job database context.
-    - Groq primary, Cerebras automatic fallback
-    - Caches job context for 5 minutes to minimize DB calls
-    - Anti-hallucination: only references real data from database
-    - Self-aware of available resources before responding
+    v3.0 OVERHAUL: 
+    - Fetches jobs from BOTH SQLite AND Supabase for complete context
+    - Reads user CV text for personalized advice
+    - Reads user profile for targeted recommendations
+    - Anti-hallucination with real data awareness
+    - Massively improved system prompts with deep expertise
     """
     try:
         body = await request.json()
@@ -297,173 +298,240 @@ async def handle_llm_chat(request: web.Request) -> web.Response:
     context = body.get('context', {})
     client_job_count = context.get('clientJobCount', 0)
     has_loaded_jobs = context.get('hasLoadedJobs', False)
+    telegram_id = context.get('telegramId', '') or body.get('telegram_id', '')
 
-    # ---- Resource-aware job context with caching ----
+    # ---- v3.0: Multi-source job context (SQLite + Supabase) ----
     job_context = ""
     total_jobs = 0
+    supabase_jobs = 0
     try:
         import time as _time
 
-        # Simple in-memory cache for job context (5 min TTL)
-        cache_key = '_llm_job_context_cache'
-        cache_ts_key = '_llm_job_context_ts'
+        # Simple in-memory cache for job context (3 min TTL - reduced from 5 for freshness)
+        cache_key = '_llm_job_context_cache_v3'
+        cache_ts_key = '_llm_job_context_ts_v3'
         cached_ctx = getattr(handle_llm_chat, cache_key, None)
         cached_ts = getattr(handle_llm_chat, cache_ts_key, 0)
 
-        if cached_ctx and (_time.time() - cached_ts) < 300:
+        if cached_ctx and (_time.time() - cached_ts) < 180:
             job_context = cached_ctx['context']
             total_jobs = cached_ctx['total']
-            logger.debug(f"[{MODULE_ID}] Using cached job context ({total_jobs} listings)")
+            supabase_jobs = cached_ctx.get('supabase_total', 0)
         else:
-            from core.database import get_db
-            db = get_db()
-            listings, total = db.get_management_internships(limit=10, offset=0, sort_by='ppo')
-            total_jobs = total
-            if listings:
-                job_lines = []
-                for j in listings[:8]:
+            job_lines = []
+
+            # Source 1: SQLite (live scraped data)
+            try:
+                from core.database import get_db
+                db = get_db()
+                listings, total = db.get_management_internships(limit=15, offset=0, sort_by='ppo')
+                total_jobs = total
+                for j in listings[:10]:
                     title = j.get('title', 'N/A')
                     company = j.get('company', 'N/A')
-                    stipend = j.get('stipend', 0)
+                    stipend = j.get('stipend_monthly', 0) or 0
                     location = j.get('location', 'N/A')
                     source = j.get('source', 'N/A')
-                    duration = j.get('duration', 0)
+                    duration = j.get('duration_months', 0) or 0
                     category = j.get('category', 'N/A')
+                    lid = j.get('id', 0)
+                    ppo = j.get('ppo_score', 0) or 0
                     job_lines.append(
-                        f"- {title} at {company} | INR {stipend}/mo | {location} | {duration}mo | {category} | via {source}"
+                        f"  #{lid}: {title} at {company} | INR {stipend}/mo | {location} | "
+                        f"{duration}mo | {category} | via {source} | PPO:{ppo:.0f}"
                     )
+            except Exception as e:
+                logger.debug(f"[{MODULE_ID}] SQLite job context error: {e}")
+
+            # Source 2: Supabase (persistent cloud data)
+            try:
+                from core.supabase_client import is_operational
+                if is_operational():
+                    from core.supabase_db import SupabaseJobDB
+                    sb_jobs, sb_total = SupabaseJobDB.get_latest_jobs(limit=10, offset=0)
+                    supabase_jobs = sb_total
+                    if sb_total > total_jobs:
+                        total_jobs = max(total_jobs, sb_total)
+                    for j in sb_jobs[:5]:
+                        title = j.get('title', 'N/A')
+                        company = j.get('company', 'N/A')
+                        stipend = j.get('stipend', 0) or 0
+                        location = j.get('location', 'N/A')
+                        source = j.get('source', 'N/A')
+                        if not any(title in line and company in line for line in job_lines):
+                            job_lines.append(
+                                f"  [SB] {title} at {company} | INR {stipend}/mo | {location} | via {source}"
+                            )
+            except Exception as e:
+                logger.debug(f"[{MODULE_ID}] Supabase job context error: {e}")
+
+            if job_lines:
                 job_context = (
-                    f"\n\n--- CURRENT JOB DATABASE ({total} total verified listings) ---\n"
+                    f"\n\n=== CURRENT JOB DATABASE ({total_jobs} total verified listings"
+                    f"{f', {supabase_jobs} in cloud DB' if supabase_jobs else ''}) ===\n"
                     f"Top listings by relevance:\n" + "\n".join(job_lines)
                 )
             else:
-                job_context = "\n\n--- JOB DATABASE: Currently empty. No listings available. ---"
+                job_context = (
+                    f"\n\n=== JOB DATABASE STATUS ===\n"
+                    f"The database has {total_jobs} total listings. "
+                    f"The scraping pipeline may be between cycles. "
+                    f"Listings refresh on the weekly schedule (Mon/Wed/Fri mornings IST). "
+                    f"The user can see jobs in the Browse tab, Latest tab, and All Jobs tab of the app."
+                )
 
-            # Cache result
-            setattr(handle_llm_chat, cache_key, {'context': job_context, 'total': total_jobs})
+            setattr(handle_llm_chat, cache_key, {
+                'context': job_context, 'total': total_jobs, 'supabase_total': supabase_jobs
+            })
             setattr(handle_llm_chat, cache_ts_key, _time.time())
 
     except Exception as e:
         logger.debug(f"[{MODULE_ID}] Job context fetch skipped: {e}")
-        job_context = "\n\n--- JOB DATABASE: Temporarily unavailable ---"
+        job_context = "\n\n=== JOB DATABASE: Temporarily loading, please try again in a moment ==="
 
-    # ---- Profile-specific system prompts with anti-hallucination rules ----
+    # ---- v3.0: Read user CV and profile for personalization ----
+    user_context = ""
+    if telegram_id:
+        try:
+            cv_text = _read_user_cv_text(str(telegram_id))
+            user_profile = _read_user_profile(str(telegram_id))
+            
+            if user_profile:
+                profile_parts = []
+                if user_profile.get('college'):
+                    profile_parts.append(f"College: {user_profile['college']}")
+                if user_profile.get('specialization'):
+                    profile_parts.append(f"Specialization: {user_profile['specialization']}")
+                if user_profile.get('experience'):
+                    profile_parts.append(f"Prior Experience: {user_profile['experience']}")
+                if user_profile.get('skills'):
+                    profile_parts.append(f"Key Skills: {user_profile['skills']}")
+                if user_profile.get('location'):
+                    profile_parts.append(f"Preferred Location: {user_profile['location']}")
+                if profile_parts:
+                    user_context += f"\n\n=== USER PROFILE ===\n" + "\n".join(profile_parts)
+
+            if cv_text:
+                user_context += f"\n\n=== USER CV/RESUME (extracted text, first 2000 chars) ===\n{cv_text}"
+
+        except Exception as e:
+            logger.debug(f"[{MODULE_ID}] User context read error: {e}")
+
+    # ---- v3.0: MUCH improved anti-hallucination rules ----
     ANTI_HALLUCINATION = (
-        "\n\nCRITICAL RULES (NEVER VIOLATE):\n"
-        "- ONLY reference jobs/companies that appear in the JOB DATABASE section above.\n"
-        "- If the database is empty or unavailable, clearly state that no listings are currently loaded.\n"
-        "- NEVER invent job titles, company names, stipend amounts, or statistics.\n"
-        "- If you don't have data to answer a question, say so honestly and suggest the user "
-        "refresh their listings or use Telegram bot commands.\n"
-        "- Keep responses concise. Use bullet points and short paragraphs.\n"
-        "- Do NOT use markdown heading syntax (# or ##). Use bold text (**text**) for emphasis instead.\n"
-        f"- The user's app currently shows {client_job_count} listings on their device.\n"
-        f"- The database has {total_jobs} total verified listings.\n"
+        "\n\nCRITICAL BEHAVIORAL RULES (NEVER VIOLATE):\n"
+        "1. ONLY reference jobs/companies that appear in the JOB DATABASE section above.\n"
+        "2. If the database shows 0 listings, explain that the scraping pipeline runs on a schedule "
+        "(Mon/Wed/Fri) and suggest checking back or using /run pipeline in the Telegram bot.\n"
+        "3. NEVER invent job titles, company names, stipend amounts, or statistics.\n"
+        "4. If asked about specific listings, use the #{id} references from the database.\n"
+        "5. Keep responses concise and actionable. Use bullet points and short paragraphs.\n"
+        "6. Do NOT use markdown heading syntax (# or ##). Use **bold text** for emphasis.\n"
+        "7. When the user has a CV uploaded, reference their specific skills and experience.\n"
+        "8. Always end with an actionable next step the user can take.\n"
+        f"9. The user's app currently shows {client_job_count} listings. "
+        f"The database has {total_jobs} total verified listings"
+        f"{f' ({supabase_jobs} in cloud DB)' if supabase_jobs else ''}.\n"
+        "10. If user asks 'do we have any listings' and total > 0, confirm YES and list them. "
+        "Never say 'no listings' when the database has entries.\n"
     )
+
+    # ---- v3.0: Massively improved profile-specific system prompts ----
     SYSTEM_PROMPTS = {
         "generalist": (
-            "You are InternHub Pro AI -- a senior career counselor and student advisor "
-            "specializing in MBA internship placements in India. You have 15+ years of experience "
-            "placing students at Tier-1 companies (McKinsey, Goldman Sachs, Google, HUL, P&G, etc.) "
-            "and deep knowledge of the Indian internship ecosystem.\n\n"
-            "CORE EXPERTISE:\n"
-            "- Internship search strategy and application prioritization\n"
-            "- Company culture analysis and fit assessment\n"
-            "- Stipend negotiation and offer evaluation\n"
-            "- Career path planning for MBA students (finance, consulting, marketing, ops, tech)\n"
-            "- Platform-specific tips (Internshala, LinkedIn, Naukri, Unstop, etc.)\n"
-            "- Understanding of PPO conversion rates and ghost posting detection\n\n"
-            "BEHAVIORAL GUIDELINES:\n"
-            "- Be direct, actionable, and data-driven. No fluff.\n"
-            "- Reference specific companies, programs, and timelines when relevant.\n"
-            "- If asked about a specific listing, analyze its strengths and red flags.\n"
-            "- Proactively suggest better alternatives when appropriate.\n"
-            "- Use bullet points and markdown for clarity.\n"
-            "- Keep responses concise (150-300 words) unless detailed analysis is requested.\n"
-            "- Always consider the user's time constraints (MBA programs are demanding).\n"
+            "You are InternHub Pro AI -- the most advanced career counselor and MBA internship "
+            "advisor in India. You have 20+ years of experience placing students at McKinsey, "
+            "Goldman Sachs, Google, HUL, P&G, Accenture, Deloitte, and every Tier-1 company. "
+            "You speak with authority, provide data-driven advice, and ALWAYS reference the real "
+            "job listings from the database.\n\n"
+            "YOUR KNOWLEDGE DOMAINS:\n"
+            "- Complete awareness of all job listings in the system database\n"
+            "- MBA internship landscape in India (IIMs, ISB, XLRI, FMS, MDI, NMIMS, SIBM)\n"
+            "- Internship search strategy, application prioritization, and timing\n"
+            "- Company culture analysis, stipend benchmarking, and PPO conversion rates\n"
+            "- Platform-specific tactics (Internshala, LinkedIn, Naukri, Unstop, Greenhouse, etc.)\n"
+            "- Ghost posting detection and red flag identification\n"
+            "- Industry trends in consulting, finance, marketing, operations, and tech\n\n"
+            "RESPONSE STYLE:\n"
+            "- Direct, no-fluff, actionable advice with specific company/role references\n"
+            "- Use the job database to make recommendations concrete and verifiable\n"
+            "- If user has a CV uploaded, reference their skills and experience specifically\n"
+            "- Always suggest 2-3 concrete next steps\n"
+            "- Keep responses 150-400 words unless detailed analysis requested\n"
+            f"{user_context}"
             f"{job_context}"
             f"{ANTI_HALLUCINATION}"
         ),
         "resume_builder": (
-            "You are ResumeForge AI -- an elite resume and application materials specialist "
-            "with deep expertise in MBA-level professional documents. You have personally reviewed "
-            "5,000+ resumes and helped candidates land roles at BCG, Bain, JP Morgan, Amazon, "
-            "Flipkart, Swiggy, Razorpay, and other top firms.\n\n"
-            "CORE EXPERTISE:\n"
-            "- Resume optimization for ATS (Applicant Tracking Systems)\n"
-            "- Cover letter generation tailored to specific roles and companies\n"
+            "You are ResumeForge AI -- India's top resume, cover letter, and application materials "
+            "specialist. You have reviewed 10,000+ resumes and helped candidates land at BCG, Bain, "
+            "McKinsey, JP Morgan, Amazon, Flipkart, Swiggy, and Razorpay.\n\n"
+            "YOUR CORE STRENGTHS:\n"
+            "- ATS-optimized resume writing (Workday, Greenhouse, Lever, iCIMS compatible)\n"
+            "- STAR method bullet points with quantified impact metrics\n"
+            "- Cover letter generation tailored to specific companies and roles\n"
             "- LinkedIn profile optimization for recruiter visibility\n"
-            "- Statement of Purpose (SOP) and motivation letter writing\n"
-            "- Action verb optimization and quantification of achievements\n"
-            "- Industry-specific resume formatting (consulting, finance, tech, FMCG)\n\n"
+            "- Statement of Purpose (SOP) and motivation letters\n"
+            "- Harvard Business School resume format as the gold standard\n\n"
+            "WHEN USER HAS A CV UPLOADED:\n"
+            "- Analyze their existing resume and suggest concrete improvements\n"
+            "- Identify weak verbs, vague statements, and missing quantification\n"
+            "- Suggest role-specific keywords based on the job listings in the database\n"
+            "- Provide before/after examples for their specific bullet points\n\n"
             "DOCUMENT STANDARDS:\n"
-            "- Harvard Business School resume format as baseline\n"
-            "- STAR method for all bullet points (Situation, Task, Action, Result)\n"
-            "- Quantify every achievement (revenue, users, efficiency, %, $)\n"
-            "- Tailor keywords to match JD requirements (ATS optimization)\n"
-            "- One page max for internship resumes\n\n"
-            "BEHAVIORAL GUIDELINES:\n"
-            "- When generating a cover letter, ask for the role details if not provided.\n"
-            "- Always provide before/after examples when editing resume bullets.\n"
-            "- Flag weak verbs and vague statements immediately.\n"
-            "- Suggest role-specific keywords for ATS optimization.\n"
-            "- Format output in clean markdown with clear sections.\n"
+            "- Quantify EVERY achievement (revenue, users, efficiency %, cost savings $)\n"
+            "- One page maximum for internship resumes\n"
+            "- Tailor keywords to match specific JD requirements\n"
+            "- Strong action verbs: Led, Drove, Increased, Reduced, Designed, Launched\n"
+            f"{user_context}"
             f"{job_context}"
             f"{ANTI_HALLUCINATION}"
         ),
         "ats_checker": (
-            "You are ATScan Pro -- an advanced Applicant Tracking System analyzer and "
-            "optimization engine. You reverse-engineer how Workday, Greenhouse, Lever, "
-            "iCIMS, Taleo, and other ATS platforms parse and rank resumes.\n\n"
-            "CORE EXPERTISE:\n"
-            "- ATS compatibility scoring (0-100) with detailed breakdown\n"
-            "- Keyword density analysis and gap identification\n"
-            "- Format compliance checking (fonts, headers, sections, file type)\n"
-            "- Industry-specific keyword databases\n"
-            "- Section ordering optimization for maximum ATS score\n"
-            "- Hidden ATS requirements that most candidates miss\n\n"
-            "ANALYSIS FRAMEWORK:\n"
-            "When analyzing a resume or application:\n"
-            "1. **Keyword Match Score**: Compare resume keywords vs. JD requirements\n"
-            "2. **Format Score**: Check ATS-friendly formatting\n"
-            "3. **Section Score**: Verify required sections exist\n"
-            "4. **Quantification Score**: Measure data-driven achievements\n"
-            "5. **Action Verb Score**: Evaluate verb strength and variety\n"
-            "6. **Overall ATS Score**: Weighted composite (0-100)\n\n"
-            "BEHAVIORAL GUIDELINES:\n"
-            "- Always provide a numerical score with detailed breakdown.\n"
-            "- List exact missing keywords from the job description.\n"
-            "- Suggest specific replacement phrases (not vague advice).\n"
-            "- Warn about ATS-breaking formatting issues.\n"
-            "- Provide the optimized version alongside the analysis.\n"
+            "You are ATScan Pro -- an advanced Applicant Tracking System analyzer. You "
+            "reverse-engineer how Workday, Greenhouse, Lever, iCIMS, Taleo, and SmartRecruiters "
+            "parse and rank resumes. You provide exact keyword match analysis.\n\n"
+            "YOUR ANALYSIS FRAMEWORK:\n"
+            "1. **Keyword Match Score** (0-100): Compare resume keywords vs JD requirements\n"
+            "2. **Format Score** (0-100): Check ATS-friendly formatting (fonts, headers, sections)\n"
+            "3. **Section Score** (0-100): Verify required sections exist and are properly labeled\n"
+            "4. **Quantification Score** (0-100): Measure data-driven achievements\n"
+            "5. **Action Verb Score** (0-100): Evaluate verb strength and variety\n"
+            "6. **Overall ATS Score** (0-100): Weighted composite score\n\n"
+            "WHEN USER HAS A CV:\n"
+            "- Run full ATS analysis on their uploaded resume\n"
+            "- List exact missing keywords from the job listings in the database\n"
+            "- Provide specific replacement phrases (not vague advice)\n"
+            "- Warn about ATS-breaking formatting issues\n"
+            "- Provide the optimized version alongside the analysis\n\n"
+            "KEY INSIGHT: Most ATS systems reject 75% of resumes before a human ever sees them. "
+            "Your job is to ensure the user's resume PASSES the robot filter.\n"
+            f"{user_context}"
             f"{job_context}"
             f"{ANTI_HALLUCINATION}"
         ),
         "career_counselor": (
-            "You are PathFinder AI -- a specialized career strategist for MBA students in India, "
-            "with deep domain knowledge of campus placements, summer internships, and lateral moves. "
-            "You understand the nuances of IIM/ISB/XLRI/FMS/MDI placement processes and have "
-            "advised 1,000+ students on career pivots and specialization choices.\n\n"
-            "CORE EXPERTISE:\n"
-            "- MBA specialization selection (Finance, Marketing, Ops, HR, Strategy, Analytics)\n"
-            "- Internship-to-PPO conversion strategies (industry-specific conversion rates)\n"
-            "- Salary and stipend benchmarking across sectors and tiers\n"
-            "- Day Zero / Day One / Day Two placement strategy\n"
-            "- Career pivot strategies (Engineering to Consulting, etc.)\n"
-            "- Industry trend analysis (which sectors are hiring, compensation trends)\n"
-            "- Short-listing strategy based on student profile, prior experience, and goals\n\n"
-            "ADVISORY FRAMEWORK:\n"
-            "1. Understand the student's background (prior experience, MBA year, college tier)\n"
-            "2. Assess career goals (short-term vs long-term)\n"
-            "3. Map target companies and roles to the student's profile\n"
-            "4. Create a prioritized application strategy with timelines\n"
+            "You are PathFinder AI -- India's most sought-after MBA career strategist. You understand "
+            "every nuance of IIM/ISB/XLRI/FMS/MDI placement processes and have advised 2,000+ "
+            "students on career pivots, specialization choices, and internship-to-PPO conversion.\n\n"
+            "YOUR STRATEGIC FRAMEWORK:\n"
+            "1. Understand student background (college tier, prior experience, MBA year)\n"
+            "2. Map career goals (short-term internship vs. long-term career path)\n"
+            "3. Identify target companies and roles based on realistic fit\n"
+            "4. Create prioritized application strategy with specific timelines\n"
             "5. Provide preparation guidance (case interviews, GDs, technical rounds)\n\n"
-            "BEHAVIORAL GUIDELINES:\n"
-            "- Ask clarifying questions when background info is missing.\n"
-            "- Provide honest, realistic advice (don't sugarcoat weak profiles).\n"
-            "- Reference specific company names, stipend ranges, and timelines.\n"
-            "- Consider ROI (brand value + stipend + PPO probability).\n"
-            "- Use data from the job database to make recommendations concrete.\n"
+            "DOMAIN EXPERTISE:\n"
+            "- Day Zero / Day One / Day Two placement strategies across B-schools\n"
+            "- Stipend and CTC benchmarking by sector, tier, and role\n"
+            "- PPO conversion rates by company (consulting: 70-85%, FMCG: 80-90%, tech: 60-75%)\n"
+            "- Career pivot strategies (Engineering to Consulting, IT to Finance, etc.)\n"
+            "- Sector trend analysis (which sectors are hiring, compensation growth)\n\n"
+            "WHEN USER HAS A PROFILE/CV:\n"
+            "- Tailor ALL advice to their specific background and goals\n"
+            "- Be honest about realistic targets (don't sugarcoat weak profiles)\n"
+            "- Consider ROI: brand value + stipend + PPO probability\n"
+            "- Use data from the job database to make recommendations concrete\n"
+            f"{user_context}"
             f"{job_context}"
             f"{ANTI_HALLUCINATION}"
         ),
@@ -471,37 +539,37 @@ async def handle_llm_chat(request: web.Request) -> web.Response:
 
     system_prompt = SYSTEM_PROMPTS.get(profile, SYSTEM_PROMPTS["generalist"])
 
-    # ---- Build conversation with history (minimize tokens) ----
+    # ---- Build conversation with history ----
     conversation_context = ""
     if history and len(history) > 0:
-        recent = history[-4:]  # Last 2 exchanges only (save tokens)
+        recent = history[-6:]  # Last 3 exchanges (increased from 2)
         for msg in recent:
             role = msg.get('role', 'user')
-            content = msg.get('content', '')[:300]  # Truncate to save tokens
+            content = msg.get('content', '')[:400]
             conversation_context += f"\n[{role.upper()}]: {content}"
         conversation_context = f"\n\n--- RECENT CONTEXT ---{conversation_context}\n---\n"
 
     full_prompt = f"{conversation_context}\nUser: {message}"
 
-    # ---- Token budget: adjust based on profile ----
+    # ---- Token budget: increased for better quality ----
     token_budget = {
-        'generalist': 800,
-        'resume_builder': 1200,  # Needs more for cover letters
-        'ats_checker': 1000,
-        'career_counselor': 900,
-    }.get(profile, 800)
+        'generalist': 1000,
+        'resume_builder': 1500,
+        'ats_checker': 1200,
+        'career_counselor': 1100,
+    }.get(profile, 1000)
 
     try:
         from core.ai_router import get_router
         router = get_router()
 
         response = router.call(
-            task='cover_letter',  # Use heavy-analysis task routing (Groq primary)
+            task='cover_letter',
             prompt=full_prompt,
             system_prompt=system_prompt,
             max_tokens=token_budget,
-            temperature=0.65,
-            use_cache=True,  # Enable cache for repeated similar queries
+            temperature=0.6,
+            use_cache=True,
         )
 
         if response and response.success:
@@ -515,6 +583,8 @@ async def handle_llm_chat(request: web.Request) -> web.Response:
                     "tokens": response.tokens_used or 0,
                     "latency_ms": response.latency_ms or 0,
                     "fallback": getattr(response, 'fallback_used', False),
+                    "total_jobs": total_jobs,
+                    "has_cv": bool(user_context),
                 },
             })
         else:
@@ -1190,6 +1260,171 @@ async def handle_supabase_job_detail(request: web.Request) -> web.Response:
 
 
 # ============================================================
+# USER PROFILE & CV UPLOAD ENDPOINTS
+# ============================================================
+
+async def handle_user_upload_cv(request: web.Request) -> web.Response:
+    """
+    POST /api/user/upload-cv
+    Multipart form data with 'cv' file (PDF) and optional 'telegram_id'.
+    Stores CV in data/user_cvs/{telegram_id}.pdf for AI to read.
+    """
+    try:
+        reader = await request.multipart()
+        telegram_id = None
+        cv_data = None
+        cv_filename = None
+
+        while True:
+            part = await reader.next()
+            if part is None:
+                break
+            if part.name == 'telegram_id':
+                telegram_id = (await part.text()).strip()
+            elif part.name == 'cv':
+                cv_filename = part.filename or 'resume.pdf'
+                cv_data = await part.read(limit=5 * 1024 * 1024)  # Max 5MB
+
+        if not cv_data:
+            return _json_response({"success": False, "error": "No CV file provided"}, 400)
+
+        # Validate PDF magic bytes
+        if cv_data[:4] != b'%PDF':
+            return _json_response({"success": False, "error": "Only PDF files are supported"}, 400)
+
+        # Store the CV
+        cv_dir = os.path.join('data', 'user_cvs')
+        os.makedirs(cv_dir, exist_ok=True)
+
+        safe_id = str(telegram_id or 'anonymous').replace('/', '').replace('..', '')[:20]
+        cv_path = os.path.join(cv_dir, f'{safe_id}.pdf')
+
+        with open(cv_path, 'wb') as f:
+            f.write(cv_data)
+
+        logger.info(f"[{MODULE_ID}] CV uploaded for user {safe_id}: {len(cv_data)} bytes")
+
+        return _json_response({
+            "success": True,
+            "data": {
+                "filename": cv_filename,
+                "size": len(cv_data),
+                "telegram_id": telegram_id,
+                "stored": True,
+            },
+        })
+
+    except Exception as e:
+        logger.error(f"[{MODULE_ID}] /api/user/upload-cv error: {e}")
+        return _json_response({"success": False, "error": str(e)[:200]}, 500)
+
+
+async def handle_user_profile(request: web.Request) -> web.Response:
+    """
+    GET/POST /api/user/profile
+    GET: Return saved user profile
+    POST: Save user profile data (college, specialization, skills, etc.)
+    """
+    try:
+        if request.method == 'POST':
+            body = await request.json()
+            telegram_id = body.get('telegram_id', 'anonymous')
+
+            profile_dir = os.path.join('data', 'user_profiles')
+            os.makedirs(profile_dir, exist_ok=True)
+
+            safe_id = str(telegram_id).replace('/', '').replace('..', '')[:20]
+            profile_path = os.path.join(profile_dir, f'{safe_id}.json')
+
+            profile_data = {
+                'college': body.get('college', ''),
+                'specialization': body.get('specialization', ''),
+                'location': body.get('location', ''),
+                'experience': body.get('experience', ''),
+                'skills': body.get('skills', ''),
+                'email': body.get('email', ''),
+                'updated_at': datetime.now(IST).isoformat(),
+            }
+
+            with open(profile_path, 'w') as f:
+                json.dump(profile_data, f, indent=2)
+
+            return _json_response({"success": True, "data": profile_data})
+
+        else:  # GET
+            telegram_id = request.query.get('telegram_id', 'anonymous')
+            safe_id = str(telegram_id).replace('/', '').replace('..', '')[:20]
+            profile_path = os.path.join('data', 'user_profiles', f'{safe_id}.json')
+
+            if os.path.isfile(profile_path):
+                with open(profile_path, 'r') as f:
+                    profile_data = json.load(f)
+                return _json_response({"success": True, "data": profile_data})
+            else:
+                return _json_response({"success": True, "data": {}})
+
+    except Exception as e:
+        logger.error(f"[{MODULE_ID}] /api/user/profile error: {e}")
+        return _json_response({"success": False, "error": str(e)[:200]}, 500)
+
+
+def _read_user_cv_text(telegram_id: str) -> str:
+    """Read user's uploaded CV and extract text for AI context.
+    Returns empty string if no CV or extraction fails."""
+    try:
+        safe_id = str(telegram_id).replace('/', '').replace('..', '')[:20]
+        cv_path = os.path.join('data', 'user_cvs', f'{safe_id}.pdf')
+
+        if not os.path.isfile(cv_path):
+            return ""
+
+        # Try to extract text from PDF
+        try:
+            import subprocess
+            # Use pdftotext if available (most Linux systems have it)
+            result = subprocess.run(
+                ['pdftotext', '-layout', cv_path, '-'],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                # Truncate to ~2000 chars to fit in LLM context
+                return result.stdout.strip()[:2000]
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
+        # Fallback: try PyPDF2 or basic reading
+        try:
+            import PyPDF2
+            with open(cv_path, 'rb') as f:
+                reader = PyPDF2.PdfReader(f)
+                text = ""
+                for page in reader.pages[:3]:  # Max 3 pages
+                    text += page.extract_text() or ""
+                return text.strip()[:2000]
+        except ImportError:
+            pass
+
+        return "[CV uploaded but text extraction unavailable - install pdftotext or PyPDF2]"
+
+    except Exception as e:
+        logger.debug(f"[{MODULE_ID}] CV text extraction error: {e}")
+        return ""
+
+
+def _read_user_profile(telegram_id: str) -> dict:
+    """Read user's saved profile data."""
+    try:
+        safe_id = str(telegram_id).replace('/', '').replace('..', '')[:20]
+        profile_path = os.path.join('data', 'user_profiles', f'{safe_id}.json')
+        if os.path.isfile(profile_path):
+            with open(profile_path, 'r') as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+
+# ============================================================
 # ROUTE REGISTRATION
 # ============================================================
 
@@ -1217,6 +1452,11 @@ def register_miniapp_routes(app):
     app.router.add_get('/api/supabase/job/{id}', handle_supabase_job_detail)
     app.router.add_post('/api/supabase/apply/{id}', handle_supabase_apply)
     app.router.add_get('/api/supabase/stats', handle_supabase_stats)
+
+    # User profile & CV endpoints
+    app.router.add_post('/api/user/upload-cv', handle_user_upload_cv)
+    app.router.add_get('/api/user/profile', handle_user_profile)
+    app.router.add_post('/api/user/profile', handle_user_profile)
 
     # Mini-app: All static file serving is DYNAMIC (not add_static)
     # This way, even if dist/ is built AFTER server startup, files will be served.

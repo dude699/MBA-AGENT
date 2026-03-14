@@ -94,7 +94,7 @@ export default function App() {
   }, [browseMode, activeTab, loadSupabaseJobs]);
 
   return (
-    <div className="min-h-screen" style={{ background: '#ffffff', color: '#0a0a0a', paddingBottom: 'calc(72px + env(safe-area-inset-bottom, 0px))', overflowY: 'auto', WebkitOverflowScrolling: 'touch' as any }}>
+    <div className="app-root" style={{ background: '#ffffff', color: '#0a0a0a', minHeight: '100vh', paddingBottom: 'calc(88px + env(safe-area-inset-bottom, 0px))', overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch' as any, position: 'relative' }}>
       {/* Header with Search + Filters */}
       <Header />
 
@@ -378,8 +378,7 @@ export default function App() {
             exit={{ opacity: 0, scale: 0.8 }}
             onClick={scrollToTop}
             className="fixed right-4 z-30 w-10 h-10 rounded-full flex items-center justify-center transition-colors"
-            style={{ background: '#ffffff', border: '1px solid #e5e7eb', boxShadow: '0 4px 24px rgba(0,0,0,0.08)' }}
-            style={{ bottom: 'calc(80px + env(safe-area-inset-bottom, 0px))' }}
+            style={{ background: '#ffffff', border: '1px solid #e5e7eb', boxShadow: '0 4px 24px rgba(0,0,0,0.08)', bottom: 'calc(88px + env(safe-area-inset-bottom, 0px))' }}
           >
             <ChevronUp className="w-5 h-5" style={{color:'#4b5563'}} />
           </motion.button>

@@ -194,7 +194,7 @@ export function useBatchApply() {
   };
 }
 
-// ===== LLM CHAT (Resource-aware, anti-hallucination) =====
+// ===== LLM CHAT (v3.0 - User-aware, CV-aware, anti-hallucination) =====
 export function useLLMChat() {
   const { addLLMMessage, setLLMLoading, llmLoading, llmMessages, internships } = useAppStore();
 
@@ -202,17 +202,25 @@ export function useLLMChat() {
     addLLMMessage({ role: 'user', content: message });
     setLLMLoading(true);
 
-    // Build condensed history (last 3 exchanges = 6 msgs) to minimize token usage
+    // Build condensed history (last 3 exchanges = 6 msgs)
     const history = llmMessages.slice(-6).map((msg) => ({
       role: msg.role,
-      content: msg.content.slice(0, 400), // Truncate to save tokens
+      content: msg.content.slice(0, 500),
     }));
+
+    // Get Telegram user ID for personalized context (CV + profile)
+    let telegramId = '';
+    try {
+      const tgUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
+      if (tgUser?.id) telegramId = String(tgUser.id);
+    } catch {}
 
     // Resource context: tell backend how many jobs are loaded client-side
     const resourceContext = {
       internshipIds,
       clientJobCount: internships.length,
       hasLoadedJobs: internships.length > 0,
+      telegramId,
     };
 
     try {

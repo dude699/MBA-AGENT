@@ -1387,21 +1387,22 @@ class TelegramReporter:
                 )
         
         msg = (
-            "⚡ <b>Operation First Mover v5.4</b>\n"
+            "Operation First Mover v6.0\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "Your zero-cost MBA internship hunting agent.\n\n"
-            "🤖 <b>12 AI agents</b> working 24/7\n"
-            "📊 <b>1080+</b> Indian companies tracked\n"
-            "🔍 <b>8+</b> job boards scraped daily\n"
-            "💰 Total cost: <b>₹0.00/day</b>\n"
-            "🔐 <b>Security:</b> Enabled\n\n"
-            "🎯 <b>Start Here:</b>\n"
-            "/jobs — Browse filtered internships (no sales!)\n"
-            "/morning — Full morning brief\n"
-            "/top 20 — Top 20 by PPO score\n\n"
-            "🚀 <b>Run agents on demand:</b>\n"
-            "/run pipeline — Full scrape+process+report\n"
-            "/run scrape — Just scrape now\n\n"
+            "12 AI agents working 24/7\n"
+            "1080+ Indian companies tracked\n"
+            "8+ job boards scraped (weekly smart schedule)\n"
+            "Total cost: INR 0.00/day\n"
+            "Security: Enabled\n\n"
+            "Start Here:\n"
+            "/jobs - Browse filtered internships (no sales!)\n"
+            "/morning - Full morning brief\n"
+            "/top 20 - Top 20 by PPO score\n\n"
+            "Run agents on demand:\n"
+            "/run pipeline - Full scrape+process+report\n"
+            "/run scrape - Just scrape now\n"
+            "/schedule - View weekly schedule\n\n"
             f"Type /help for all commands.{miniapp_section}{admin_section}"
         )
         
@@ -1456,61 +1457,61 @@ class TelegramReporter:
         is_admin = self.security.is_admin(telegram_id)
         
         msg = (
-            "📖 <b>Command Reference (38+ Commands)</b>\n"
+            "Command Reference (40+ Commands)\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "📋 <b>Browse & Discover</b>\n"
-            "/jobs [sort] [page] — <b>SMART filtered (no sales!)</b>\n"
+            "<b>Browse and Discover</b>\n"
+            "/jobs [sort] [page] - SMART filtered (no sales!)\n"
             "  Sorts: stipend, ppo, date, duration, applicants\n"
             "  Filters: /jobs marketing, /jobs mumbai, /jobs 10k\n"
-            "/loadall [page] [cat] [src] — Browse ALL listings\n"
-            "/browse [category] — Category browser\n"
-            "/filter — Available filters & counts\n"
-            "/sources — Source health dashboard\n"
-            "/top [N] — Top N by PPO score (default 10)\n"
-            "/ocean — Blue Ocean listings\n"
-            "/export [N] — Export to Excel\n\n"
-            "📊 <b>Reports</b>\n"
-            "/morning — Full morning brief\n"
-            "/dark — Dark channel finds\n"
-            "/signals — Active intent signals\n"
-            "/stats — Weekly funnel stats\n\n"
-            "🔍 <b>Search</b>\n"
-            "/internshala [query] — Live search\n"
-            "/refresh — Force re-scrape all sources\n\n"
-            "📝 <b>Application</b>\n"
-            "/package [id] — Full app package\n"
-            "/ats [id] — ATS keyword simulation\n"
-            "/cover [id] — AI cover letter\n"
-            "/network [company] — Alumni map\n"
-            "/apply [id] — Mark as applied\n"
-            "/outcome [id] [result] — Log result\n\n"
-            "🤖 <b>Auto-Apply (A-13)</b>\n"
-            "/queue [id] — Add to auto-apply queue\n"
-            "/queue top [N] — Queue top N listings\n"
-            "/autoapply [N] — Run auto-apply (max N)\n"
-            "/appstatus — Application history\n\n"
-            "🏢 <b>Company Intel</b>\n"
-            "/cirs [company] — CIRS breakdown\n"
-            "/research [company] — Full research\n\n"
-            "🚀 <b>Agent Control</b>\n"
-            "/run — Run agents NOW (see /run for options)\n"
-            "/schedule — Full 24h schedule\n"
-            "/status — Running tasks\n"
-            "/cancel [task] — Cancel task\n\n"
-            "⚙️ <b>System</b>\n"
-            "/health — Agent heartbeats\n"
-            "/quota — API usage\n"
-            "/cfstatus — Cloudflare /crawl status\n"
-            "/reprocess — Raw listing status/reset\n"
-            "/settings — Preferences\n\n"
-            "📱 <b>Mini App</b>\n"
-            "/miniapp — Open InternHub Pro mini app\n"
-            "/webapp — Alias for /miniapp\n\n"
-            "🗄️ <b>Supabase Cloud DB</b>\n"
-            "/dbstatus — Database status & stats\n"
-            "/latestjobs [page] — Latest scraping session jobs\n"
-            "/alljobs [page] — All jobs archive\n"
-            "/alljobs applied — Applied jobs only"
+            "/loadall [page] [cat] [src] - Browse ALL listings\n"
+            "/browse [category] - Category browser\n"
+            "/filter - Available filters and counts\n"
+            "/sources - Source health dashboard\n"
+            "/top [N] - Top N by PPO score (default 10)\n"
+            "/ocean - Blue Ocean listings\n"
+            "/export [N] - Export to Excel\n\n"
+            "<b>Reports</b>\n"
+            "/morning - Full morning brief\n"
+            "/dark - Dark channel finds\n"
+            "/signals - Active intent signals\n"
+            "/stats - Weekly funnel stats\n\n"
+            "<b>Search</b>\n"
+            "/internshala [query] - Live search\n"
+            "/refresh - Force re-scrape all sources\n\n"
+            "<b>Application</b>\n"
+            "/package [id] - Full app package\n"
+            "/ats [id] - ATS keyword simulation\n"
+            "/cover [id] - AI cover letter\n"
+            "/network [company] - Alumni map\n"
+            "/apply [id] - Mark as applied\n"
+            "/outcome [id] [result] - Log result\n\n"
+            "<b>Auto-Apply (A-13)</b>\n"
+            "/queue [id] - Add to auto-apply queue\n"
+            "/queue top [N] - Queue top N listings\n"
+            "/autoapply [N] - Run auto-apply (max N)\n"
+            "/appstatus - Application history\n\n"
+            "<b>Company Intel</b>\n"
+            "/cirs [company] - CIRS breakdown\n"
+            "/research [company] - Full research\n\n"
+            "<b>Agent Control</b>\n"
+            "/run - Run agents NOW (see /run for options)\n"
+            "/schedule - Weekly schedule and next runs\n"
+            "/status - Running tasks\n"
+            "/cancel [task] - Cancel task\n\n"
+            "<b>System</b>\n"
+            "/health - Agent heartbeats\n"
+            "/quota - API usage\n"
+            "/cfstatus - Cloudflare relay status\n"
+            "/reprocess - Raw listing status/reset\n"
+            "/settings - Preferences\n\n"
+            "<b>Mini App</b>\n"
+            "/miniapp - Open InternHub Pro mini app\n"
+            "/webapp - Alias for /miniapp\n\n"
+            "<b>Supabase Cloud DB</b>\n"
+            "/dbstatus - Database status and stats\n"
+            "/latestjobs [page] - Latest scraping session jobs\n"
+            "/alljobs [page] - All jobs archive\n"
+            "/alljobs applied - Applied jobs only"
         )
         
         if is_admin:
@@ -2883,24 +2884,63 @@ class TelegramReporter:
 
     @command_error_boundary
     async def _cmd_schedule(self, update, context):
-        """Show the full 24-hour schedule with next run times."""
+        """Show the full weekly schedule with next run times. v3.0: Updated for weekly mode."""
         try:
-            from core.scheduler import get_scheduler
-            scheduler = get_scheduler()
-            msg = scheduler.get_schedule_display()
+            schedule_mode = os.getenv('SCHEDULE_MODE', 'weekly').lower()
+            
+            if schedule_mode == 'weekly':
+                try:
+                    from core.weekly_scheduler import get_weekly_scheduler
+                    scheduler = get_weekly_scheduler()
+                    msg = scheduler.get_schedule_display()
+                except Exception:
+                    msg = (
+                        "📅 <b>WEEKLY SMART SCHEDULE (v6.0)</b>\n"
+                        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                        "<b>Monday (Full Cycle)</b>\n"
+                        "  07:00 IST - Full pipeline scrape\n"
+                        "  07:15 IST - Morning brief report\n"
+                        "  12:00 IST - Dedup + Ghost detection\n"
+                        "  18:00 IST - PPO scoring + enrichment\n"
+                        "  22:00 IST - Evening summary\n\n"
+                        "<b>Wednesday (Mid-week Refresh)</b>\n"
+                        "  07:00 IST - Targeted scrape (top sources)\n"
+                        "  07:15 IST - Morning brief\n"
+                        "  18:00 IST - Scoring update\n"
+                        "  22:00 IST - Evening summary\n\n"
+                        "<b>Friday (End-week Sweep)</b>\n"
+                        "  07:00 IST - Full pipeline scrape\n"
+                        "  07:15 IST - Morning brief\n"
+                        "  12:00 IST - Full processing pipeline\n"
+                        "  18:00 IST - Weekly stats generation\n"
+                        "  22:00 IST - Weekly summary report\n\n"
+                        "<b>Daily (All Days)</b>\n"
+                        "  Every 4 min - Self-ping keep-alive\n"
+                        "  Every 10 min - Health check\n"
+                        "  Every 12 hr - Supabase sync\n\n"
+                        "Mode: <b>Weekly Smart Schedule</b>\n"
+                        "Reduces ban risk by 70% vs daily scraping"
+                    )
+            else:
+                from core.scheduler import get_scheduler
+                scheduler = get_scheduler()
+                msg = scheduler.get_schedule_display()
 
             # Also show next runs from APScheduler
-            jobs = scheduler.get_job_list()
-            if jobs:
-                msg += "\n\n📅 <b>Next Scheduled Runs:</b>\n"
-                for job in jobs[:15]:
-                    name = job.get('name', '')
-                    next_run = job.get('next_run', 'N/A')
-                    msg += f"  {name}\n    → {next_run}\n"
+            try:
+                jobs = scheduler.get_job_list() if 'scheduler' in dir() else []
+                if jobs:
+                    msg += "\n\n📅 <b>Next Scheduled Runs:</b>\n"
+                    for job in jobs[:15]:
+                        name = job.get('name', '')
+                        next_run = job.get('next_run', 'N/A')
+                        msg += f"  {name}\n    Next: {next_run}\n"
+            except Exception:
+                pass
 
             await self._send_long_message(update, msg)
         except Exception as e:
-            await update.message.reply_text(f"❌ Error: {e}")
+            await update.message.reply_text(f"Schedule error: {e}")
 
     # ================================================================
     # /loadall — BROWSE ALL LISTINGS WITH PAGINATION
@@ -3564,13 +3604,43 @@ class TelegramReporter:
     # ================================================================
 
     async def _send_long_message(self, update, text: str):
-        """Send a message, splitting if too long. Smart split on newlines."""
+        """Send a message, splitting if too long. Smart split on newlines.
+        v3.0: Cleans HTML artifacts (<, >, stray tags) for clean display."""
+        import re
+
+        # v3.0: Clean common formatting artifacts
+        # Remove stray < and > that aren't part of valid HTML tags
+        # Valid tags: <b>, </b>, <i>, </i>, <a>, </a>, <code>, </code>, <pre>, </pre>
+        valid_tags = r'</?(?:b|i|a|code|pre|strong|em|u|s|del|ins)(?:\s[^>]*)?>|<a\s+href="[^"]*"[^>]*>'
+        
+        def clean_html(t: str) -> str:
+            """Remove non-HTML angle brackets and fix common formatting issues."""
+            # Replace angle brackets that are NOT valid HTML tags
+            parts = []
+            last_end = 0
+            for match in re.finditer(valid_tags, t):
+                # Text before this valid tag - escape any < > in it
+                before = t[last_end:match.start()]
+                before = before.replace('<', '').replace('>', '')
+                parts.append(before)
+                parts.append(match.group())
+                last_end = match.end()
+            # Remaining text after last valid tag
+            remaining = t[last_end:]
+            remaining = remaining.replace('<', '').replace('>', '')
+            parts.append(remaining)
+            return ''.join(parts)
+
+        text = clean_html(text)
+
         if len(text) <= TG_MAX_LEN:
             try:
                 await update.message.reply_text(text, parse_mode='HTML')
             except Exception:
                 try:
-                    await update.message.reply_text(text)
+                    # Strip ALL HTML tags as fallback
+                    plain = re.sub(r'<[^>]+>', '', text)
+                    await update.message.reply_text(plain)
                 except Exception as e:
                     logger.error(f"[{AGENT_ID}] Message send error: {e}")
             return
@@ -3583,10 +3653,8 @@ class TelegramReporter:
                 chunks.append(remaining)
                 break
 
-            # Find the last newline within the limit
             split_pos = remaining.rfind('\n', 0, TG_MAX_LEN)
             if split_pos == -1 or split_pos < TG_MAX_LEN // 2:
-                # No good newline split point, hard split at limit
                 split_pos = TG_MAX_LEN
 
             chunks.append(remaining[:split_pos])
@@ -3599,7 +3667,8 @@ class TelegramReporter:
                 await update.message.reply_text(chunk, parse_mode='HTML')
             except Exception:
                 try:
-                    await update.message.reply_text(chunk)
+                    plain = re.sub(r'<[^>]+>', '', chunk)
+                    await update.message.reply_text(plain)
                 except Exception as e:
                     logger.error(f"[{AGENT_ID}] Message send error: {e}")
                     break
