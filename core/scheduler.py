@@ -667,8 +667,9 @@ class AgentScheduler:
 
     async def _sync_to_supabase(self, trigger: str = ""):
         """
-        After pipeline processing, sync clean_listings to Supabase latest_jobs.
+        After pipeline processing, sync clean_listings to Supabase latest_jobs AND all_jobs.
         This is the bridge between local SQLite and persistent Supabase storage.
+        We sync to BOTH tables so all_jobs always has data (not just after morning merge).
         """
         try:
             from core.supabase_client import is_operational
@@ -676,7 +677,7 @@ class AgentScheduler:
                 return
 
             from core.database import get_db
-            from core.supabase_db import async_insert_latest_jobs
+            from core.supabase_db import async_insert_latest_jobs, async_insert_all_jobs
 
             db = get_db()
             # Get recent clean listings (last 24h)
@@ -703,12 +704,21 @@ class AgentScheduler:
                     "ghost_score": float(row.get("ghost_score", 0) or 0),
                     "match_score": float(row.get("ppo_score", 50) or 50),
                     "is_expired": row.get("status", "") == "expired",
+                    "location_type": "remote" if row.get("is_wfh") else "onsite",
+                    "sector": row.get("sector", ""),
                     "content_hash": row.get("content_hash", ""),
                 })
 
             batch_id = f"sync_{trigger}_{datetime.now(IST).strftime('%Y%m%d_%H%M')}"
             count = await async_insert_latest_jobs(jobs, batch_id)
             logger.info(f"[SCHEDULER] Supabase sync: {count}/{len(jobs)} jobs synced ({trigger})")
+
+            # Also sync to all_jobs so "All Jobs" tab always has data
+            try:
+                all_count = await async_insert_all_jobs(jobs, batch_id)
+                logger.info(f"[SCHEDULER] Supabase all_jobs sync: {all_count}/{len(jobs)} jobs ({trigger})")
+            except Exception as e:
+                logger.debug(f"[SCHEDULER] all_jobs sync skipped: {e}")
 
         except Exception as e:
             logger.error(f"[SCHEDULER] Supabase sync error: {e}")

@@ -2330,7 +2330,7 @@ class DatabaseManager:
         self,
         limit: int = 50,
         offset: int = 0,
-        max_duration_months: int = 3,
+        max_duration_months: int = 6,
         sort_by: str = 'stipend',
         category: Optional[str] = None,
         source: Optional[str] = None,
@@ -2356,6 +2356,7 @@ class DatabaseManager:
             'bde %', 'bdm %', 'bda %',          # At start of title
             '% bde', '% bdm', '% bda',          # At end of title
             '% bd intern%', '% bd executive%', '% bd manager%',
+            '%biz dev%',                         # Short form
             # === COLD CALLING / TELESALES ===
             '%telesales%', '%telecaller%', '%cold call%',
             '%door to door%', '%tele marketing%', '%telemarketing%',
@@ -2364,6 +2365,7 @@ class DatabaseManager:
             '%insurance intern%', '%insurance consultant%',
             '%real estate agent%', '%real estate sales%', '%real estate broker%',
             '%real estate intern%',
+            '%insurance%',                  # Block all insurance roles
             # === COMMISSION / TARGET BASED ===
             '%commission based%', '%commission-based%',
             '%target based sales%', '%incentive based%',
@@ -2372,12 +2374,28 @@ class DatabaseManager:
             '%walk in%', '%walkin%', '%call center%', '%bpo%', '%kpo%',
             # === MLM / NETWORK MARKETING ===
             '%mlm%', '%network marketing%', '%direct selling%',
-            # === NON-MBA ROLES ===
+            # === CORE TECH ROLES (MBA student doesn't want) ===
             '%data entry%', '%typing job%',
+            '%software engineer%', '%software developer%',
+            '%full stack%', '%full-stack%', '%frontend%', '%front-end%', '%backend%', '%back-end%',
+            '%web developer%', '%web development%',
+            '%java developer%', '%python developer%', '%react developer%',
+            '%ios developer%', '%android developer%', '%mobile developer%',
+            '%devops%', '%site reliability%',
+            '%qa engineer%', '%test engineer%', '%qa tester%',
+            '%graphic design%',
+            '%content writer%', '%blog writer%', '%article writer%',
+            '%copywriter%', '%copy writing%',
             # === LEAD GENERATION / CLIENT ACQUISITION ===
-            '%lead generation intern%', '%lead generation executive%',
-            '%client acquisition intern%', '%customer acquisition intern%',
-            '%revenue generation intern%',
+            '%lead generation%',
+            '%client acquisition%', '%customer acquisition%',
+            '%revenue generation%',
+            '%outreach intern%', '%outreach executive%',
+            '%appointment setter%',
+            # === ADVERTISING AGENCY ===
+            '%media buyer%', '%media buying%',
+            '%ad ops%', '%ad operations%',
+            '%video editor%', '%photo editor%',
         ]
 
         where_clauses = [

@@ -32,10 +32,10 @@ export default function BottomBar({ activeTab, onTabChange }: BottomBarProps) {
           >
             <button
               onClick={() => { setBatchPanelOpen(true); hapticFeedback('medium'); }}
-              className="w-full py-3.5 text-white rounded-2xl font-bold text-sm flex items-center justify-center gap-2 active:scale-[0.98] transition-transform"
+              className="w-full py-3.5 text-black rounded-2xl font-bold text-sm flex items-center justify-center gap-2 active:scale-[0.98] transition-transform"
               style={{
-                background: 'var(--gradient-accent)',
-                boxShadow: '0 8px 30px rgba(26,26,46,0.3), 0 2px 8px rgba(0,0,0,0.1)',
+                background: '#ffffff',
+                boxShadow: '0 8px 30px rgba(255,255,255,0.15), 0 2px 8px rgba(0,0,0,0.3)',
               }}
             >
               <Zap className="w-4.5 h-4.5" />
@@ -99,7 +99,7 @@ function NavItem({
           </span>
         )}
         {hasIndicator && (
-          <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-400 border border-white" />
+          <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-400 border border-black" />
         )}
       </div>
       <span className={`text-[10px] font-semibold transition-colors duration-200 ${active ? 'text-primary-900' : 'text-primary-400'}`}>

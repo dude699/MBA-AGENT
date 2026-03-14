@@ -291,23 +291,41 @@ class CoverLetterEngine:
         return answers
 
     def _clean_cover_letter(self, text: str) -> str:
-        """Remove AI artifacts from generated text."""
+        """Remove AI artifacts from generated text — no stray characters."""
         # Remove markdown formatting
         text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
         text = re.sub(r'\*(.+?)\*', r'\1', text)
         text = re.sub(r'^[-*]\s+', '', text, flags=re.MULTILINE)
         text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
-        # Remove common AI signatures
+        # Remove common AI signatures and artifacts
         text = re.sub(r'^---+$', '', text, flags=re.MULTILINE)
         text = re.sub(r'^___+$', '', text, flags=re.MULTILINE)
+        text = re.sub(r'^===+$', '', text, flags=re.MULTILINE)
         text = re.sub(r'\[Your Name\]', '', text, flags=re.IGNORECASE)
         text = re.sub(r'\[Name\]', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'\[.*?\]', '', text)  # Remove any bracketed placeholders
         text = re.sub(r'Dear Hiring Manager,?\s*\n?', '', text, flags=re.IGNORECASE)
         text = re.sub(r'Dear Sir/?Ma\'?am,?\s*\n?', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'Dear .{1,50} Team,?\s*\n?', '', text, flags=re.IGNORECASE)
         text = re.sub(r'Sincerely,?\s*$', '', text, flags=re.IGNORECASE | re.MULTILINE)
         text = re.sub(r'Best [Rr]egards,?\s*$', '', text, flags=re.MULTILINE)
+        text = re.sub(r'Warm [Rr]egards,?\s*$', '', text, flags=re.MULTILINE)
+        text = re.sub(r'Kind [Rr]egards,?\s*$', '', text, flags=re.MULTILINE)
+        text = re.sub(r'Regards,?\s*$', '', text, flags=re.MULTILINE)
+        text = re.sub(r'Yours (sincerely|truly|faithfully),?\s*$', '', text, flags=re.IGNORECASE | re.MULTILINE)
+        # Remove stray numbers at start of lines (e.g., "3." or "1)")
+        text = re.sub(r'^\d+[\.\)]\s*', '', text, flags=re.MULTILINE)
+        # Remove stray dashes at start of lines  
+        text = re.sub(r'^[—–-]\s*', '', text, flags=re.MULTILINE)
+        # Remove stray special characters that AI tends to add
+        text = re.sub(r'^[•◦▪▸►]\s*', '', text, flags=re.MULTILINE)
+        # Remove any remaining markdown-style formatting
+        text = re.sub(r'`(.+?)`', r'\1', text)
+        # Remove "Subject:" or "Re:" lines
+        text = re.sub(r'^(Subject|Re|RE):.*$', '', text, flags=re.MULTILINE)
         # Clean extra whitespace
         text = re.sub(r'\n{3,}', '\n\n', text)
+        text = re.sub(r'[ \t]+', ' ', text)
         text = text.strip()
         # Truncate if too long
         if len(text) > COVER_LETTER_MAX_CHARS:

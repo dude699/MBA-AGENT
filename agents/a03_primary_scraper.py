@@ -631,29 +631,40 @@ class NaukriScraper:
         return self._ddg
 
     def scrape_mba_internships(self, max_pages: int = 5) -> List[RawListing]:
-        """Scrape MBA internship listings from Naukri via DDG dorks."""
+        """Scrape MBA internship listings from Naukri via DDG dorks + direct SEO URLs."""
         self.batch_id = generate_batch_id("naukri")
         all_listings = []
 
-        # Naukri-specific DDG dork queries
+        # Naukri-specific DDG dork queries — expanded set for broader coverage
         dork_queries = [
-            'site:naukri.com "MBA intern" -jobs-{page}',
-            'site:naukri.com "MBA internship" india',
-            'site:naukri.com "management trainee" internship',
-            'site:naukri.com "summer internship" MBA',
-            'site:naukri.com "marketing intern" MBA stipend',
-            'site:naukri.com "finance intern" MBA',
-            'site:naukri.com "strategy intern" OR "consulting intern"',
-            'site:naukri.com "operations intern" OR "supply chain intern"',
-            'site:naukri.com "product management intern"',
-            'site:naukri.com "analytics intern" MBA',
+            'site:naukri.com "MBA intern" india',
+            'site:naukri.com "MBA internship" stipend',
+            'site:naukri.com "management trainee" internship india',
+            'site:naukri.com "summer internship" MBA 2026',
+            'site:naukri.com "marketing intern" stipend india',
+            'site:naukri.com "finance intern" OR "financial analyst intern"',
+            'site:naukri.com "strategy intern" OR "consulting intern" india',
+            'site:naukri.com "operations intern" OR "supply chain intern" india',
+            'site:naukri.com "product management intern" OR "product intern"',
+            'site:naukri.com "analytics intern" OR "data analyst intern"',
+            'site:naukri.com "data science intern" OR "ML intern" india',
+            'site:naukri.com "HR intern" OR "human resource intern"',
+            'site:naukri.com "brand management intern" OR "category intern"',
+            'site:naukri.com "investment banking intern" OR "equity research intern"',
+            'site:naukri.com "corporate finance intern" india',
+            'site:naukri.com "market research intern" OR "consumer insights"',
         ]
 
-        # Also try Naukri SEO URLs via DDG
+        # Naukri SEO URLs via DDG — these capture listing pages
         seo_queries = [
             'site:naukri.com/job-listings mba intern 2026',
-            'site:naukri.com/job-listings management trainee 2026',
-            'site:naukri.com/job-listings summer internship mba',
+            'site:naukri.com/job-listings management trainee intern',
+            'site:naukri.com/job-listings summer internship stipend',
+            'site:naukri.com/job-listings marketing internship india',
+            'site:naukri.com/job-listings finance internship MBA',
+            'site:naukri.com/job-listings data analyst intern india',
+            'site:naukri.com/job-listings consulting internship india',
+            'site:naukri.com/job-listings operations internship MBA',
         ]
 
         logger.info(f"[{AGENT_ID}] Starting Naukri scrape via DDG dorks (batch: {self.batch_id})")
@@ -664,13 +675,18 @@ class NaukriScraper:
             return self._api_fallback()
 
         queries_used = 0
-        max_dorks = 8  # Rate limit DDG queries
+        max_dorks = 14  # Increased from 8 for better coverage
 
-        for query in dork_queries + seo_queries:
+        # Shuffle to get variety across runs
+        import random as _rnd
+        combined = dork_queries + seo_queries
+        _rnd.shuffle(combined)
+
+        for query in combined:
             if queries_used >= max_dorks:
                 break
             try:
-                results = ddg.text(query, region='in-en', max_results=15)
+                results = ddg.text(query, region='in-en', max_results=20)
                 for result in results:
                     url = result.get('href', '') or result.get('link', '')
                     title = result.get('title', '')
@@ -679,14 +695,14 @@ class NaukriScraper:
                     # Only accept actual Naukri job listing URLs
                     if not url or 'naukri.com' not in url:
                         continue
-                    # Filter for job listing URLs (not category pages)
-                    if '/job-listings' in url or '/job-listings-' in url:
+                    # Accept both /job-listings and direct listing URLs
+                    if '/job-listings' in url or '/job-listings-' in url or re.search(r'naukri\.com/.*-\d+', url):
                         listing = self._parse_dork_result(url, title, body)
                         if listing:
                             all_listings.append(listing)
 
                 queries_used += 1
-                time.sleep(random.uniform(8, 15))
+                time.sleep(random.uniform(6, 12))
 
             except Exception as e:
                 logger.error(f"[{AGENT_ID}] Naukri DDG dork error: {e}")
@@ -1086,11 +1102,13 @@ class LinkedInDorkScraper:
         listings = []
         dork_count = 0
 
-        # Multiple dork patterns for better coverage
+        # Multiple dork patterns for better coverage — India-focused, recent, MBA-relevant
         dork_patterns = [
-            'site:linkedin.com/jobs/view "{query}" india intern',
-            'site:linkedin.com/jobs/view "{query}" internship india 2026',
+            'site:linkedin.com/jobs/view "{query}" india intern 2026',
+            'site:linkedin.com/jobs/view "{query}" internship india',
             'site:in.linkedin.com/jobs/view "{query}" intern',
+            'site:linkedin.com/jobs/view "{query}" intern stipend india',
+            'site:linkedin.com/jobs/view "{query}" summer intern india MBA',
         ]
 
         for category in categories:
@@ -1104,7 +1122,7 @@ class LinkedInDorkScraper:
                 results = ddg.text(
                     dork_query,
                     region='in-en',
-                    max_results=15,
+                    max_results=20,
                 )
 
                 for result in results:
@@ -1127,12 +1145,21 @@ class LinkedInDorkScraper:
                         # Clean the URL — remove tracking params
                         clean_url = url.split('?')[0]
 
+                        # Skip if title suggests expired or closed
+                        title_lower = title.lower()
+                        if any(w in title_lower for w in ['no longer', 'closed', 'expired', 'not accepting']):
+                            continue
+
+                        # Skip if body suggests India is not the location
+                        body_lower = body.lower() if body else ''
+
                         listing = RawListing(
                             title=self._clean_linkedin_title(title),
                             company=self._extract_company_from_title(title),
                             url=clean_url,
                             source="linkedin",
                             category=category,
+                            location=self._extract_location_from_body(body),
                             description_text=body[:2000],
                             batch_id=self.batch_id,
                             is_ppo=detect_ppo(f"{title} {body}"),
@@ -1169,8 +1196,30 @@ class LinkedInDorkScraper:
             if separator in title:
                 parts = title.split(separator)
                 if len(parts) >= 2:
-                    return parts[-1].strip()
+                    company = parts[-1].strip()
+                    # Remove LinkedIn suffix
+                    for suffix in ['| LinkedIn', '- LinkedIn', 'on LinkedIn', 'LinkedIn']:
+                        company = company.replace(suffix, '').strip()
+                    if company:
+                        return company
         return ""
+
+    def _extract_location_from_body(self, body: str) -> str:
+        """Extract India location from body text."""
+        if not body:
+            return "India"
+        body_lower = body.lower()
+        indian_cities = [
+            'mumbai', 'delhi', 'bangalore', 'bengaluru', 'hyderabad',
+            'chennai', 'pune', 'kolkata', 'ahmedabad', 'gurgaon', 'gurugram',
+            'noida', 'jaipur', 'lucknow', 'chandigarh', 'indore', 'kochi',
+        ]
+        for city in indian_cities:
+            if city in body_lower:
+                return city.title()
+        if 'remote' in body_lower or 'work from home' in body_lower:
+            return 'Remote'
+        return "India"
 
 
 # ============================================================
