@@ -67,28 +67,28 @@ const AI_PROFILES = [
 // ===== PROFILE-SPECIFIC QUICK PROMPTS =====
 const PROFILE_PROMPTS: Record<string, Array<{ icon: React.ReactNode; label: string; prompt: string }>> = {
   generalist: [
-    { icon: <Lightbulb className="w-3.5 h-3.5" />, label: 'Best strategy', prompt: 'What is the best internship application strategy based on current job listings in the database?' },
-    { icon: <BarChart3 className="w-3.5 h-3.5" />, label: 'Compare top 5', prompt: 'Compare the top 5 highest paying internships from the database and recommend the best ROI option.' },
-    { icon: <Target className="w-3.5 h-3.5" />, label: 'Profile match', prompt: 'Based on the available listings, which internships would be best for a first-year MBA student with engineering background?' },
-    { icon: <Shield className="w-3.5 h-3.5" />, label: 'Red flags', prompt: 'Identify any potentially risky or ghost postings from the current listings in the database.' },
+    { icon: <Lightbulb className="w-3.5 h-3.5" />, label: 'Analyze my CV', prompt: 'Based on my uploaded CV and profile, what are my top 3 strengths and which job roles in the database would be the best fit?' },
+    { icon: <BarChart3 className="w-3.5 h-3.5" />, label: 'Top matches', prompt: 'Compare the top 5 internships from the database that best match my skills and background. Rank them by fit score.' },
+    { icon: <Target className="w-3.5 h-3.5" />, label: 'Apply strategy', prompt: 'Create a prioritized application strategy for me. Which listings should I apply to first and why? Consider my profile strengths.' },
+    { icon: <Shield className="w-3.5 h-3.5" />, label: 'Red flags', prompt: 'Identify any risky or ghost postings from the current listings. Which should I avoid and why?' },
   ],
   resume_builder: [
-    { icon: <FileText className="w-3.5 h-3.5" />, label: 'Cover letter', prompt: 'Write a professional cover letter for the highest paying internship in the current listings.' },
-    { icon: <Zap className="w-3.5 h-3.5" />, label: 'Resume bullets', prompt: 'Help me write 5 strong STAR-format resume bullets for an MBA student with 2 years in IT consulting.' },
-    { icon: <Target className="w-3.5 h-3.5" />, label: 'LinkedIn headline', prompt: 'Suggest 5 LinkedIn headlines optimized for MBA internship recruitment in finance and consulting.' },
-    { icon: <BookOpen className="w-3.5 h-3.5" />, label: 'SOP template', prompt: 'Provide a Statement of Purpose template for MBA summer internship applications.' },
+    { icon: <FileText className="w-3.5 h-3.5" />, label: 'Review my CV', prompt: 'Analyze my uploaded CV in detail. List specific improvements: weak verbs, missing quantification, formatting issues, and ATS problems.' },
+    { icon: <Zap className="w-3.5 h-3.5" />, label: 'Cover letter', prompt: 'Write a tailored cover letter for the highest paying internship in the database. Use my CV skills and experience as the basis.' },
+    { icon: <Target className="w-3.5 h-3.5" />, label: 'Resume bullets', prompt: 'Based on my CV, rewrite my top 5 experience bullet points using STAR format with quantified metrics. Make them ATS-optimized.' },
+    { icon: <BookOpen className="w-3.5 h-3.5" />, label: 'LinkedIn optimize', prompt: 'Based on my CV and the job listings, suggest an optimized LinkedIn headline, summary, and top skills section.' },
   ],
   ats_checker: [
-    { icon: <Target className="w-3.5 h-3.5" />, label: 'ATS score', prompt: 'What are the most critical ATS keywords for MBA internship roles in consulting and finance?' },
-    { icon: <Shield className="w-3.5 h-3.5" />, label: 'Format check', prompt: 'What resume format issues commonly cause ATS rejection? Give me a checklist.' },
-    { icon: <BarChart3 className="w-3.5 h-3.5" />, label: 'Keyword gaps', prompt: 'Based on the job listings in the database, what are the top 20 keywords I should include in my resume?' },
-    { icon: <FileText className="w-3.5 h-3.5" />, label: 'Section order', prompt: 'What is the optimal section order for an MBA internship resume to maximize ATS score?' },
+    { icon: <Target className="w-3.5 h-3.5" />, label: 'ATS score my CV', prompt: 'Run a full ATS analysis on my CV. Give me keyword match score, format score, section score, and overall ATS score out of 100.' },
+    { icon: <Shield className="w-3.5 h-3.5" />, label: 'Missing keywords', prompt: 'Compare my CV keywords against the top 10 job listings in the database. List all missing critical keywords I should add.' },
+    { icon: <BarChart3 className="w-3.5 h-3.5" />, label: 'Format check', prompt: 'Check my CV for ATS-breaking issues: wrong fonts, images, tables, headers, and section labels. Give me a pass/fail for each.' },
+    { icon: <FileText className="w-3.5 h-3.5" />, label: 'Optimize for role', prompt: 'Pick the best matching job from the database for my profile and show me exactly how to optimize my CV for that specific role.' },
   ],
   career_counselor: [
-    { icon: <Briefcase className="w-3.5 h-3.5" />, label: 'Career path', prompt: 'I am a first-year MBA student with 3 years in IT. Should I target consulting, product management, or analytics internships?' },
-    { icon: <BarChart3 className="w-3.5 h-3.5" />, label: 'Stipend benchmark', prompt: 'What is the current stipend benchmark for MBA summer internships across different sectors and company tiers?' },
-    { icon: <GraduationCap className="w-3.5 h-3.5" />, label: 'PPO strategy', prompt: 'What are the best strategies to convert a summer internship into a PPO offer? Give me a week-by-week plan.' },
-    { icon: <Target className="w-3.5 h-3.5" />, label: 'Interview prep', prompt: 'Help me prepare for MBA internship interviews. What questions do top companies ask and how should I structure my answers?' },
+    { icon: <Briefcase className="w-3.5 h-3.5" />, label: 'Career path', prompt: 'Based on my CV, experience, and skills, recommend the top 3 career paths I should target. Include short-term and long-term strategy.' },
+    { icon: <BarChart3 className="w-3.5 h-3.5" />, label: 'Stipend benchmark', prompt: 'Based on my profile and the current job listings, what stipend range should I expect? How does my profile compare to typical candidates?' },
+    { icon: <GraduationCap className="w-3.5 h-3.5" />, label: 'PPO strategy', prompt: 'Create a week-by-week PPO conversion strategy for me. What should I do during my internship to maximize my chances of getting a full-time offer?' },
+    { icon: <Target className="w-3.5 h-3.5" />, label: 'Interview prep', prompt: 'Based on the top matching jobs for my profile, help me prepare for interviews. What questions will I face and how should I answer them?' },
   ],
 };
 
@@ -483,8 +483,35 @@ export default function LLMPanel() {
                   {currentProfile.description}
                 </p>
                 <div className="flex items-center justify-center gap-1.5 mb-5">
-                  <Database className="w-3 h-3 text-emerald-500" />
-                  <span className="text-[10px] font-medium text-emerald-600">Connected to job database</span>
+                  {(() => {
+                    const cvName = (() => { try { return localStorage.getItem('internhub_cv_name'); } catch { return null; } })();
+                    const hasProfile = (() => { try { return !!localStorage.getItem('internhub_user_profile'); } catch { return false; } })();
+                    return (
+                      <div className="flex flex-col items-center gap-1">
+                        <div className="flex items-center gap-1.5">
+                          <Database className="w-3 h-3 text-emerald-500" />
+                          <span className="text-[10px] font-medium text-emerald-600">Job database connected</span>
+                        </div>
+                        {cvName ? (
+                          <div className="flex items-center gap-1.5">
+                            <FileText className="w-3 h-3 text-blue-500" />
+                            <span className="text-[10px] font-medium text-blue-600">CV loaded: {cvName}</span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1.5">
+                            <AlertCircle className="w-3 h-3 text-amber-500" />
+                            <span className="text-[10px] font-medium text-amber-600">Upload CV in Settings for personalized advice</span>
+                          </div>
+                        )}
+                        {hasProfile && (
+                          <div className="flex items-center gap-1.5">
+                            <Check className="w-3 h-3 text-emerald-500" />
+                            <span className="text-[10px] font-medium text-emerald-600">Profile data available</span>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* Quick Prompts Grid */}

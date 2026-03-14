@@ -226,20 +226,50 @@ export async function chatWithLLM(
   message: string,
   profile: string = 'generalist',
   history: Array<{ role: string; content: string }> = [],
-  context?: { internshipIds?: string[]; clientJobCount?: number; hasLoadedJobs?: boolean }
+  context?: { internshipIds?: string[]; clientJobCount?: number; hasLoadedJobs?: boolean; telegramId?: string; cvText?: string; userProfile?: Record<string, string> }
 ): Promise<APIResponse<string>> {
   try {
+    // Build enriched context with CV data and user profile from localStorage
+    let cvText = context?.cvText || '';
+    let userProfile = context?.userProfile || {};
+    let telegramId = context?.telegramId || '';
+
+    // Read CV text from localStorage if not provided
+    if (!cvText) {
+      try {
+        const storedCv = localStorage.getItem('internhub_cv_data');
+        if (storedCv) {
+          // Extract text content summary from base64 PDF (send the name at least)
+          const cvName = localStorage.getItem('internhub_cv_name') || '';
+          cvText = `[CV Uploaded: ${cvName}]`;
+        }
+      } catch {}
+    }
+
+    // Read user profile from localStorage if not provided
+    if (!userProfile || Object.keys(userProfile).length === 0) {
+      try {
+        const storedProfile = localStorage.getItem('internhub_user_profile');
+        if (storedProfile) {
+          userProfile = JSON.parse(storedProfile);
+        }
+      } catch {}
+    }
+
     const resp = await fetch(getApiUrl('/llm/chat'), {
       method: 'POST',
       headers: getHeaders(),
       body: JSON.stringify({
         message,
         profile,
-        history: history.slice(-4), // Only send last 2 exchanges to minimize payload
+        history: history.slice(-6), // Send last 3 exchanges for better context
         context: {
           internshipIds: context?.internshipIds,
           clientJobCount: context?.clientJobCount || 0,
           hasLoadedJobs: context?.hasLoadedJobs || false,
+          telegramId,
+          cvText,
+          userProfile,
         },
       }),
     });
@@ -413,6 +443,38 @@ export async function fetchSupabaseStats(): Promise<APIResponse<any>> {
     return { success: data.success, data: data.data, timestamp: data.timestamp || new Date().toISOString() };
   } catch (error) {
     return { success: false, data: null, timestamp: new Date().toISOString() };
+  }
+}
+
+// ===== SYSTEM HEALTH CHECK =====
+export async function fetchSystemHealth(): Promise<APIResponse<{
+  backend: boolean;
+  supabase: { connected: boolean; latency_ms?: number; error?: string };
+  ai: boolean;
+  database: boolean;
+  version: string;
+}>> {
+  try {
+    const resp = await fetch(getApiUrl('/system/health'), { headers: getHeaders() });
+    if (!resp.ok) throw new Error(`API error: ${resp.status}`);
+    const data = await resp.json();
+    return {
+      success: data.success,
+      data: data.data,
+      timestamp: data.timestamp || new Date().toISOString(),
+    };
+  } catch (error) {
+    return {
+      success: false,
+      data: {
+        backend: false,
+        supabase: { connected: false, error: 'Backend unreachable' },
+        ai: false,
+        database: false,
+        version: 'unknown',
+      },
+      timestamp: new Date().toISOString(),
+    };
   }
 }
 

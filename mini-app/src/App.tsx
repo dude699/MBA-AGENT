@@ -63,12 +63,19 @@ export default function App() {
     hapticFeedback('light');
   };
 
-  // Supabase data fetcher
+  // Supabase data fetcher — now uses active filters
   const loadSupabaseJobs = useCallback(async (mode: 'latest' | 'archive', page: number = 1) => {
     setSbLoading(true);
     try {
       const fetcher = mode === 'latest' ? fetchSupabaseLatestJobs : fetchSupabaseAllJobs;
-      const resp = await fetcher(page, 20);
+      // Pass current filters to Supabase queries
+      const filterParams: any = {};
+      if (filters.sources?.length === 1) filterParams.sources = filters.sources;
+      if (filters.categories?.length === 1) filterParams.categories = filters.categories;
+      if (filters.locations?.length === 1) filterParams.locations = filters.locations;
+      if (filters.search) filterParams.search = filters.search;
+
+      const resp = await fetcher(page, 20, filterParams);
       if (page === 1) {
         setSbJobs(resp.data);
       } else {
@@ -82,19 +89,19 @@ export default function App() {
     } finally {
       setSbLoading(false);
     }
-  }, []);
+  }, [filters]);
 
-  // Load Supabase data when mode changes
+  // Load Supabase data when mode or filters change
   useEffect(() => {
     if (browseMode !== 'live' && activeTab === 'browse') {
       setSbJobs([]);
       setSbPage(1);
       loadSupabaseJobs(browseMode === 'latest' ? 'latest' : 'archive', 1);
     }
-  }, [browseMode, activeTab, loadSupabaseJobs]);
+  }, [browseMode, activeTab, loadSupabaseJobs, filters.search, filters.sources.length, filters.categories.length]);
 
   return (
-    <div className="app-root" style={{ background: '#ffffff', color: '#0a0a0a', minHeight: '100vh', paddingBottom: 'calc(88px + env(safe-area-inset-bottom, 0px))', overflowY: 'auto', overflowX: 'hidden', WebkitOverflowScrolling: 'touch' as any, position: 'relative' }}>
+    <div className="app-root" style={{ background: '#ffffff', color: '#0a0a0a', minHeight: '100vh' }}>
       {/* Header with Search + Filters */}
       <Header />
 

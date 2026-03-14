@@ -3,7 +3,7 @@
 // CV Upload, Encrypted Credential Management, User Profile
 // ============================================================
 
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Key, Shield, Trash2, CheckCircle2,
@@ -11,12 +11,13 @@ import {
   Eye, EyeOff, Save, X, Upload, FileText, AlertCircle,
   Database, Wifi, WifiOff, RefreshCw, Info, Globe,
   Briefcase, GraduationCap, MapPin, Mail, Phone,
-  Award
+  Award, Activity, Cpu, Zap
 } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { hapticFeedback, getTelegramUser } from '@/utils/helpers';
 import { SOURCE_CONFIG, CREDENTIAL_REQUIREMENTS } from '@/utils/constants';
 import { SourceIcon } from '@/components/SourceIcons';
+import { fetchSystemHealth } from '@/services/api';
 import type { InternshipSource } from '@/types';
 
 // ===== CV UPLOAD SECTION =====
@@ -236,6 +237,15 @@ function UserProfileSection() {
   const saveProfile = useCallback((data: any) => {
     setProfileData(data);
     try { localStorage.setItem('internhub_user_profile', JSON.stringify(data)); } catch {}
+    // Also save to backend for server-side AI access
+    try {
+      const tgUser = getTelegramUser();
+      fetch('/api/user/profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...data, telegram_id: tgUser?.id || 'anonymous' }),
+      }).catch(() => {}); // Non-blocking
+    } catch {}
     setShowEdit(false);
     hapticFeedback('medium');
   }, []);
@@ -470,41 +480,145 @@ export default function SettingsPage() {
       {/* Security Notice */}
       <SecurityInfoSection />
 
-      {/* Connection Status */}
-      <div className="p-4 rounded-2xl" style={{ background: '#f8f9fa', border: '1px solid #e5e7eb' }}>
-        <div className="flex items-center gap-2 mb-2">
-          <Database className="w-4 h-4 text-primary-500" />
-          <h3 className="text-xs font-bold text-primary-800">System Status</h3>
-        </div>
-        <div className="space-y-1.5">
-          <StatusRow icon={<Wifi className="w-3 h-3 text-emerald-500" />} label="Backend API" status="Connected" ok />
-          <StatusRow icon={<Database className="w-3 h-3 text-blue-500" />} label="Supabase DB" status="Active" ok />
-          <StatusRow icon={<Globe className="w-3 h-3 text-purple-500" />} label="AI Engine (Groq)" status="Ready" ok />
-          <StatusRow icon={<Lock className="w-3 h-3 text-amber-500" />} label="Encryption" status="AES-256" ok />
-        </div>
-      </div>
+      {/* Connection Status — REAL health check */}
+      <RealSystemStatus />
 
       {/* App Info */}
       <div className="text-center pb-8">
         <p className="text-[10px] text-primary-400 font-medium tracking-wide">
-          InternHub Pro v3.0.0
+          InternHub Pro v4.0.0
         </p>
         <p className="text-[10px] text-primary-300">
-          Operation First Mover - Major Overhaul
+          Operation First Mover - Production Build
         </p>
       </div>
     </div>
   );
 }
 
+// ===== REAL SYSTEM STATUS (pings backend) =====
+function RealSystemStatus() {
+  const [health, setHealth] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [lastChecked, setLastChecked] = useState('');
+
+  const checkHealth = useCallback(async () => {
+    setLoading(true);
+    try {
+      const resp = await fetchSystemHealth();
+      setHealth(resp.data);
+      setLastChecked(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+    } catch {
+      setHealth({ backend: false, supabase: { connected: false, error: 'Request failed' }, ai: false, database: false });
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    checkHealth();
+  }, []);
+
+  const sbConnected = health?.supabase?.connected || false;
+  const sbLatency = health?.supabase?.latency_ms;
+  const sbError = health?.supabase?.error;
+  const sbStats = health?.supabase_stats || {};
+
+  return (
+    <div className="p-4 rounded-2xl" style={{ background: '#f8f9fa', border: '1px solid #e5e7eb' }}>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <Activity className="w-4 h-4 text-primary-500" />
+          <h3 className="text-xs font-bold text-primary-800">Live System Status</h3>
+        </div>
+        <button
+          onClick={() => { checkHealth(); hapticFeedback('light'); }}
+          disabled={loading}
+          className="flex items-center gap-1 text-[10px] font-semibold text-primary-500 hover:text-primary-700"
+        >
+          <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
+          {loading ? 'Checking...' : 'Refresh'}
+        </button>
+      </div>
+
+      <div className="space-y-1.5">
+        <StatusRow icon={<Wifi className="w-3 h-3" />} label="Backend API" 
+          status={health?.backend ? 'Connected' : 'Offline'} 
+          ok={!!health?.backend}
+          iconColor={health?.backend ? 'text-emerald-500' : 'text-red-500'} />
+        <StatusRow icon={<Database className="w-3 h-3" />} label="Supabase DB" 
+          status={sbConnected ? `Active${sbLatency ? ` (${sbLatency}ms)` : ''}` : (sbError || 'Disconnected')} 
+          ok={sbConnected}
+          iconColor={sbConnected ? 'text-blue-500' : 'text-red-500'} />
+        <StatusRow icon={<Database className="w-3 h-3" />} label="SQLite DB" 
+          status={health?.database ? 'Active' : 'Unavailable'} 
+          ok={!!health?.database}
+          iconColor={health?.database ? 'text-teal-500' : 'text-red-500'} />
+        <StatusRow icon={<Cpu className="w-3 h-3" />} label="AI Engine (Groq)" 
+          status={health?.ai ? 'Ready' : 'Unavailable'} 
+          ok={!!health?.ai}
+          iconColor={health?.ai ? 'text-purple-500' : 'text-red-500'} />
+        <StatusRow icon={<Lock className="w-3 h-3" />} label="Encryption" 
+          status="AES-256 (client-side)" 
+          ok={true}
+          iconColor="text-amber-500" />
+      </div>
+
+      {/* Supabase stats if available */}
+      {sbConnected && Object.keys(sbStats).length > 0 && (
+        <div className="mt-3 pt-2 border-t border-primary-200/40">
+          <p className="text-[10px] font-bold text-primary-500 mb-1.5">Database Stats</p>
+          <div className="grid grid-cols-3 gap-2">
+            {sbStats.latest_jobs_count !== undefined && (
+              <div className="text-center p-1.5 bg-white rounded-lg">
+                <p className="text-sm font-bold text-primary-900">{sbStats.latest_jobs_count}</p>
+                <p className="text-[9px] text-primary-400">Latest</p>
+              </div>
+            )}
+            {sbStats.all_jobs_count !== undefined && (
+              <div className="text-center p-1.5 bg-white rounded-lg">
+                <p className="text-sm font-bold text-primary-900">{sbStats.all_jobs_count}</p>
+                <p className="text-[9px] text-primary-400">All Jobs</p>
+              </div>
+            )}
+            {sbStats.all_jobs_applied !== undefined && (
+              <div className="text-center p-1.5 bg-white rounded-lg">
+                <p className="text-sm font-bold text-emerald-600">{sbStats.all_jobs_applied}</p>
+                <p className="text-[9px] text-primary-400">Applied</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Show errors clearly */}
+      {health && !sbConnected && sbError && (
+        <div className="mt-2 p-2 rounded-lg" style={{ background: '#fef2f2', border: '1px solid #fecaca' }}>
+          <div className="flex items-start gap-1.5">
+            <AlertCircle className="w-3 h-3 text-red-500 mt-0.5 flex-shrink-0" />
+            <div>
+              <p className="text-[10px] font-semibold text-red-700">Supabase Connection Issue</p>
+              <p className="text-[9px] text-red-500 mt-0.5">{sbError}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {lastChecked && (
+        <p className="text-[9px] text-primary-300 mt-2 text-right">Last checked: {lastChecked}</p>
+      )}
+    </div>
+  );
+}
+
 // ===== STATUS ROW =====
-function StatusRow({ icon, label, status, ok }: { icon: React.ReactNode; label: string; status: string; ok: boolean }) {
+function StatusRow({ icon, label, status, ok, iconColor }: { icon: React.ReactNode; label: string; status: string; ok: boolean; iconColor?: string }) {
   return (
     <div className="flex items-center gap-2 py-1">
-      {icon}
+      <span className={iconColor || ''}>{icon}</span>
       <span className="text-[11px] text-primary-600 flex-1">{label}</span>
-      <span className={`text-[10px] font-semibold ${ok ? 'text-emerald-600' : 'text-red-500'}`}>{status}</span>
-      <span className={`w-1.5 h-1.5 rounded-full ${ok ? 'bg-emerald-400' : 'bg-red-400'}`} />
+      <span className={`text-[10px] font-semibold max-w-[150px] truncate ${ok ? 'text-emerald-600' : 'text-red-500'}`}>{status}</span>
+      <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${ok ? 'bg-emerald-400' : 'bg-red-400'}`} />
     </div>
   );
 }

@@ -295,6 +295,16 @@ class SupabaseJobDB:
             record_success()
             logger.info(f"[{MODULE_ID}] Inserted {inserted} jobs into latest_jobs (batch={batch_id})")
 
+            # v4.0: Also insert into all_jobs immediately so the "All Jobs" tab has data
+            # without waiting for the morning merge
+            if inserted > 0:
+                try:
+                    all_jobs_inserted = SupabaseJobDB.insert_all_jobs(new_jobs, batch_id)
+                    if all_jobs_inserted > 0:
+                        logger.info(f"[{MODULE_ID}] Also synced {all_jobs_inserted} jobs to all_jobs (real-time)")
+                except Exception as e:
+                    logger.debug(f"[{MODULE_ID}] all_jobs real-time sync error (non-critical): {e}")
+
         except Exception as e:
             logger.error(f"[{MODULE_ID}] insert_latest_jobs error: {e}")
             record_failure()

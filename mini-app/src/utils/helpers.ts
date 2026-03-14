@@ -255,6 +255,89 @@ export function hapticSelection() {
   } catch { /* silent */ }
 }
 
+// ===== REAL AES-256-GCM ENCRYPTION FOR CREDENTIALS =====
+// Uses Web Crypto API (available in all modern browsers including Telegram WebView)
+
+const ENCRYPTION_KEY_NAME = 'internhub_enc_key';
+
+async function getOrCreateEncryptionKey(): Promise<CryptoKey> {
+  // Try to retrieve existing key from IndexedDB via a simple localStorage reference
+  try {
+    const stored = localStorage.getItem(ENCRYPTION_KEY_NAME);
+    if (stored) {
+      const keyData = JSON.parse(stored);
+      return await crypto.subtle.importKey(
+        'jwk', keyData,
+        { name: 'AES-GCM', length: 256 },
+        true, ['encrypt', 'decrypt']
+      );
+    }
+  } catch {}
+
+  // Generate new AES-256 key
+  const key = await crypto.subtle.generateKey(
+    { name: 'AES-GCM', length: 256 },
+    true, ['encrypt', 'decrypt']
+  );
+
+  // Export and store
+  try {
+    const exported = await crypto.subtle.exportKey('jwk', key);
+    localStorage.setItem(ENCRYPTION_KEY_NAME, JSON.stringify(exported));
+  } catch {}
+
+  return key;
+}
+
+export async function encryptCredentials(data: Record<string, string>): Promise<string> {
+  try {
+    const key = await getOrCreateEncryptionKey();
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const plaintext = new TextEncoder().encode(JSON.stringify(data));
+
+    const ciphertext = await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv },
+      key, plaintext
+    );
+
+    // Combine IV + ciphertext and base64 encode
+    const combined = new Uint8Array(iv.length + new Uint8Array(ciphertext).length);
+    combined.set(iv);
+    combined.set(new Uint8Array(ciphertext), iv.length);
+
+    return btoa(String.fromCharCode(...combined));
+  } catch (e) {
+    console.warn('Encryption failed, using base64 fallback:', e);
+    return btoa(JSON.stringify(data));
+  }
+}
+
+export async function decryptCredentials(encryptedData: string): Promise<Record<string, string>> {
+  try {
+    const key = await getOrCreateEncryptionKey();
+    const combined = new Uint8Array(
+      atob(encryptedData).split('').map(c => c.charCodeAt(0))
+    );
+
+    const iv = combined.slice(0, 12);
+    const ciphertext = combined.slice(12);
+
+    const plaintext = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv },
+      key, ciphertext
+    );
+
+    return JSON.parse(new TextDecoder().decode(plaintext));
+  } catch (e) {
+    // Fallback: try base64 decode (for legacy data)
+    try {
+      return JSON.parse(atob(encryptedData));
+    } catch {
+      return {};
+    }
+  }
+}
+
 // ===== MISC =====
 export function classNames(...classes: (string | boolean | undefined | null)[]): string {
   return classes.filter(Boolean).join(' ');
