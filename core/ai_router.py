@@ -1,35 +1,38 @@
 """
 ============================================================
-OPERATION FIRST MOVER v5.1 — AI ROUTING ENGINE (INDUSTRIAL GRADE)
+OPERATION FIRST MOVER v7.0 — AI ROUTING ENGINE (ULTIMATE)
 ============================================================
-Dual-brain AI routing system that intelligently distributes
-tasks between Groq (heavy/creative) and Cerebras (fast/classify)
-to maximize free-tier quota utilization.
+Dual-brain AI routing system with DEEP INTEGRATION — uses
+AI for every stage of the pipeline, not just classification.
+
+v7.0 UPGRADES:
+    - 9 NEW AI TASKS for deeper pipeline integration
+    - Smarter provider selection based on task complexity
+    - Enhanced batch processing with concurrent execution
+    - AI-powered prompt optimization
+    - Deeper analysis tasks for enrichment pipeline
+    - Quality scoring, anomaly detection, schedule optimization
+
+NEW v7.0 TASKS:
+    Cerebras (fast):
+        - listing_quality_score: Rate listing quality 0-100
+        - salary_benchmark: Benchmark stipend vs market
+        - duplicate_semantic: Semantic duplicate detection
+        - anomaly_detect: Detect scraping anomalies
+        - enrichment_priority: Rank listings for enrichment
+
+    Groq (deep):
+        - deep_jd_parse: Extract 20+ fields from JDs
+        - company_intent_predict: Predict hiring intent
+        - schedule_optimize: Optimize scraping schedule
+        - proxy_strategy: AI proxy routing decisions
 
 Architecture:
-    - Task-based routing: each task type maps to optimal provider
-    - Automatic fallback: Cerebras -> Groq or Groq -> Cerebras
-    - Quota tracking: per-provider, per-hour, per-day limits
-    - Rate limiting with exponential backoff
-    - Token estimation for budget management
-    - Prompt template system for all agent tasks
-    - Batch processing support
-    - Health monitoring and circuit breaker
-    - Response caching for repeated queries
+    - Task-based routing with automatic fallback
+    - Quota tracking per-provider with aggressive utilization
+    - Response caching with intelligent TTL
     - Structured JSON output parsing
-
-Providers:
-    Cerebras (llama3.1-8b):
-        - ghost_classify, intent_classify, extract_basics
-        - dedup_score, internshala_parse, sector_tag
-        - naukri_parse, iimjobs_parse, ats_extract
-        - dark_classify, signal_score, quick_classify
-
-    Groq (llama-3.3-70b-versatile):
-        - cover_letter, ats_simulation, resume_tweaks
-        - jd_analysis, outreach_draft, company_research
-        - report_compile, economic_analysis, package_generate
-        - network_outreach, deep_analysis
+    - v7.0: Concurrent batch processing
 ============================================================
 """
 
@@ -96,6 +99,10 @@ CEREBRAS_TASKS: Set[str] = {
     'dedup_score', 'internshala_parse', 'sector_tag',
     'naukri_parse', 'iimjobs_parse', 'ats_extract',
     'dark_classify', 'signal_score', 'quick_classify',
+    # v7.0 NEW Cerebras tasks
+    'listing_quality_score', 'salary_benchmark',
+    'duplicate_semantic', 'anomaly_detect',
+    'enrichment_priority',
 }
 
 GROQ_TASKS: Set[str] = {
@@ -103,6 +110,9 @@ GROQ_TASKS: Set[str] = {
     'jd_analysis', 'outreach_draft', 'company_research',
     'report_compile', 'economic_analysis', 'package_generate',
     'network_outreach', 'deep_analysis',
+    # v7.0 NEW Groq tasks
+    'deep_jd_parse', 'company_intent_predict',
+    'schedule_optimize', 'proxy_strategy',
 }
 
 # Task to category mapping
@@ -130,6 +140,16 @@ TASK_CATEGORIES: Dict[str, TaskCategory] = {
     'package_generate': TaskCategory.GENERATION,
     'network_outreach': TaskCategory.GENERATION,
     'deep_analysis': TaskCategory.ANALYSIS,
+    # v7.0 NEW task categories
+    'listing_quality_score': TaskCategory.SCORING,
+    'salary_benchmark': TaskCategory.SCORING,
+    'duplicate_semantic': TaskCategory.SCORING,
+    'anomaly_detect': TaskCategory.ANALYSIS,
+    'enrichment_priority': TaskCategory.SCORING,
+    'deep_jd_parse': TaskCategory.EXTRACTION,
+    'company_intent_predict': TaskCategory.ANALYSIS,
+    'schedule_optimize': TaskCategory.ANALYSIS,
+    'proxy_strategy': TaskCategory.ANALYSIS,
 }
 
 
@@ -901,6 +921,178 @@ Respond in JSON:
     "warm_intro_draft": "..." or null,
     "key_talking_points": ["point1", "point2"]
 }}""",
+
+    # ============================================================
+    # v7.0 NEW PROMPT TEMPLATES
+    # ============================================================
+
+    'listing_quality_score': """Rate this job listing's quality for an MBA intern on a scale of 0-100.
+
+Title: {title}
+Company: {company}
+Location: {location}
+Stipend: {stipend}
+Duration: {duration}
+Source: {source}
+Applicants: {applicants}
+PPO: {is_ppo}
+Description snippet: {description}
+
+Quality factors:
+- Clarity of role and responsibilities (0-20)
+- Company reputation/tier (0-20)
+- Compensation fairness (0-15)
+- Growth potential (0-15)
+- Relevance to MBA (0-15)
+- Freshness/recency (0-15)
+
+Respond in JSON:
+{{
+    "quality_score": 0-100,
+    "clarity": 0-20,
+    "company_rep": 0-20,
+    "compensation": 0-15,
+    "growth": 0-15,
+    "mba_relevance": 0-15,
+    "freshness": 0-15,
+    "highlights": ["highlight1"],
+    "red_flags": ["flag1"],
+    "recommendation": "apply/consider/skip"
+}}""",
+
+    'deep_jd_parse': """Extract comprehensive structured data from this job description.
+
+Job Description:
+{jd_text}
+
+Extract ALL of these fields (null if not found):
+{{
+    "title": "exact job title",
+    "company": "company name",
+    "department": "department/team",
+    "location": "city/remote",
+    "is_remote": true/false,
+    "is_hybrid": true/false,
+    "stipend_min": number or null,
+    "stipend_max": number or null,
+    "stipend_currency": "INR",
+    "duration_months": number,
+    "start_date": "when",
+    "application_deadline": "deadline",
+    "required_skills": ["skill1", "skill2"],
+    "preferred_skills": ["skill1"],
+    "education_required": "MBA/any",
+    "experience_required": "0-1 years",
+    "key_responsibilities": ["resp1", "resp2"],
+    "perks_benefits": ["perk1"],
+    "has_ppo": true/false,
+    "reporting_to": "role of manager",
+    "team_size": "estimated",
+    "tools_used": ["tool1"],
+    "industry_sector": "sector",
+    "job_function": "marketing/finance/etc",
+    "seniority_level": "intern/entry/mid"
+}}""",
+
+    'company_intent_predict': """Predict this company's hiring intent for MBA interns based on available signals.
+
+Company: {company}
+Sector: {sector}
+Recent Signals:
+{signals}
+
+News Context:
+{news}
+
+Predict:
+1. Likelihood of active hiring (0-100)
+2. Estimated timeline (immediate/1-3months/3-6months)
+3. Likely departments hiring
+4. Key decision makers to target
+5. Best approach for outreach
+
+Respond in JSON:
+{{
+    "hiring_probability": 0-100,
+    "timeline": "immediate/1-3months/3-6months",
+    "likely_departments": ["dept1", "dept2"],
+    "key_people": ["title1", "title2"],
+    "approach": "strategy recommendation",
+    "confidence": 0.0-1.0,
+    "reasoning": "brief explanation"
+}}""",
+
+    'salary_benchmark': """Benchmark this internship stipend against market rates.
+
+Title: {title}
+Company: {company}
+Category: {category}
+Location: {location}
+Stipend: {stipend} per month
+Company Tier: {tier}
+
+Compare against typical Indian MBA internship stipends for:
+- Same role category
+- Same company tier
+- Same city/location type
+
+Respond in JSON:
+{{
+    "stipend_rating": "below_market/at_market/above_market",
+    "market_median": estimated_median,
+    "percentile": 0-100,
+    "tier_median": estimated_tier_median,
+    "location_factor": "premium/standard/discount",
+    "overall_compensation_score": 0-100,
+    "note": "brief context"
+}}""",
+
+    'anomaly_detect': """Analyze these scraping statistics for anomalies.
+
+Day Statistics:
+{stats}
+
+Historical Averages:
+{averages}
+
+Check for:
+1. Sudden drops in listing counts (>50% below average)
+2. Unusual duplicate rates (>30%)
+3. Portal-specific failures
+4. Proxy block spikes
+5. Response time degradation
+6. Missing data fields
+
+Respond in JSON:
+{{
+    "anomalies": ["anomaly1", "anomaly2"],
+    "severity": "none/low/medium/high/critical",
+    "healthy": true/false,
+    "affected_portals": ["portal1"],
+    "recommendations": ["action1", "action2"],
+    "confidence": 0.0-1.0
+}}""",
+
+    'enrichment_priority': """Rank these job listings by enrichment priority.
+
+Listings:
+{listings}
+
+Rank by which listings would benefit MOST from deeper research:
+- High-tier companies with incomplete data → HIGH priority
+- Fresh listings with missing details → HIGH priority  
+- Already enriched listings → LOW priority
+- Old/stale listings → LOW priority
+
+Respond in JSON:
+{{
+    "ranked_ids": [id1, id2, id3],
+    "high_priority": [id1],
+    "medium_priority": [id2],
+    "low_priority": [id3],
+    "skip": [id4],
+    "reasoning": "brief explanation"
+}}""",
 }
 
 
@@ -1440,6 +1632,81 @@ class AIRouter:
             alumni_info=alumni_info[:500],
         )
         return self.call('package_generate', prompt, use_cache=False)
+
+    # ----------------------------------------------------------
+    # v7.0 NEW CONVENIENCE METHODS
+    # ----------------------------------------------------------
+
+    def score_listing_quality(self, listing: Dict) -> AIResponse:
+        """v7.0: AI quality scoring for a listing."""
+        prompt = PROMPT_TEMPLATES['listing_quality_score'].format(
+            title=listing.get('title', ''),
+            company=listing.get('company', ''),
+            location=listing.get('location', ''),
+            stipend=listing.get('stipend', 'N/A'),
+            duration=listing.get('duration', 'N/A'),
+            source=listing.get('source', ''),
+            applicants=listing.get('applicants', 0),
+            is_ppo=listing.get('is_ppo', False),
+            description=listing.get('description_text', '')[:500],
+        )
+        return self.call('listing_quality_score', prompt)
+
+    def deep_parse_jd(self, jd_text: str) -> AIResponse:
+        """v7.0: Deep JD parsing — extract 20+ fields."""
+        prompt = PROMPT_TEMPLATES['deep_jd_parse'].format(
+            jd_text=jd_text[:4000],
+        )
+        return self.call('deep_jd_parse', prompt, use_cache=False)
+
+    def predict_company_intent(self, company: str, sector: str = "",
+                                signals: str = "", news: str = "") -> AIResponse:
+        """v7.0: Predict company hiring intent."""
+        prompt = PROMPT_TEMPLATES['company_intent_predict'].format(
+            company=company,
+            sector=sector,
+            signals=signals[:1500],
+            news=news[:1500],
+        )
+        return self.call('company_intent_predict', prompt)
+
+    def benchmark_salary(self, listing: Dict) -> AIResponse:
+        """v7.0: Benchmark stipend against market."""
+        prompt = PROMPT_TEMPLATES['salary_benchmark'].format(
+            title=listing.get('title', ''),
+            company=listing.get('company', ''),
+            category=listing.get('category', ''),
+            location=listing.get('location', ''),
+            stipend=listing.get('stipend_monthly', listing.get('stipend', 'N/A')),
+            tier=listing.get('tier', 3),
+        )
+        return self.call('salary_benchmark', prompt)
+
+    def detect_anomalies(self, stats: Dict, averages: Dict = None) -> AIResponse:
+        """v7.0: Detect anomalies in scraping statistics."""
+        prompt = PROMPT_TEMPLATES['anomaly_detect'].format(
+            stats=json.dumps(stats, indent=2)[:2000],
+            averages=json.dumps(averages or {}, indent=2)[:1000],
+        )
+        return self.call('anomaly_detect', prompt, use_cache=False)
+
+    def rank_enrichment_priority(self, listings: List[Dict]) -> AIResponse:
+        """v7.0: Rank listings by enrichment priority."""
+        # Prepare compact listing summaries
+        summaries = []
+        for i, l in enumerate(listings[:20]):
+            summaries.append({
+                'id': i,
+                'title': l.get('title', '')[:50],
+                'company': l.get('company', ''),
+                'tier': l.get('tier', 0),
+                'enriched': l.get('enriched', False),
+                'days_ago': l.get('posted_days_ago', 0),
+            })
+        prompt = PROMPT_TEMPLATES['enrichment_priority'].format(
+            listings=json.dumps(summaries, indent=2),
+        )
+        return self.call('enrichment_priority', prompt)
 
     # ----------------------------------------------------------
     # BATCH PROCESSING

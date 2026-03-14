@@ -94,7 +94,7 @@ export default function App() {
   }, [browseMode, activeTab, loadSupabaseJobs]);
 
   return (
-    <div className="min-h-screen" style={{ background: '#000000', paddingBottom: 'calc(72px + env(safe-area-inset-bottom, 0px))', overflowY: 'auto', WebkitOverflowScrolling: 'touch' as any }}>
+    <div className="min-h-screen" style={{ background: '#ffffff', color: '#0a0a0a', paddingBottom: 'calc(72px + env(safe-area-inset-bottom, 0px))', overflowY: 'auto', WebkitOverflowScrolling: 'touch' as any }}>
       {/* Header with Search + Filters */}
       <Header />
 
@@ -111,13 +111,13 @@ export default function App() {
             >
               {/* Browse Mode Tabs: Live | Latest (Supabase) | Archive (Supabase) */}
               <div className="px-4 pt-3 pb-1">
-                <div className="flex gap-1 rounded-xl p-1" style={{ background: '#0a0a0a' }}>
+                <div className="flex gap-1 rounded-xl p-1" style={{ background: '#f3f4f6' }}>
                   <button
                     onClick={() => { setBrowseMode('live'); hapticFeedback('light'); }}
                     className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-[11px] font-bold transition-all ${
                       browseMode === 'live'
-                        ? 'bg-white text-black shadow-sm'
-                        : 'text-white/50'
+                        ? 'bg-white text-[#0a0a0a] shadow-sm'
+                        : 'text-[#9ca3af]'
                     }`}
                   >
                     <RefreshCw className="w-3 h-3" />
@@ -127,8 +127,8 @@ export default function App() {
                     onClick={() => { setBrowseMode('latest'); hapticFeedback('light'); }}
                     className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-[11px] font-bold transition-all ${
                       browseMode === 'latest'
-                        ? 'bg-white text-black shadow-sm'
-                        : 'text-white/50'
+                        ? 'bg-white text-[#0a0a0a] shadow-sm'
+                        : 'text-[#9ca3af]'
                     }`}
                   >
                     <Clock className="w-3 h-3" />
@@ -138,8 +138,8 @@ export default function App() {
                     onClick={() => { setBrowseMode('archive'); hapticFeedback('light'); }}
                     className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-[11px] font-bold transition-all ${
                       browseMode === 'archive'
-                        ? 'bg-white text-black shadow-sm'
-                        : 'text-white/50'
+                        ? 'bg-white text-[#0a0a0a] shadow-sm'
+                        : 'text-[#9ca3af]'
                     }`}
                   >
                     <Archive className="w-3 h-3" />
@@ -277,13 +277,13 @@ export default function App() {
                       <ListSkeleton count={5} />
                     ) : sbJobs.length === 0 ? (
                       <div className="py-16 text-center">
-                        <div className="w-20 h-20 bg-primary-50 rounded-3xl flex items-center justify-center mx-auto mb-4">
-                          <Clock className="w-8 h-8 text-primary-300" />
+                        <div className="w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-4" style={{background:'#f3f4f6'}}>
+                          <Clock className="w-8 h-8" style={{color:'#d1d5db'}} />
                         </div>
-                        <h3 className="text-base font-bold text-primary-800 mb-2">
+                        <h3 className="text-base font-bold mb-2" style={{color:'#1f2937'}}>
                           {browseMode === 'latest' ? 'No Latest Jobs' : 'No Archived Jobs'}
                         </h3>
-                        <p className="text-xs text-primary-500">
+                        <p className="text-xs" style={{color:'#6b7280'}}>
                           {browseMode === 'latest'
                             ? 'Jobs from the current scraping session will appear here.'
                             : 'All previously scraped jobs will be archived here.'}
@@ -377,10 +377,11 @@ export default function App() {
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.8 }}
             onClick={scrollToTop}
-            className="fixed right-4 z-30 w-10 h-10 bg-white border border-surface-border rounded-full shadow-elevated flex items-center justify-center hover:bg-surface-muted transition-colors"
+            className="fixed right-4 z-30 w-10 h-10 rounded-full flex items-center justify-center transition-colors"
+            style={{ background: '#ffffff', border: '1px solid #e5e7eb', boxShadow: '0 4px 24px rgba(0,0,0,0.08)' }}
             style={{ bottom: 'calc(80px + env(safe-area-inset-bottom, 0px))' }}
           >
-            <ChevronUp className="w-5 h-5 text-primary-600" />
+            <ChevronUp className="w-5 h-5" style={{color:'#4b5563'}} />
           </motion.button>
         )}
       </AnimatePresence>
@@ -394,14 +395,14 @@ function EmptyState() {
 
   return (
     <div className="py-16 text-center px-8">
-      <div className="w-20 h-20 bg-primary-50 rounded-3xl flex items-center justify-center mx-auto mb-4">
-        <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="#adb5bd" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <div className="w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-4" style={{background:'#f3f4f6'}}>
+        <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="#d1d5db" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="11" cy="11" r="8" />
           <path d="m21 21-4.35-4.35" />
         </svg>
       </div>
-      <h3 className="text-base font-bold text-primary-800 mb-2">No internships found</h3>
-      <p className="text-xs text-primary-400 mb-4 leading-relaxed">
+      <h3 className="text-base font-bold mb-2" style={{color:'#1f2937'}}>No internships found</h3>
+      <p className="text-xs mb-4 leading-relaxed" style={{color:'#9ca3af'}}>
         Try adjusting your filters or search terms to discover more opportunities.
       </p>
       <button
