@@ -96,7 +96,7 @@ except ImportError:
 # CONSTANTS
 # ============================================================
 
-VERSION = "5.4.0"
+VERSION = "6.0.0"
 RENDER_OVERLAP_GRACE_SEC = int(os.getenv('RENDER_OVERLAP_GRACE_SEC', '20'))
 WATCHDOG_INTERVAL_SEC = 120
 STARTUP_TIMEOUT_SEC = 120
@@ -556,12 +556,21 @@ class Application:
 
     async def _init_scheduler(self):
         try:
-            from core.scheduler import get_scheduler
-            self._scheduler = get_scheduler()
-            await self._scheduler.start()
+            # v6.0: Use weekly scheduler if configured, else fall back to daily
+            schedule_mode = os.getenv('SCHEDULE_MODE', 'weekly').lower()
 
-            self._status.mark_ok('scheduler', 'running with 18 jobs')
-            logger.info("[Phase 7] Scheduler running")
+            if schedule_mode == 'weekly':
+                from core.weekly_scheduler import get_weekly_scheduler
+                self._scheduler = get_weekly_scheduler()
+                await self._scheduler.start()
+                self._status.mark_ok('scheduler', 'v6.0 weekly smart schedule running')
+                logger.info("[Phase 7] v6.0 Weekly Smart Scheduler running")
+            else:
+                from core.scheduler import get_scheduler
+                self._scheduler = get_scheduler()
+                await self._scheduler.start()
+                self._status.mark_ok('scheduler', 'v5.1 daily schedule running')
+                logger.info("[Phase 7] v5.1 Daily Scheduler running (legacy)")
 
             try:
                 from core.keepalive import get_health_tracker
@@ -596,8 +605,13 @@ class Application:
                 # Check scheduler health
                 if self._scheduler:
                     try:
-                        from core.scheduler import get_scheduler
-                        sched = get_scheduler()
+                        schedule_mode = os.getenv('SCHEDULE_MODE', 'weekly').lower()
+                        if schedule_mode == 'weekly':
+                            from core.weekly_scheduler import get_weekly_scheduler
+                            sched = get_weekly_scheduler()
+                        else:
+                            from core.scheduler import get_scheduler
+                            sched = get_scheduler()
                         if hasattr(sched, '_scheduler') and sched._scheduler and not sched._scheduler.running:
                             logger.warning("[WATCHDOG] Scheduler stopped -- attempting restart")
                             await sched.start()

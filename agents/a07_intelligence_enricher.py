@@ -1117,6 +1117,18 @@ class IntelligenceEnricher:
 
         return '\n'.join(lines)
 
+    def run_deep_enrichment(self) -> EnrichmentStats:
+        """
+        v6.0: Sunday deep enrichment.
+        - Full CIRS refresh for all companies
+        - Sector momentum recalculation
+        - Re-score all active listings with updated company data
+        - Wider time window (7 days) and higher limit
+        """
+        logger.info(f"[{AGENT_ID}] === SUNDAY DEEP ENRICHMENT START ===")
+        # Use wider time window and higher limit for Sunday deep run
+        return self.run_enrichment(hours=168, limit=5000)  # 7 days, 5000 listings
+
 
 # ============================================================
 # MODULE-LEVEL FACTORY

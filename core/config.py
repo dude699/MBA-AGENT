@@ -1702,6 +1702,34 @@ class Config:
         self.free_proxy = FreeProxyConfig()
         self.stealth_timing = StealthTimingConfig()
 
+        # ---- v6.0 Scraping API Fallbacks (FREE tiers) ----
+        # ScraperAPI: 1,000 free credits/month (no credit card)
+        # Signup: https://www.scraperapi.com/signup
+        self.scraperapi_key = _get_env(
+            'SCRAPERAPI_KEY', default='',
+            description='ScraperAPI free tier key (1000 credits/month)'
+        )
+
+        # Scrape.do: 1,000 free credits/month (refreshes monthly)
+        # Signup: https://scrape.do/signup
+        self.scrapedo_token = _get_env(
+            'SCRAPEDO_TOKEN', default='',
+            description='Scrape.do free tier token (1000 credits/month)'
+        )
+
+        # ScrapingBee: 1,000 free credits ONE-TIME (no credit card)
+        # Signup: https://www.scrapingbee.com/signup
+        self.scrapingbee_key = _get_env(
+            'SCRAPINGBEE_KEY', default='',
+            description='ScrapingBee free tier key (1000 one-time credits)'
+        )
+
+        # v6.0 Schedule mode: 'weekly' (new) or 'daily' (legacy)
+        self.schedule_mode = _get_env(
+            'SCHEDULE_MODE', default='weekly',
+            description='Scheduler mode: weekly (v6.0) or daily (v5.1 legacy)'
+        )
+
         # Search & Discovery
         self.serpapi = SerpAPIConfig(
             api_key=_get_env(
@@ -1799,6 +1827,10 @@ class Config:
             'x_bearer_token': bool(self.x_bearer_token),
             'bing_api_key': bool(self.bing.api_key),
             'supabase_configured': self.supabase.is_configured,
+            # v6.0 scraping API fallbacks
+            'scraperapi_key': bool(self.scraperapi_key),
+            'scrapedo_token': bool(self.scrapedo_token),
+            'scrapingbee_key': bool(self.scrapingbee_key),
         }
         return checks
 
