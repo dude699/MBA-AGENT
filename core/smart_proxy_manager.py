@@ -1,19 +1,24 @@
 """
 ============================================================
-OPERATION FIRST MOVER v6.0 — SMART PROXY MANAGER
+OPERATION FIRST MOVER v7.0 — SMART PROXY MANAGER (ULTIMATE)
 ============================================================
-Enhanced proxy rotation with:
+Enhanced proxy rotation with AI-driven intelligence:
 
 1. 10 Webshare IPs with smart day-based allocation
-2. ScraperAPI free tier (1,000 credits/month) as fallback
+2. ScraperAPI free tier (1,000 credits/month) as primary backup
 3. ScrapingBee free tier (1,000 credits one-time) as emergency
-4. Scrape.do free tier (1,000 credits/month) as fallback
+4. Scrape.do free tier (1,000 credits/month) as backup
 5. Geonode free proxy list (curated, health-checked)
 6. ProxyScrape curated list (filtered for reliability)
 7. Circuit breaker per proxy source
-8. Automatic failover chain: Webshare -> ScraperAPI -> Scrape.do -> ScrapingBee -> Geonode -> Direct
-9. Per-domain proxy affinity (stick to working proxy for a domain)
+8. Automatic failover chain with AI-driven selection
+9. Per-domain proxy affinity with ML-like scoring
 10. Smart cooldown tracking per IP per domain
+11. AI-POWERED PROXY SCORING: Predict ban probability per proxy
+12. ADAPTIVE COOLDOWN: AI adjusts cooldown based on patterns
+13. DOMAIN STRATEGY ENGINE: Best proxy type per domain
+14. PERFORMANCE TRACKING: Response time + success rate per proxy
+15. SMART WARMUP: Pre-test proxies before scraping sessions
 
 PROXY HIERARCHY:
     L1 (PRIMARY):    Webshare 10 rotating IPs       — Fast, reliable
@@ -25,15 +30,12 @@ PROXY HIERARCHY:
     L7 (ANONYMITY):  Tor via stem                     — Sensitive dorks only
     L8 (FALLBACK):   Direct connection                — Safe APIs only
 
-FREE PROXY BUDGET (monthly):
-    Webshare:     10 IPs, unlimited requests     — Primary workhorse
-    ScraperAPI:   1,000 credits/month            — ~33/day backup
-    Scrape.do:    1,000 credits/month            — ~33/day backup
-    ScrapingBee:  1,000 credits (one-time)       — Emergency only
-    Geonode list: ~50-200 curated free proxies   — Fallback pool
-    CF Workers:   100,000 req/day                — Relay layer
-    
-    TOTAL MONTHLY PROXY BUDGET: ~3,000 API credits + 10 IPs + unlimited CF
+v7.0 AGGRESSIVE BUDGET (monthly):
+    Webshare:     10 IPs, 40-60% utilization (was 14%)
+    ScraperAPI:   85-90% of 1000 credits/month (was 40%)
+    Scrape.do:    85-90% of 1000 credits/month (was 40%)
+    ScrapingBee:  1,000 credits (one-time) — Emergency only
+    CF Workers:   5-8% of 100K/day (was 0.7%)
 ============================================================
 """
 
@@ -831,6 +833,207 @@ class SmartProxyManager:
     def _record_domain_request(self, domain: str, proxy: str):
         """Record a domain request for cooldown tracking."""
         self._domain_proxy_cooldown[(domain, proxy)] = time.time()
+
+    # ============================================================
+    # v7.0: PERFORMANCE TRACKING & AI-DRIVEN PROXY SELECTION
+    # ============================================================
+
+    def record_proxy_performance(self, proxy: str, domain: str,
+                                  success: bool, response_time_ms: float = 0,
+                                  status_code: int = 0):
+        """
+        v7.0: Record proxy performance for AI-driven selection.
+        Tracks success rate and response time per proxy+domain pair.
+        """
+        if not hasattr(self, '_proxy_performance'):
+            self._proxy_performance: Dict[str, Dict] = {}
+
+        key = f"{proxy[:30]}:{domain}"
+        if key not in self._proxy_performance:
+            self._proxy_performance[key] = {
+                'successes': 0, 'failures': 0,
+                'total_response_time_ms': 0, 'request_count': 0,
+                'last_success': 0, 'last_failure': 0,
+                'blocked_count': 0,
+            }
+
+        perf = self._proxy_performance[key]
+        perf['request_count'] += 1
+
+        if success:
+            perf['successes'] += 1
+            perf['total_response_time_ms'] += response_time_ms
+            perf['last_success'] = time.time()
+        else:
+            perf['failures'] += 1
+            perf['last_failure'] = time.time()
+            if status_code in (403, 429):
+                perf['blocked_count'] += 1
+
+    def get_proxy_score(self, proxy: str, domain: str) -> float:
+        """
+        v7.0: AI-like proxy scoring based on historical performance.
+        Returns 0-100 score. Higher = better proxy for this domain.
+        """
+        if not hasattr(self, '_proxy_performance'):
+            return 50.0  # Default score for unknown proxies
+
+        key = f"{proxy[:30]}:{domain}"
+        perf = self._proxy_performance.get(key)
+        if not perf or perf['request_count'] == 0:
+            return 50.0
+
+        # Success rate component (0-40)
+        success_rate = perf['successes'] / perf['request_count']
+        success_score = success_rate * 40
+
+        # Response time component (0-20) — lower is better
+        if perf['successes'] > 0:
+            avg_time = perf['total_response_time_ms'] / perf['successes']
+            if avg_time < 2000:
+                time_score = 20
+            elif avg_time < 5000:
+                time_score = 15
+            elif avg_time < 10000:
+                time_score = 10
+            else:
+                time_score = 5
+        else:
+            time_score = 10
+
+        # Recency component (0-20) — recently successful is good
+        time_since_success = time.time() - perf.get('last_success', 0)
+        if time_since_success < 3600:  # Last hour
+            recency_score = 20
+        elif time_since_success < 86400:  # Last day
+            recency_score = 15
+        else:
+            recency_score = 5
+
+        # Block penalty (0 to -20)
+        block_penalty = min(perf.get('blocked_count', 0) * 5, 20)
+
+        return max(0, min(100, success_score + time_score + recency_score - block_penalty))
+
+    def get_best_proxy_for_domain(self, domain: str,
+                                   pool_indices: Optional[List[int]] = None) -> Optional[str]:
+        """
+        v7.0: AI-scored proxy selection — picks the best proxy for a domain
+        based on historical performance data.
+        """
+        self.initialize()
+
+        if not self._webshare_proxies:
+            return None
+
+        # Get available proxies
+        if pool_indices:
+            available = [
+                self._webshare_proxies[i]
+                for i in pool_indices
+                if i < len(self._webshare_proxies)
+            ]
+        else:
+            available = list(self._webshare_proxies)
+
+        if not available:
+            return None
+
+        # Score each proxy for this domain
+        scored = []
+        for proxy in available:
+            if self._is_on_cooldown(domain, proxy):
+                continue
+            score = self.get_proxy_score(proxy, domain)
+            scored.append((proxy, score))
+
+        if not scored:
+            # All on cooldown — return any available
+            return random.choice(available)
+
+        # Select with weighted randomness (higher score = higher chance)
+        scored.sort(key=lambda x: x[1], reverse=True)
+
+        # Top 3 with weighted random selection
+        top_proxies = scored[:3]
+        total_score = sum(s for _, s in top_proxies)
+        if total_score == 0:
+            return top_proxies[0][0]
+
+        r = random.random() * total_score
+        cumulative = 0
+        for proxy, score in top_proxies:
+            cumulative += score
+            if r <= cumulative:
+                return proxy
+
+        return top_proxies[0][0]
+
+    def get_adaptive_cooldown(self, domain: str) -> int:
+        """
+        v7.0: Adaptive cooldown based on domain's ban pattern.
+        Domains that frequently block get longer cooldowns.
+        """
+        if not hasattr(self, '_proxy_performance'):
+            return 1800  # Default 30 min
+
+        # Count blocks for this domain across all proxies
+        total_blocks = 0
+        total_requests = 0
+        for key, perf in self._proxy_performance.items():
+            if domain in key:
+                total_blocks += perf.get('blocked_count', 0)
+                total_requests += perf['request_count']
+
+        if total_requests == 0:
+            return 1800
+
+        block_rate = total_blocks / total_requests
+
+        # Adaptive cooldown based on block rate
+        if block_rate > 0.5:
+            return 3600  # 1 hour — very hostile domain
+        elif block_rate > 0.3:
+            return 2700  # 45 min
+        elif block_rate > 0.1:
+            return 1800  # 30 min — standard
+        else:
+            return 900   # 15 min — friendly domain
+
+    def get_performance_report(self) -> str:
+        """v7.0: Generate proxy performance report for Telegram."""
+        if not hasattr(self, '_proxy_performance'):
+            return "📊 No proxy performance data yet"
+
+        lines = [
+            "📊 <b>Proxy Performance Report v7.0</b>",
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+            "",
+        ]
+
+        # Aggregate by domain
+        domain_stats: Dict[str, Dict] = {}
+        for key, perf in self._proxy_performance.items():
+            domain = key.split(':')[-1] if ':' in key else 'unknown'
+            if domain not in domain_stats:
+                domain_stats[domain] = {'successes': 0, 'failures': 0, 'blocks': 0}
+            domain_stats[domain]['successes'] += perf['successes']
+            domain_stats[domain]['failures'] += perf['failures']
+            domain_stats[domain]['blocks'] += perf.get('blocked_count', 0)
+
+        for domain, stats in sorted(domain_stats.items()):
+            total = stats['successes'] + stats['failures']
+            if total == 0:
+                continue
+            rate = round(stats['successes'] / total * 100, 1)
+            emoji = "🟢" if rate > 80 else "🟡" if rate > 50 else "🔴"
+            lines.append(
+                f"{emoji} <b>{domain}</b>: {rate}% success "
+                f"({stats['successes']}/{total}) | "
+                f"Blocks: {stats['blocks']}"
+            )
+
+        return '\n'.join(lines)
 
     def get_all_stats(self) -> Dict[str, Any]:
         """Get comprehensive proxy stats for reporting."""

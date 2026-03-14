@@ -1,36 +1,16 @@
 """
 ============================================================
-OPERATION FIRST MOVER v5.1 — CORE CONFIGURATION MODULE (INDUSTRIAL GRADE)
+OPERATION FIRST MOVER v7.0 — CORE CONFIGURATION MODULE (ULTIMATE)
 ============================================================
-Complete configuration management system for the zero-cost
-MBA Hunt Agent. Handles all environment variables, constants,
-rate limits, provider configs, company tiers, MBA categories,
-stealth profiles, scheduling, and system-wide settings.
+Complete configuration management system with v7.0 AI-enhanced
+scheduling, aggressive resource utilization, and deep crawling.
 
-This module is the SINGLE SOURCE OF TRUTH for all configuration
-values used across all 12 agents and core infrastructure.
-
-Sections:
-    1. Environment Loading & Validation
-    2. AI Provider Configuration (Groq + Cerebras)
-    3. Telegram Configuration
-    4. Proxy & Stealth Configuration
-    5. Search & Discovery API Configuration
-    6. Database Configuration
-    7. Scraping Source Configuration (Internshala, Naukri, etc.)
-    8. MBA Categories & Company Tiers
-    9. Rate Limit Configuration
-    10. PPO Scoring Weights
-    11. Ghost Detection Thresholds
-    12. Blue Ocean Criteria
-    13. CIRS Configuration
-    14. Scheduling Configuration (24-hour IST)
-    15. User-Agent Pool (20+ agents)
-    16. TLS Fingerprint Profiles
-    17. Logging Configuration
-    18. Render Deployment Settings
-    19. Telegram Dark Channel Configuration
-    20. Economic Signal Sources
+v7.0 Changes:
+    - New AI task temperature/token mappings
+    - Aggressive resource budget targets
+    - 3-wave scheduling configuration
+    - Deep crawl parameters
+    - AI quality scoring thresholds
 ============================================================
 """
 
@@ -181,7 +161,10 @@ class GroqConfig:
         'cover_letter', 'ats_simulation', 'resume_tweaks',
         'jd_analysis', 'outreach_draft', 'company_research',
         'report_compile', 'economic_analysis', 'package_generate',
-        'network_outreach', 'deep_analysis'
+        'network_outreach', 'deep_analysis',
+        # v7.0 NEW
+        'deep_jd_parse', 'company_intent_predict',
+        'schedule_optimize', 'proxy_strategy',
     })
 
 
@@ -212,7 +195,11 @@ class CerebrasConfig:
         'ghost_classify', 'intent_classify', 'extract_basics',
         'dedup_score', 'internshala_parse', 'sector_tag',
         'naukri_parse', 'iimjobs_parse', 'ats_extract',
-        'dark_classify', 'signal_score', 'quick_classify'
+        'dark_classify', 'signal_score', 'quick_classify',
+        # v7.0 NEW
+        'listing_quality_score', 'salary_benchmark',
+        'duplicate_semantic', 'anomaly_detect',
+        'enrichment_priority',
     })
 
 
@@ -250,6 +237,12 @@ TASK_TEMPERATURE_MAP: Dict[str, float] = {
     'dark_classify': 0.0,
     'signal_score': 0.0,
     'quick_classify': 0.0,
+    # v7.0 NEW Cerebras tasks
+    'listing_quality_score': 0.1,
+    'salary_benchmark': 0.1,
+    'duplicate_semantic': 0.0,
+    'anomaly_detect': 0.1,
+    'enrichment_priority': 0.0,
     # Groq tasks (creative / analytical)
     'cover_letter': 0.7,
     'ats_simulation': 0.2,
@@ -262,6 +255,11 @@ TASK_TEMPERATURE_MAP: Dict[str, float] = {
     'package_generate': 0.4,
     'network_outreach': 0.5,
     'deep_analysis': 0.2,
+    # v7.0 NEW Groq tasks
+    'deep_jd_parse': 0.1,
+    'company_intent_predict': 0.2,
+    'schedule_optimize': 0.1,
+    'proxy_strategy': 0.1,
 }
 
 # Task to max_tokens mapping
@@ -279,6 +277,12 @@ TASK_MAX_TOKENS_MAP: Dict[str, int] = {
     'dark_classify': 300,
     'signal_score': 300,
     'quick_classify': 150,
+    # v7.0 NEW Cerebras tasks
+    'listing_quality_score': 400,
+    'salary_benchmark': 300,
+    'duplicate_semantic': 200,
+    'anomaly_detect': 500,
+    'enrichment_priority': 400,
     # Groq tasks
     'cover_letter': 1200,
     'ats_simulation': 1500,
@@ -291,6 +295,11 @@ TASK_MAX_TOKENS_MAP: Dict[str, int] = {
     'package_generate': 2500,
     'network_outreach': 800,
     'deep_analysis': 2000,
+    # v7.0 NEW Groq tasks
+    'deep_jd_parse': 1500,
+    'company_intent_predict': 1200,
+    'schedule_optimize': 800,
+    'proxy_strategy': 500,
 }
 
 
