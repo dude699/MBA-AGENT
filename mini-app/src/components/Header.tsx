@@ -44,10 +44,10 @@ export default function Header() {
               </svg>
             </div>
             <div>
-              <h1 className="text-base font-bold text-primary-950 leading-tight tracking-tight">
+              <h1 className="text-base font-bold leading-tight tracking-tight" style={{ color: '#ffffff' }}>
                 InternHub Pro
               </h1>
-              <p className="text-[10px] text-primary-400 font-medium tracking-wider uppercase">
+              <p className="text-[10px] font-medium tracking-wider uppercase" style={{ color: '#9ca3af' }}>
                 {totalCount.toLocaleString()} Opportunities
               </p>
             </div>

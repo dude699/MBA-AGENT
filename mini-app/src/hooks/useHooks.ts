@@ -194,7 +194,7 @@ export function useBatchApply() {
   };
 }
 
-// ===== LLM CHAT (v3.0 - User-aware, CV-aware, anti-hallucination) =====
+// ===== LLM CHAT (v4.0 - CV-aware from localStorage, profile-aware, anti-hallucination) =====
 export function useLLMChat() {
   const { addLLMMessage, setLLMLoading, llmLoading, llmMessages, internships } = useAppStore();
 
@@ -215,12 +215,33 @@ export function useLLMChat() {
       if (tgUser?.id) telegramId = String(tgUser.id);
     } catch {}
 
+    // Read CV info from localStorage for client-side context
+    let cvText = '';
+    try {
+      const cvName = localStorage.getItem('internhub_cv_name');
+      const cvUploadedAt = localStorage.getItem('internhub_cv_uploaded_at');
+      if (cvName) {
+        cvText = `[User has uploaded CV: ${cvName}, uploaded on ${cvUploadedAt || 'unknown date'}]`;
+      }
+    } catch {}
+
+    // Read user profile from localStorage
+    let userProfile: Record<string, string> = {};
+    try {
+      const stored = localStorage.getItem('internhub_user_profile');
+      if (stored) {
+        userProfile = JSON.parse(stored);
+      }
+    } catch {}
+
     // Resource context: tell backend how many jobs are loaded client-side
     const resourceContext = {
       internshipIds,
       clientJobCount: internships.length,
       hasLoadedJobs: internships.length > 0,
       telegramId,
+      cvText,
+      userProfile,
     };
 
     try {

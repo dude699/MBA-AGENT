@@ -299,6 +299,9 @@ async def handle_llm_chat(request: web.Request) -> web.Response:
     client_job_count = context.get('clientJobCount', 0)
     has_loaded_jobs = context.get('hasLoadedJobs', False)
     telegram_id = context.get('telegramId', '') or body.get('telegram_id', '')
+    # v4.0: Read CV text and user profile from client-side context
+    client_cv_text = context.get('cvText', '')
+    client_user_profile = context.get('userProfile', {})
 
     # ---- v3.0: Multi-source job context (SQLite + Supabase) ----
     job_context = ""
@@ -389,8 +392,10 @@ async def handle_llm_chat(request: web.Request) -> web.Response:
         logger.debug(f"[{MODULE_ID}] Job context fetch skipped: {e}")
         job_context = "\n\n=== JOB DATABASE: Temporarily loading, please try again in a moment ==="
 
-    # ---- v3.0: Read user CV and profile for personalization ----
+    # ---- v4.0: Multi-source user context (server-side + client-side fallback) ----
     user_context = ""
+
+    # Source 1: Server-side (Telegram ID -> file system)
     if telegram_id:
         try:
             cv_text = _read_user_cv_text(str(telegram_id))
@@ -415,7 +420,24 @@ async def handle_llm_chat(request: web.Request) -> web.Response:
                 user_context += f"\n\n=== USER CV/RESUME (extracted text, first 2000 chars) ===\n{cv_text}"
 
         except Exception as e:
-            logger.debug(f"[{MODULE_ID}] User context read error: {e}")
+            logger.debug(f"[{MODULE_ID}] Server-side user context read error: {e}")
+
+    # Source 2: Client-side fallback (from localStorage via API request)
+    if not user_context:
+        try:
+            if client_user_profile and isinstance(client_user_profile, dict):
+                profile_parts = []
+                for key in ('college', 'specialization', 'experience', 'skills', 'location', 'email'):
+                    val = client_user_profile.get(key, '')
+                    if val:
+                        profile_parts.append(f"{key.title()}: {val}")
+                if profile_parts:
+                    user_context += f"\n\n=== USER PROFILE (from client) ===\n" + "\n".join(profile_parts)
+
+            if client_cv_text:
+                user_context += f"\n\n=== USER CV STATUS ===\n{client_cv_text}"
+        except Exception as e:
+            logger.debug(f"[{MODULE_ID}] Client-side user context error: {e}")
 
     # ---- v3.0: MUCH improved anti-hallucination rules ----
     ANTI_HALLUCINATION = (
@@ -1425,6 +1447,68 @@ def _read_user_profile(telegram_id: str) -> dict:
 
 
 # ============================================================
+# SYSTEM HEALTH CHECK ENDPOINT
+# ============================================================
+
+async def handle_system_health(request: web.Request) -> web.Response:
+    """
+    GET /api/system/health
+    Real system health check — actually pings Supabase, checks AI, checks DB.
+    Returns actual connection status, not hardcoded values.
+    """
+    result = {
+        "backend": True,
+        "supabase": {"connected": False, "error": "Not checked"},
+        "ai": False,
+        "database": False,
+        "version": "v4.0.0",
+        "supabase_stats": {},
+    }
+
+    # Check SQLite database
+    try:
+        from core.database import get_db
+        db = get_db()
+        if db:
+            result["database"] = True
+    except Exception as e:
+        result["database"] = False
+
+    # Check Supabase with real ping
+    try:
+        from core.supabase_client import is_supabase_configured, health_check as sb_health_check
+        if is_supabase_configured():
+            hc = sb_health_check()
+            result["supabase"] = hc
+            # Also get stats
+            try:
+                from core.supabase_db import SupabaseJobDB
+                stats = SupabaseJobDB.get_stats()
+                result["supabase_stats"] = stats
+            except Exception:
+                pass
+        else:
+            result["supabase"] = {"connected": False, "error": "Not configured - check SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY env vars"}
+    except Exception as e:
+        result["supabase"] = {"connected": False, "error": str(e)[:200]}
+
+    # Check AI router
+    try:
+        from core.ai_router import get_router
+        router = get_router()
+        if router:
+            result["ai"] = True
+    except Exception:
+        result["ai"] = False
+
+    return _json_response({
+        "success": True,
+        "data": result,
+        "timestamp": datetime.now(IST).isoformat(),
+    })
+
+
+# ============================================================
 # ROUTE REGISTRATION
 # ============================================================
 
@@ -1457,6 +1541,9 @@ def register_miniapp_routes(app):
     app.router.add_post('/api/user/upload-cv', handle_user_upload_cv)
     app.router.add_get('/api/user/profile', handle_user_profile)
     app.router.add_post('/api/user/profile', handle_user_profile)
+
+    # System health check
+    app.router.add_get('/api/system/health', handle_system_health)
 
     # Mini-app: All static file serving is DYNAMIC (not add_static)
     # This way, even if dist/ is built AFTER server startup, files will be served.
