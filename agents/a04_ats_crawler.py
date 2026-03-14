@@ -1820,6 +1820,44 @@ class ATSCrawler:
         self._session_requests = 0
         self._max_session_requests = 500
 
+        # v6.0: Tier filter for weekly schedule
+        self._tier_filter_override: Optional[List[str]] = None
+
+    def set_tier_filter(self, tiers: List[str]):
+        """
+        v6.0: Set tier filter for today's ATS crawl batch.
+        Called by WeeklyAgentScheduler before each crawl run.
+        
+        Args:
+            tiers: List of tier labels ['tier_1_2', 'tier_3', 'tier_4_5']
+        """
+        # Convert tier labels to tier numbers
+        tier_map = {
+            'tier_1_2': [1, 2],
+            'tier_3': [3],
+            'tier_4_5': [4, 5],
+        }
+        tier_nums = []
+        for t in tiers:
+            tier_nums.extend(tier_map.get(t, []))
+        self._tier_filter_override = tier_nums if tier_nums else None
+        logger.info(f"[{AGENT_ID}] Tier filter set: {tiers} -> tier_nums={tier_nums}")
+
+    def run_deep_discovery(self) -> Any:
+        """
+        v6.0: Sunday deep ATS discovery.
+        - Discover new career pages for companies missing ATS URLs
+        - Verify existing ATS URLs still work
+        - Process all tiers
+        """
+        logger.info(f"[{AGENT_ID}] === SUNDAY DEEP ATS DISCOVERY START ===")
+        # Run a full crawl of all tiers with higher limits
+        return self.run_crawl(
+            ats_type='all',
+            tier_filter=None,  # All tiers
+            run_type='nightly',
+        )
+
     def run_crawl(self, ats_type: str = 'all', tier_filter: Optional[List[int]] = None,
                   run_type: str = 'afternoon') -> ATSCrawlSummary:
         """

@@ -1,5 +1,5 @@
 # ============================================================
-# OPERATION FIRST MOVER v5 — ZERO COST MBA HUNT AGENT
+# OPERATION FIRST MOVER v6.0 — ZERO COST MBA HUNT AGENT
 # Complete Python Dependencies
 # ============================================================
 
@@ -11,6 +11,7 @@ cerebras-cloud-sdk>=1.0
 curl_cffi>=0.7
 requests>=2.31
 aiohttp>=3.9
+httpx>=0.27                # v6.0: Async HTTP client with connection pooling
 beautifulsoup4>=4.12
 lxml>=5.0
 
@@ -41,6 +42,10 @@ APScheduler>=3.10
 
 # === Proxy & Anonymity ===
 stem>=1.8
+
+# === Resilience & Self-Healing (v6.0) ===
+tenacity>=8.2              # Retry with exponential backoff + jitter
+tldextract>=5.0            # Robust domain extraction
 
 # === Data & Export ===
 openpyxl>=3.1

@@ -1228,6 +1228,51 @@ def get_stealth_client() -> StealthHTTPClient:
     return _stealth_instance
 
 
+def get_smart_stealth_request(url: str, site: str = "",
+                              headers: Optional[Dict] = None,
+                              agent_id: str = "",
+                              pool_indices: Optional[List[int]] = None,
+                              render_js: bool = False,
+                              timeout: int = 30) -> Optional[Dict[str, Any]]:
+    """
+    v6.0: Smart request that combines stealth engine with self-healing pipeline.
+    
+    Tries in order:
+    1. Stealth engine (curl_cffi + Webshare proxies)
+    2. Self-healing pipeline (with smart proxy manager fallback)
+    
+    Usage:
+        result = get_smart_stealth_request(
+            "https://internshala.com/...",
+            site="internshala",
+            agent_id="A-03",
+        )
+    """
+    # First try the standard stealth client
+    client = get_stealth_client()
+    result = client.get(url, site=site, headers=headers, timeout=timeout)
+
+    if result and result.get('status_code') == 200:
+        return result
+
+    # If stealth engine failed, try self-healing pipeline
+    try:
+        from core.self_healing import get_self_healing_pipeline
+        pipeline = get_self_healing_pipeline()
+        return pipeline.request(
+            agent_id=agent_id or "stealth",
+            url=url,
+            site=site,
+            headers=headers,
+            pool_indices=pool_indices,
+            render_js=render_js,
+            timeout=timeout,
+        )
+    except ImportError:
+        logger.debug("[STEALTH] Self-healing pipeline not available, returning stealth result")
+        return result
+
+
 # ============================================================
 # CLI / TESTING
 # ============================================================

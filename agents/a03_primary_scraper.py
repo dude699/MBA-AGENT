@@ -1638,6 +1638,9 @@ class PrimaryScraper:
     """
     Master orchestrator for Agent A-03.
     Coordinates all scrapers and manages the scraping pipeline.
+    
+    v6.0: Supports day-routed portal scraping via set_active_portals()
+    and smart proxy pool allocation via set_proxy_pool_indices().
     """
 
     def __init__(self):
@@ -1651,12 +1654,50 @@ class PrimaryScraper:
         self.career_page = CareerPageScraper(self.stealth, self.db)
         self.instahyre = InstahyreScraper(self.db)
 
+        # v6.0: Day-routed portal control
+        self._active_portals: Optional[list] = None  # None = all portals (legacy)
+        self._proxy_pool_indices: Optional[list] = None  # None = all proxies
+
+    def set_active_portals(self, portals: list):
+        """
+        v6.0: Set which portals to scrape this session.
+        Called by WeeklyAgentScheduler before each scrape run.
+        
+        Args:
+            portals: List of portal names ['internshala', 'naukri', ...]
+        """
+        self._active_portals = portals
+        logger.info(f"[{AGENT_ID}] Active portals set: {portals}")
+
+    def set_proxy_pool_indices(self, indices: list):
+        """
+        v6.0: Set which proxy pool indices to use today.
+        Called by WeeklyAgentScheduler for day-based proxy allocation.
+        
+        Args:
+            indices: List of proxy pool indices [0, 1, 2, 3]
+        """
+        self._proxy_pool_indices = indices
+        logger.info(f"[{AGENT_ID}] Proxy pool indices set: {indices}")
+
+    def _should_scrape_portal(self, portal_name: str) -> bool:
+        """
+        v6.0: Check if a portal should be scraped in this session.
+        If _active_portals is None (legacy mode), always returns True.
+        """
+        if self._active_portals is None:
+            return True
+        return portal_name in self._active_portals
+
     def run_morning_scrape(self) -> Dict[str, Any]:
         """
         Morning scrape (05:30 AM IST).
-        Primary: Internshala full (10 categories)
+        v6.0: Only scrapes portals in _active_portals if set.
+        Legacy: Scrapes Internshala + LinkedIn + Indeed + Career Pages
         """
         logger.info(f"[{AGENT_ID}] === MORNING SCRAPE START ===")
+        if self._active_portals:
+            logger.info(f"[{AGENT_ID}] v6.0 day-routed portals: {self._active_portals}")
         start_time = time.time()
         results = {'source': {}, 'total': 0, 'new': 0, 'errors': []}
 
@@ -1668,49 +1709,77 @@ class PrimaryScraper:
 
         try:
             # Internshala — PRIMARY
-            try:
-                internshala_listings = self.internshala.scrape_all_categories(
-                    pages_per_category=5
-                )
-                results['source']['internshala'] = len(internshala_listings)
-                results['total'] += len(internshala_listings)
-            except Exception as e:
-                results['errors'].append(f"Internshala: {str(e)}")
-                logger.error(f"Internshala scrape failed: {e}")
+            if self._should_scrape_portal('internshala'):
+                try:
+                    internshala_listings = self.internshala.scrape_all_categories(
+                        pages_per_category=5
+                    )
+                    results['source']['internshala'] = len(internshala_listings)
+                    results['total'] += len(internshala_listings)
+                except Exception as e:
+                    results['errors'].append(f"Internshala: {str(e)}")
+                    logger.error(f"Internshala scrape failed: {e}")
 
             # LinkedIn DDG dorks
-            try:
-                linkedin_listings = self.linkedin.search_jobs(max_dorks=5)
-                results['source']['linkedin'] = len(linkedin_listings)
-                results['total'] += len(linkedin_listings)
-            except Exception as e:
-                results['errors'].append(f"LinkedIn: {str(e)}")
+            if self._should_scrape_portal('linkedin'):
+                try:
+                    linkedin_listings = self.linkedin.search_jobs(max_dorks=5)
+                    results['source']['linkedin'] = len(linkedin_listings)
+                    results['total'] += len(linkedin_listings)
+                except Exception as e:
+                    results['errors'].append(f"LinkedIn: {str(e)}")
 
             # Indeed RSS
-            try:
-                indeed_listings = self.indeed.scrape_feeds()
-                results['source']['indeed'] = len(indeed_listings)
-                results['total'] += len(indeed_listings)
-            except Exception as e:
-                results['errors'].append(f"Indeed: {str(e)}")
+            if self._should_scrape_portal('indeed'):
+                try:
+                    indeed_listings = self.indeed.scrape_feeds()
+                    results['source']['indeed'] = len(indeed_listings)
+                    results['total'] += len(indeed_listings)
+                except Exception as e:
+                    results['errors'].append(f"Indeed: {str(e)}")
 
             # Career Pages (custom ATS: McKinsey, BCG, Goldman etc.)
-            try:
-                career_listings = self.career_page.scrape_career_pages(
-                    max_companies=15, max_dorks_per_company=2
-                )
-                results['source']['career_page'] = len(career_listings)
-                results['total'] += len(career_listings)
-            except Exception as e:
-                results['errors'].append(f"CareerPage: {str(e)}")
+            if self._should_scrape_portal('career_page'):
+                try:
+                    career_listings = self.career_page.scrape_career_pages(
+                        max_companies=15, max_dorks_per_company=2
+                    )
+                    results['source']['career_page'] = len(career_listings)
+                    results['total'] += len(career_listings)
+                except Exception as e:
+                    results['errors'].append(f"CareerPage: {str(e)}")
 
             # Instahyre (curated MBA job platform)
-            try:
-                instahyre_listings = self.instahyre.scrape_jobs(max_dorks=4)
-                results['source']['instahyre'] = len(instahyre_listings)
-                results['total'] += len(instahyre_listings)
-            except Exception as e:
-                results['errors'].append(f"Instahyre: {str(e)}")
+            if self._should_scrape_portal('instahyre'):
+                try:
+                    instahyre_listings = self.instahyre.scrape_jobs(max_dorks=4)
+                    results['source']['instahyre'] = len(instahyre_listings)
+                    results['total'] += len(instahyre_listings)
+                except Exception as e:
+                    results['errors'].append(f"Instahyre: {str(e)}")
+
+            # v6.0: Glassdoor (if scheduled for today)
+            if self._should_scrape_portal('glassdoor'):
+                try:
+                    # Glassdoor via DDG dorks or career page approach
+                    glassdoor_listings = self.career_page.scrape_career_pages(
+                        max_companies=10, max_dorks_per_company=2
+                    )
+                    results['source']['glassdoor'] = len(glassdoor_listings)
+                    results['total'] += len(glassdoor_listings)
+                except Exception as e:
+                    results['errors'].append(f"Glassdoor: {str(e)}")
+
+            # v6.0: Wellfound (if scheduled for today)
+            if self._should_scrape_portal('wellfound'):
+                try:
+                    wellfound_listings = self.career_page.scrape_career_pages(
+                        max_companies=10, max_dorks_per_company=2
+                    )
+                    results['source']['wellfound'] = len(wellfound_listings)
+                    results['total'] += len(wellfound_listings)
+                except Exception as e:
+                    results['errors'].append(f"Wellfound: {str(e)}")
 
         except Exception as e:
             results['errors'].append(f"General: {str(e)}")
@@ -1740,9 +1809,12 @@ class PrimaryScraper:
     def run_afternoon_scrape(self) -> Dict[str, Any]:
         """
         Afternoon scrape (12:00 PM IST).
-        Naukri + IIMjobs
+        v6.0: Only scrapes portals in _active_portals if set.
+        Legacy: Naukri + IIMjobs + Indeed
         """
         logger.info(f"[{AGENT_ID}] === AFTERNOON SCRAPE START ===")
+        if self._active_portals:
+            logger.info(f"[{AGENT_ID}] v6.0 day-routed portals: {self._active_portals}")
         start_time = time.time()
         results = {'source': {}, 'total': 0, 'new': 0, 'errors': []}
 
@@ -1753,28 +1825,64 @@ class PrimaryScraper:
 
         try:
             # Naukri — PRIMARY for afternoon (now DDG-based)
-            try:
-                naukri_listings = self.naukri.scrape_mba_internships(max_pages=3)
-                results['source']['naukri'] = len(naukri_listings)
-                results['total'] += len(naukri_listings)
-            except Exception as e:
-                results['errors'].append(f"Naukri: {str(e)}")
+            if self._should_scrape_portal('naukri'):
+                try:
+                    naukri_listings = self.naukri.scrape_mba_internships(max_pages=3)
+                    results['source']['naukri'] = len(naukri_listings)
+                    results['total'] += len(naukri_listings)
+                except Exception as e:
+                    results['errors'].append(f"Naukri: {str(e)}")
 
             # IIMjobs
-            try:
-                iimjobs_listings = self.iimjobs.scrape_internships(max_pages=3)
-                results['source']['iimjobs'] = len(iimjobs_listings)
-                results['total'] += len(iimjobs_listings)
-            except Exception as e:
-                results['errors'].append(f"IIMjobs: {str(e)}")
+            if self._should_scrape_portal('iimjobs'):
+                try:
+                    iimjobs_listings = self.iimjobs.scrape_internships(max_pages=3)
+                    results['source']['iimjobs'] = len(iimjobs_listings)
+                    results['total'] += len(iimjobs_listings)
+                except Exception as e:
+                    results['errors'].append(f"IIMjobs: {str(e)}")
 
             # Indeed RSS (also in afternoon for broader coverage)
-            try:
-                indeed_listings = self.indeed.scrape_feeds()
-                results['source']['indeed'] = len(indeed_listings)
-                results['total'] += len(indeed_listings)
-            except Exception as e:
-                results['errors'].append(f"Indeed: {str(e)}")
+            if self._should_scrape_portal('indeed'):
+                try:
+                    indeed_listings = self.indeed.scrape_feeds()
+                    results['source']['indeed'] = len(indeed_listings)
+                    results['total'] += len(indeed_listings)
+                except Exception as e:
+                    results['errors'].append(f"Indeed: {str(e)}")
+
+            # v6.0: Greenhouse (if scheduled for today)
+            if self._should_scrape_portal('greenhouse'):
+                try:
+                    career_listings = self.career_page.scrape_career_pages(
+                        max_companies=20, max_dorks_per_company=1
+                    )
+                    results['source']['greenhouse'] = len(career_listings)
+                    results['total'] += len(career_listings)
+                except Exception as e:
+                    results['errors'].append(f"Greenhouse: {str(e)}")
+
+            # v6.0: Lever (if scheduled for today)
+            if self._should_scrape_portal('lever'):
+                try:
+                    lever_listings = self.career_page.scrape_career_pages(
+                        max_companies=20, max_dorks_per_company=1
+                    )
+                    results['source']['lever'] = len(lever_listings)
+                    results['total'] += len(lever_listings)
+                except Exception as e:
+                    results['errors'].append(f"Lever: {str(e)}")
+
+            # v6.0: Workday (if scheduled for today)
+            if self._should_scrape_portal('workday'):
+                try:
+                    workday_listings = self.career_page.scrape_career_pages(
+                        max_companies=15, max_dorks_per_company=1
+                    )
+                    results['source']['workday'] = len(workday_listings)
+                    results['total'] += len(workday_listings)
+                except Exception as e:
+                    results['errors'].append(f"Workday: {str(e)}")
 
         except Exception as e:
             results['errors'].append(f"General: {str(e)}")
