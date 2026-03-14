@@ -47,13 +47,20 @@ HARD_REJECT_TITLES = [
     r'\b(sales\s*representative|sales\s*rep|sales\s*manager)\b',
     r'\b(sales\s*intern|sales\s*trainee)\b',
     r'\b(b2b\s*sales|b2c\s*sales)\b',
+    r'\b(pre[\s-]?sales)\b',
+    r'\b(sales\s*coordinator|sales\s*support)\b',
+    r'\b(sales\s*development)\b',
+    r'\b(sdr|sales\s*dev)\b',                       # SDR = Sales Development Rep
     # ===== ALL BUSINESS DEVELOPMENT ROLES (zero tolerance) =====
     r'\bbusiness\s*development\b',                   # ANY title with 'business development'
     r'\b(bde|bdm|bda)\b',                           # BDE/BDM/BDA abbreviations
     r'\b(bd\s*intern|bd\s*executive|bd\s*manager|bd\s*associate)\b',
+    r'\b(bd\s*trainee|bd\s*analyst)\b',
+    r'\bbiz\s*dev\b',                                # Short form
     # ===== INSURANCE / REAL ESTATE =====
     r'\b(insurance\s*(?:agent|advisor|consultant|sales|intern))\b',
     r'\b(real\s*estate\s*(?:agent|sales|broker|intern))\b',
+    r'\binsurance\b',                                # Any insurance role
     # ===== COMMISSION / TARGET BASED =====
     r'\b(commission[\s-]based|commission\s*only)\b',
     r'\b(target[\s-]based\s*sales|incentive[\s-]based)\b',
@@ -63,18 +70,40 @@ HARD_REJECT_TITLES = [
     # ===== MLM / FREELANCE SALES =====
     r'\b(mlm|network\s*marketing|direct\s*selling)\b',
     r'\b(freelance\s*sales)\b',
-    # ===== NON-MBA ROLES =====
+    # ===== CORE TECH ROLES (MBA student doesn't want these) =====
     r'\b(data\s*entry|typing\s*job)\b',
     r'\b(content\s*writer|blog\s*writer|article\s*writer)\b',
     r'\b(graphic\s*design(?:er)?)\b',
     r'\b(web\s*develop(?:er|ment))\b',
-    r'\b(software\s*(?:engineer|developer))\b',
+    r'\b(software\s*(?:engineer|developer|programmer))\b',
     r'\b(full[\s-]stack|front[\s-]end|back[\s-]end)\b',
+    r'\b(java\s*developer|python\s*developer|react\s*developer)\b',
+    r'\b(ios\s*developer|android\s*developer|mobile\s*developer)\b',
+    r'\b(devops|sre|site\s*reliability)\b',
+    r'\b(qa\s*(?:engineer|tester|intern)|test\s*(?:engineer|automation))\b',
+    r'\b(cloud\s*engineer|network\s*engineer|systems?\s*admin)\b',
+    r'\b(embedded\s*(?:engineer|developer))\b',
+    r'\b(firmware|hardware\s*engineer)\b',
+    r'\b(cyber\s*security\s*(?:engineer|analyst))\b',
+    r'\b(ui[\s/]ux\s*design(?:er)?)\b',
+    r'\b(php|ruby|golang|rust|swift|kotlin)\s*(?:developer|engineer)?\b',
+    r'\b(mern|mean|lamp)\s*(?:stack|developer)\b',
+    # ===== ADVERTISING AGENCY / MEDIA BUYING =====
+    r'\b(media\s*buy(?:er|ing))\b',
+    r'\b(ad\s*(?:ops|operations)|ad\s*traffick)\b',
+    r'\b(copywriter|copy\s*writing)\b',
+    r'\b(video\s*edit(?:or|ing)|photo\s*edit(?:or|ing))\b',
+    r'\b(motion\s*graphic)\b',
     # ===== LEAD GENERATION / CLIENT ACQUISITION =====
-    r'\b(lead\s*generation\s*(?:intern|executive|manager))\b',
-    r'\b(client\s*acquisition\s*(?:intern|executive|manager))\b',
-    r'\b(customer\s*acquisition\s*(?:intern|executive|manager))\b',
+    r'\b(lead\s*generation\s*(?:intern|executive|manager)?)\b',
+    r'\b(client\s*acquisition\s*(?:intern|executive|manager)?)\b',
+    r'\b(customer\s*acquisition\s*(?:intern|executive|manager)?)\b',
     r'\b(revenue\s*generation)\b',
+    r'\b(outreach\s*(?:intern|executive|specialist))\b',
+    r'\b(appointment\s*setter|setter\s*closer)\b',
+    # ===== TEACHING / TUTORING =====
+    r'\b(tutor(?:ing)?|teach(?:er|ing)\s*(?:intern|assistant))\b',
+    r'\b(academic\s*counselor|admission\s*counselor)\b',
 ]
 
 # Soft-negative: these reduce score but don't auto-reject
@@ -152,6 +181,23 @@ STRONG_POSITIVE_KEYWORDS = {
     'business case': 15,
     'competitive analysis': 15,
     'stakeholder management': 12,
+    # Data / AI / ML roles (MBA-relevant analytics)
+    'data science': 18,
+    'data scientist': 18,
+    'machine learning': 15,
+    'artificial intelligence': 15,
+    'ai intern': 18,
+    'ml intern': 18,
+    'deep learning': 12,
+    'nlp': 12,
+    'business intelligence': 18,
+    'bi analyst': 15,
+    'data visualization': 12,
+    'tableau': 10,
+    'power bi': 10,
+    'sql': 8,
+    'predictive analytics': 15,
+    'prescriptive analytics': 15,
 }
 
 # MBA role type indicators
@@ -323,11 +369,16 @@ def score_job_relevance(
     good_categories = {
         'marketing', 'finance', 'strategy', 'consulting',
         'operations', 'product-management', 'analytics',
-        'human-resources', 'supply-chain',
+        'human-resources', 'supply-chain', 'data-analytics',
+        'data analytics', 'data science', 'ai', 'machine learning',
+        'artificial intelligence', 'corporate finance',
+        'investment banking', 'brand management',
     }
     bad_categories = {
         'sales', 'telesales', 'insurance', 'real-estate',
         'business-development', 'business development',
+        'advertising', 'agency', 'bpo', 'call-center',
+        'lead-generation', 'telecalling', 'recruitment',
     }
     
     if category:

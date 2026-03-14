@@ -94,7 +94,7 @@ export default function App() {
   }, [browseMode, activeTab, loadSupabaseJobs]);
 
   return (
-    <div className="min-h-screen" style={{ background: '#fafbfc', paddingBottom: 'calc(72px + env(safe-area-inset-bottom, 0px))' }}>
+    <div className="min-h-screen" style={{ background: '#000000', paddingBottom: 'calc(72px + env(safe-area-inset-bottom, 0px))', overflowY: 'auto', WebkitOverflowScrolling: 'touch' as any }}>
       {/* Header with Search + Filters */}
       <Header />
 
@@ -111,13 +111,13 @@ export default function App() {
             >
               {/* Browse Mode Tabs: Live | Latest (Supabase) | Archive (Supabase) */}
               <div className="px-4 pt-3 pb-1">
-                <div className="flex gap-1 bg-primary-50 rounded-xl p-1">
+                <div className="flex gap-1 rounded-xl p-1" style={{ background: '#0a0a0a' }}>
                   <button
                     onClick={() => { setBrowseMode('live'); hapticFeedback('light'); }}
                     className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-[11px] font-bold transition-all ${
                       browseMode === 'live'
-                        ? 'bg-white text-primary-900 shadow-sm'
-                        : 'text-primary-500'
+                        ? 'bg-white text-black shadow-sm'
+                        : 'text-white/50'
                     }`}
                   >
                     <RefreshCw className="w-3 h-3" />
@@ -127,8 +127,8 @@ export default function App() {
                     onClick={() => { setBrowseMode('latest'); hapticFeedback('light'); }}
                     className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-[11px] font-bold transition-all ${
                       browseMode === 'latest'
-                        ? 'bg-white text-emerald-600 shadow-sm'
-                        : 'text-primary-500'
+                        ? 'bg-white text-black shadow-sm'
+                        : 'text-white/50'
                     }`}
                   >
                     <Clock className="w-3 h-3" />
@@ -138,8 +138,8 @@ export default function App() {
                     onClick={() => { setBrowseMode('archive'); hapticFeedback('light'); }}
                     className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-[11px] font-bold transition-all ${
                       browseMode === 'archive'
-                        ? 'bg-white text-indigo-600 shadow-sm'
-                        : 'text-primary-500'
+                        ? 'bg-white text-black shadow-sm'
+                        : 'text-white/50'
                     }`}
                   >
                     <Archive className="w-3 h-3" />
@@ -165,7 +165,7 @@ export default function App() {
                       >
                         All Sources
                       </button>
-                      {(Object.entries(SOURCE_CONFIG) as [InternshipSource, typeof SOURCE_CONFIG[InternshipSource]][]).slice(0, 12).map(([source, config]) => {
+                      {(Object.entries(SOURCE_CONFIG) as [string, typeof SOURCE_CONFIG[string]][]).slice(0, 16).map(([source, config]) => {
                         const count = filteredInternships.filter((i) => i.source === source).length;
                         if (count === 0) return null;
                         return (
@@ -175,7 +175,7 @@ export default function App() {
                               if (lockedSource === source) {
                                 deselectAll();
                               } else {
-                                selectBySource(source);
+                                selectBySource(source as InternshipSource);
                               }
                               hapticFeedback('light');
                             }}

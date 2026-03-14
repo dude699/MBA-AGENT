@@ -23,8 +23,8 @@ try {
   if (tg) {
     tg.ready();
     tg.expand();
-    tg.setHeaderColor('#ffffff');
-    tg.setBackgroundColor('#ffffff');
+    tg.setHeaderColor('#000000');
+    tg.setBackgroundColor('#000000');
     if (tg.enableClosingConfirmation) {
       tg.enableClosingConfirmation();
     }
@@ -43,13 +43,14 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           toastOptions={{
             duration: 3000,
             style: {
-              background: '#0d1117',
+              background: '#111111',
               color: '#ffffff',
               borderRadius: '12px',
               fontSize: '14px',
               fontWeight: '500',
               padding: '12px 20px',
-              boxShadow: '0 8px 30px rgba(0,0,0,0.12)',
+              boxShadow: '0 8px 30px rgba(0,0,0,0.5)',
+              border: '1px solid rgba(255,255,255,0.1)',
             },
           }}
         />

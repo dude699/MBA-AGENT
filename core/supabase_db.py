@@ -301,7 +301,77 @@ class SupabaseJobDB:
 
         return inserted
 
-    # ---- MERGE latest_jobs → all_jobs ----
+    # ---- INSERT INTO all_jobs directly (for real-time sync) ----
+
+    @staticmethod
+    def insert_all_jobs(jobs: List[Dict], batch_id: str = "") -> int:
+        """
+        Upsert jobs directly into all_jobs table.
+        This ensures the 'All Jobs' tab always has data, not just after morning merge.
+        Uses content_hash for dedup.
+        """
+        if not is_operational() or not jobs:
+            return 0
+
+        client = get_supabase()
+        if not client:
+            return 0
+
+        inserted = 0
+        now = datetime.now(IST).isoformat()
+
+        try:
+            rows = []
+            for job in jobs:
+                content_hash = job.get("content_hash", "")
+                if not content_hash:
+                    raw = f"{job.get('title','')}-{job.get('company','')}-{job.get('source','')}"
+                    content_hash = hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+                rows.append({
+                    "title": str(job.get("title", ""))[:500],
+                    "company": str(job.get("company", ""))[:200],
+                    "location": str(job.get("location", ""))[:200],
+                    "location_type": str(job.get("location_type", "onsite")),
+                    "source": str(job.get("source", "")),
+                    "source_url": str(job.get("source_url", ""))[:1000],
+                    "category": str(job.get("category", "")),
+                    "sector": str(job.get("sector", "")),
+                    "stipend": int(job.get("stipend", 0) or 0),
+                    "duration": int(job.get("duration", 0) or 0),
+                    "applicants": int(job.get("applicants", 0) or 0),
+                    "description": str(job.get("description", ""))[:5000],
+                    "ppo_score": float(job.get("ppo_score", 0) or 0),
+                    "ghost_score": float(job.get("ghost_score", 0) or 0),
+                    "match_score": float(job.get("match_score", 50) or 50),
+                    "is_expired": bool(job.get("is_expired", False)),
+                    "content_hash": content_hash,
+                    "batch_id": batch_id,
+                    "created_at": now,
+                    "updated_at": now,
+                })
+
+            # Upsert in chunks of 50
+            chunk_size = 50
+            for i in range(0, len(rows), chunk_size):
+                chunk = rows[i:i + chunk_size]
+                try:
+                    resp = client.table("all_jobs").upsert(
+                        chunk, on_conflict="content_hash"
+                    ).execute()
+                    inserted += len(chunk)
+                except Exception as e:
+                    logger.debug(f"[{MODULE_ID}] all_jobs chunk upsert: {e}")
+
+            record_success()
+
+        except Exception as e:
+            logger.error(f"[{MODULE_ID}] insert_all_jobs error: {e}")
+            record_failure()
+
+        return inserted
+
+    # ---- MERGE latest_jobs -> all_jobs ----
 
     @staticmethod
     def merge_latest_to_all() -> Tuple[int, int]:
@@ -672,6 +742,12 @@ async def async_insert_latest_jobs(jobs: List[Dict], batch_id: str = "") -> int:
     """Async wrapper for insert_latest_jobs."""
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, SupabaseJobDB.insert_latest_jobs, jobs, batch_id)
+
+
+async def async_insert_all_jobs(jobs: List[Dict], batch_id: str = "") -> int:
+    """Async wrapper for insert_all_jobs (upsert into all_jobs table)."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, SupabaseJobDB.insert_all_jobs, jobs, batch_id)
 
 
 async def async_merge_latest_to_all() -> Tuple[int, int]:

@@ -99,7 +99,8 @@ export const SECTORS = [
 ];
 
 // ===== SOURCE DISPLAY CONFIG =====
-export const SOURCE_CONFIG: Record<InternshipSource, {
+// Use Record<string, ...> so unknown sources don't crash the app
+export const SOURCE_CONFIG: Record<string, {
   name: string;
   color: string;
   icon: string;
@@ -239,6 +240,62 @@ export const SOURCE_CONFIG: Record<InternshipSource, {
     name: 'Company Direct',
     color: '#607d8b',
     icon: 'company_direct',
+    maxBatchSize: 2,
+    cooldownMinutes: 30,
+    riskLevel: 'high',
+  },
+  greenhouse: {
+    name: 'Greenhouse',
+    color: '#3ab549',
+    icon: 'greenhouse',
+    maxBatchSize: 3,
+    cooldownMinutes: 20,
+    riskLevel: 'medium',
+  },
+  lever: {
+    name: 'Lever',
+    color: '#5c6bc0',
+    icon: 'lever',
+    maxBatchSize: 3,
+    cooldownMinutes: 20,
+    riskLevel: 'medium',
+  },
+  instahyre: {
+    name: 'Instahyre',
+    color: '#ff5252',
+    icon: 'instahyre',
+    maxBatchSize: 3,
+    cooldownMinutes: 15,
+    riskLevel: 'medium',
+  },
+  workday: {
+    name: 'Workday',
+    color: '#0875e1',
+    icon: 'workday',
+    maxBatchSize: 3,
+    cooldownMinutes: 25,
+    riskLevel: 'high',
+  },
+  smartrecruiters: {
+    name: 'SmartRecruiters',
+    color: '#00b4d8',
+    icon: 'smartrecruiters',
+    maxBatchSize: 3,
+    cooldownMinutes: 20,
+    riskLevel: 'medium',
+  },
+  ashby: {
+    name: 'Ashby',
+    color: '#7c3aed',
+    icon: 'ashby',
+    maxBatchSize: 3,
+    cooldownMinutes: 20,
+    riskLevel: 'medium',
+  },
+  careerpage: {
+    name: 'Career Page',
+    color: '#78909c',
+    icon: 'careerpage',
     maxBatchSize: 2,
     cooldownMinutes: 30,
     riskLevel: 'high',

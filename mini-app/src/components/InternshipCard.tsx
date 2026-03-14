@@ -25,7 +25,7 @@ interface Props {
 const InternshipCard = memo(function InternshipCard({ internship, index }: Props) {
   const { selectedIds, lockedSource, toggleSelect, setDetailOpen } = useAppStore();
   const isSelected = selectedIds.has(internship.id);
-  const sourceConfig = SOURCE_CONFIG[internship.source];
+  const sourceConfig = SOURCE_CONFIG[internship.source] || { name: internship.source || 'Unknown', color: '#6b7280', icon: 'company_direct', maxBatchSize: 3, cooldownMinutes: 15, riskLevel: 'medium' as const };
   const tierConfig = TIER_LABELS[internship.companyTier];
   const deadline = formatDeadline(internship.deadline);
 
@@ -185,7 +185,7 @@ const InternshipCard = memo(function InternshipCard({ internship, index }: Props
         )}
 
         {/* Bottom Stats Row */}
-        <div className="flex items-center justify-between pt-2.5" style={{ borderTop: '1px solid rgba(0,0,0,0.04)' }}>
+        <div className="flex items-center justify-between pt-2.5" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
           <div className="flex items-center gap-3">
             {/* Match Score */}
             <div className="flex items-center gap-1">

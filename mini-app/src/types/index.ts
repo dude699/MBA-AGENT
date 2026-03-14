@@ -20,7 +20,15 @@ export type InternshipSource =
   | 'foundit'
   | 'shine'
   | 'apna'
-  | 'company_direct';
+  | 'company_direct'
+  | 'greenhouse'
+  | 'lever'
+  | 'instahyre'
+  | 'workday'
+  | 'smartrecruiters'
+  | 'ashby'
+  | 'careerpage'
+  | string;
 
 // ===== CORE INTERNSHIP =====
 export interface Internship {

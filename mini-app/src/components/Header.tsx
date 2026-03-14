@@ -29,17 +29,17 @@ export default function Header() {
 
   return (
     <header className="sticky top-0 z-30" style={{
-      background: 'rgba(255,255,255,0.92)',
+      background: 'rgba(0,0,0,0.92)',
       backdropFilter: 'blur(20px) saturate(180%)',
       WebkitBackdropFilter: 'blur(20px) saturate(180%)',
-      borderBottom: '1px solid rgba(0,0,0,0.06)',
+      borderBottom: '1px solid rgba(255,255,255,0.06)',
     }}>
       {/* Top Bar */}
       <div className="px-4 pt-3 pb-2">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: 'var(--gradient-accent)' }}>
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <div className="w-9 h-9 rounded-xl flex items-center justify-center bg-white">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="black" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
               </svg>
             </div>
@@ -57,10 +57,10 @@ export default function Header() {
             <button
               onClick={() => { setLLMPanelOpen(!isLLMPanelOpen); hapticFeedback('light'); }}
               className="relative p-2 rounded-xl transition-all duration-200"
-              style={isLLMPanelOpen ? { background: 'var(--gradient-ai)', color: 'white' } : { background: '#f4f4f6', color: '#495057' }}
+              style={isLLMPanelOpen ? { background: 'var(--gradient-ai)', color: 'white' } : { background: '#1a1a1a', color: '#aaa' }}
             >
               <Sparkles className="w-4 h-4" />
-              <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-400 border border-white" />
+              <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-400 border border-black" />
             </button>
           </div>
         </div>
@@ -75,7 +75,8 @@ export default function Header() {
             onFocus={() => setSearchFocused(true)}
             onBlur={() => setSearchFocused(false)}
             placeholder="Search companies, roles, skills..."
-            className="w-full pl-10 pr-10 py-2.5 bg-primary-50/80 border border-primary-100 rounded-xl text-sm text-primary-900 placeholder-primary-400 focus:outline-none focus:bg-white focus:border-primary-200 transition-all duration-300"
+            className="w-full pl-10 pr-10 py-2.5 rounded-xl text-sm text-white placeholder-white/30 focus:outline-none transition-all duration-300"
+            style={{ background: '#0a0a0a', border: '1px solid rgba(255,255,255,0.1)' }}
           />
           {searchValue && (
             <button
@@ -95,10 +96,9 @@ export default function Header() {
           onClick={() => { setFilterOpen(!isFilterOpen); hapticFeedback('light'); }}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 ${
             isFilterOpen || activeFilterCount > 0
-              ? 'text-white shadow-sm'
-              : 'bg-white text-primary-700 border border-primary-200/60 hover:border-primary-300'
+              ? 'bg-white text-black shadow-sm'
+              : 'text-white/70 border border-white/10 hover:border-white/20'
           }`}
-          style={(isFilterOpen || activeFilterCount > 0) ? { background: 'var(--gradient-accent)' } : {}}
         >
           <SlidersHorizontal className="w-3.5 h-3.5" />
           <span>Filters</span>
@@ -112,7 +112,7 @@ export default function Header() {
         {/* Sort Button */}
         <button
           onClick={() => { setSortOpen(!isSortOpen); hapticFeedback('light'); }}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white text-primary-700 border border-primary-200/60 hover:border-primary-300 transition-all duration-200"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white/70 border border-white/10 hover:border-white/20 transition-all duration-200"
         >
           <ArrowUpDown className="w-3.5 h-3.5" />
           <span>Sort</span>
@@ -159,9 +159,9 @@ export default function Header() {
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             className="overflow-hidden"
-            style={{ borderTop: '1px solid rgba(0,0,0,0.04)' }}
+            style={{ borderTop: '1px solid rgba(255,255,255,0.04)' }}
           >
-            <div className="px-4 py-2 flex items-center justify-between" style={{ background: 'rgba(26,26,46,0.03)' }}>
+            <div className="px-4 py-2 flex items-center justify-between" style={{ background: 'rgba(255,255,255,0.03)' }}>
               <div className="flex items-center gap-2">
                 <div className="w-5 h-5 rounded-md flex items-center justify-center text-white" style={{ background: 'var(--gradient-accent)' }}>
                   <span className="text-[10px] font-bold">{selectedIds.size}</span>
@@ -195,10 +195,9 @@ function QuickChip({
       onClick={() => { onClick(); hapticFeedback('light'); }}
       className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold whitespace-nowrap transition-all duration-200 ${
         active
-          ? 'text-white shadow-sm'
-          : 'bg-white text-primary-600 border border-primary-200/60 hover:border-primary-300'
+          ? 'bg-white text-black shadow-sm'
+          : 'text-white/60 border border-white/10 hover:border-white/20'
       }`}
-      style={active ? { background: 'var(--gradient-accent)' } : {}}
     >
       {icon}
       {label}
