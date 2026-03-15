@@ -938,6 +938,44 @@ def _get_not_built_page() -> str:
 # LISTING TRANSFORMER
 # ============================================================
 
+def _compute_posted_date(listing: Dict) -> str:
+    """
+    Compute a realistic posted date from available data.
+    Priority: 
+      1. Use posted_days_ago (scraped from portal) to compute actual post date
+      2. Fall back to created_at (when the listing entered our DB)
+      3. Fall back to scraped_at
+    NEVER use datetime.now() which causes the '1 min ago' bug.
+    """
+    # Best: use posted_days_ago to calculate real posting date
+    posted_days_ago = listing.get('posted_days_ago', 0)
+    if posted_days_ago and posted_days_ago > 0:
+        try:
+            # Use created_at as reference point, subtract posted_days_ago
+            ref_date_str = listing.get('created_at') or listing.get('scraped_at')
+            if ref_date_str:
+                ref_date = datetime.fromisoformat(str(ref_date_str).replace('Z', '+00:00'))
+            else:
+                ref_date = datetime.now(IST)
+            posted_date = ref_date - timedelta(days=int(posted_days_ago))
+            return posted_date.isoformat()
+        except Exception:
+            pass
+
+    # Fallback: use created_at (when we first saw it)
+    created_at = listing.get('created_at')
+    if created_at:
+        return str(created_at)
+
+    # Last resort: use scraped_at 
+    scraped_at = listing.get('scraped_at')
+    if scraped_at:
+        return str(scraped_at)
+
+    # Absolute last resort (should never reach here with real data)
+    return datetime.now(IST).isoformat()
+
+
 def _transform_listing(listing: Dict, detailed: bool = False) -> Dict:
     """Transform a database listing dict to frontend-friendly format."""
     tier_map = {1: 'tier1', 2: 'tier1', 3: 'tier2', 4: 'tier3', 5: 'startup'}
@@ -980,7 +1018,7 @@ def _transform_listing(listing: Dict, detailed: bool = False) -> Dict:
         "perks": [],
         "openings": 1,
         "applicants": applicants,
-        "postedDate": listing.get('first_seen', datetime.now(IST).isoformat()),
+        "postedDate": _compute_posted_date(listing),
         "deadline": listing.get('deadline', ''),
         "startDate": "",
         "isExpired": listing.get('status') == 'expired',
@@ -997,7 +1035,7 @@ def _transform_listing(listing: Dict, detailed: bool = False) -> Dict:
             listing.get('category', ''),
             listing.get('sector', ''),
         ],
-        "lastUpdated": listing.get('last_seen', datetime.now(IST).isoformat()),
+        "lastUpdated": listing.get('updated_at') or listing.get('created_at') or datetime.now(IST).isoformat(),
         "hash": f"{lid}-{listing.get('title', '')}-{listing.get('company', '')}",
     }
 

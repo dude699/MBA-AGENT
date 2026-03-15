@@ -49,17 +49,24 @@ export default function App() {
   // Infinite scroll sentinel
   const sentinelRef = useInfiniteScroll(loadMore, hasMore);
 
-  // Scroll to top button
+  // Scroll to top button — listen on both window and document for Telegram WebApp compatibility
   useEffect(() => {
     const handleScroll = () => {
-      setShowScrollTop(window.scrollY > 400);
+      const scrollY = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
+      setShowScrollTop(scrollY > 400);
     };
     window.addEventListener('scroll', handleScroll, { passive: true });
-    return () => window.removeEventListener('scroll', handleScroll);
+    document.addEventListener('scroll', handleScroll, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', handleScroll);
+      document.removeEventListener('scroll', handleScroll);
+    };
   }, []);
 
   const scrollToTop = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
     hapticFeedback('light');
   };
 
@@ -101,7 +108,7 @@ export default function App() {
   }, [browseMode, activeTab, loadSupabaseJobs, filters.search, filters.sources.length, filters.categories.length]);
 
   return (
-    <div className="app-root" style={{ background: '#ffffff', color: '#0a0a0a', minHeight: '100vh' }}>
+    <div className="app-root" style={{ background: '#ffffff', color: '#0a0a0a', minHeight: '100vh', touchAction: 'pan-y pan-x' }}>
       {/* Header with Search + Filters */}
       <Header />
 

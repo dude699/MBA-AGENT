@@ -1,11 +1,14 @@
 """
 ============================================================
-OPERATION FIRST MOVER v5.1 — MAIN ENTRY POINT (INDUSTRIAL GRADE)
+PRISM v0.1 — MAIN ENTRY POINT (20-AGENT ORCHESTRATOR)
 ============================================================
+Precision Recruitment Intelligence & Scoring Machine
 Zero-cost MBA Hunt Agent system orchestrator.
 
 Architecture:
     - Phased startup with dependency ordering & circuit breakers
+    - 20-agent heartbeat system (PRISM: was 12 agents)
+    - 5-provider AI routing (Groq, Cerebras, OpenRouter, Groq Compound, Mistral)
     - Structured health probing at every init stage
     - Graceful degradation: each subsystem can fail independently
     - Signal-safe shutdown with ordered teardown (Telegram FIRST)
@@ -13,27 +16,26 @@ Architecture:
     - Watchdog: monitors subsystem health
     - Startup diagnostic report to Telegram on success
 
-Startup Phases (dependency-ordered):
+Startup Phases (PRISM v0.1 — dependency-ordered):
     Phase 1 — FOUNDATION:  Config, Logging, Data dirs
-    Phase 2 — STORAGE:     Database init, schema migration, WAL
-    Phase 3 — DATA SEED:   Company DB (1081), agent heartbeats
-    Phase 4 — AI LAYER:    AI Router (Groq + Cerebras dual-brain)
-    Phase 5 — WEB LAYER:   aiohttp server, health endpoints (Render needs this ASAP)
-    Phase 6 — COMMS:       Telegram bot (delayed on Render for overlap grace)
-    Phase 7 — SCHEDULER:   APScheduler (24-hour IST cycle)
+    Phase 2 — STORAGE:     Database init, schema v3 migration, WAL
+    Phase 3 — DATA SEED:   Company DB (1081), 20 agent heartbeats
+    Phase 3.5 — SECURITY:  Admin, user whitelist, access codes
+    Phase 4 — AI LAYER:    AI Router (5-provider PRISM architecture)
+    Phase 5 — WEB LAYER:   aiohttp server, health endpoints
+    Phase 6 — COMMS:       Telegram bot (delayed on Render)
+    Phase 7 — SCHEDULER:   APScheduler (3-wave weekly PRISM cycle)
     Phase 8 — WATCHDOG:    Background monitor loop
+    Phase 8.5 — TELETHON:  [PRISM] A-16 real-time TG listener (optional)
+    Phase 9 — EMBEDDINGS:  [PRISM] Warmup sentence-transformers (lazy)
 
-Deployment:
-    Render:  python main.py  ($PORT auto-set, usually 10000)
-    Docker:  python main.py  (PORT=10000)
-    Local:   python main.py  (PORT=10000)
-
-Keep-Alive (5 layers):
-    L1: Self-ping every 4 min  (asyncio internal)
-    L2: Scheduler ping 10 min  (APScheduler)
-    L3: cron-job.org 5 min     (external)
-    L4: UptimeRobot 5 min      (external)
-    L5: Telegram commands       (user activity = HTTP activity)
+PRISM v0.1 Changes from OFM v5.x:
+    - 20-agent heartbeat seeds (was 12)
+    - 5-provider AI router init status
+    - Phase 8.5: Telethon MTProto listener for A-16
+    - Phase 9: Embedding engine lazy warmup
+    - PRISM banner with 20-agent / 5-provider display
+    - Updated startup report with PRISM provider status
 ============================================================
 """
 
@@ -96,7 +98,7 @@ except ImportError:
 # CONSTANTS
 # ============================================================
 
-VERSION = "6.0.0"
+VERSION = "0.1.0-prism"
 RENDER_OVERLAP_GRACE_SEC = int(os.getenv('RENDER_OVERLAP_GRACE_SEC', '20'))
 WATCHDOG_INTERVAL_SEC = 120
 STARTUP_TIMEOUT_SEC = 120
@@ -105,12 +107,13 @@ GC_INTERVAL_SEC = 300
 BANNER = """
 +============================================================+
 |                                                              |
-|   OPERATION FIRST MOVER v5.4.2 — Zero Cost MBA Agent          |
+|   PRISM v0.1 — Precision Recruitment Intelligence            |
+|                & Scoring Machine                             |
 |                                                              |
-|   12 AI Agents | 1081 Companies | 8+ Job Boards             |
-|   Groq + Cerebras Dual-Brain | Telegram Command Center      |
-|   InternHub Pro Mini App | 5-Layer Keep-Alive               |
-|   Industrial-Grade Orchestration | Total Daily Cost: $0      |
+|   20 AI Agents | 5 AI Providers | 1081 Companies            |
+|   Groq + Cerebras + OpenRouter + Compound + Mistral          |
+|   Telegram Command Center | InternHub Pro Mini App           |
+|   3-Wave Weekly Schedule | PPO V11 | Total Daily Cost: $0    |
 |                                                              |
 +============================================================+
 """
@@ -443,7 +446,7 @@ class Application:
                 detail = f"already seeded ({existing} companies)"
 
             db.seed_agent_heartbeats()
-            detail += ", heartbeats A-01..A-12"
+            detail += ", heartbeats A-01..A-20 (PRISM)"
 
             self._status.mark_ok('seed', detail)
             logger.info(f"[Phase 3] {detail}")
@@ -480,8 +483,18 @@ class Application:
         try:
             from core.ai_router import get_router
             router = get_router()
-            self._status.mark_ok('ai_router', 'Groq + Cerebras dual-brain')
-            logger.info("[Phase 4] AI Router ready (Groq + Cerebras)")
+            health = router.get_health()
+
+            # Count configured providers
+            providers_ready = []
+            for prov_name in ['groq', 'cerebras', 'openrouter', 'groq_compound', 'mistral']:
+                prov_info = health.get(prov_name, {})
+                if prov_info.get('api_key_set', False):
+                    providers_ready.append(prov_name)
+
+            detail = f"PRISM 5-provider: {len(providers_ready)}/5 configured ({', '.join(providers_ready)})"
+            self._status.mark_ok('ai_router', detail)
+            logger.info(f"[Phase 4] AI Router ready — {detail}")
             return router
         except Exception as e:
             self._status.mark_degraded('ai_router', str(e))
@@ -667,19 +680,19 @@ class Application:
     async def start(self):
         print(BANNER)
         logger.info("=" * 60)
-        logger.info(f"  OPERATION FIRST MOVER v{VERSION} -- STARTING")
+        logger.info(f"  PRISM v{VERSION} -- STARTING")
         logger.info(f"  Mode: {'Render' if self._is_render else 'Local'} Web Service")
         logger.info(f"  PID: {os.getpid()}")
         logger.info("=" * 60)
 
         start_time = time.monotonic()
 
-        logger.info("[Phase 1/9] Loading configuration...")
+        logger.info("[Phase 1/11] Loading configuration...")
         config = self._init_foundation()
 
         # Phase 0 (post-foundation): Build mini-app if needed
         # This MUST run before web server (Phase 5) so /app/ can serve the built files
-        logger.info("[Phase 1.5/9] Checking mini-app build status...")
+        logger.info("[Phase 1.5/11] Checking mini-app build status...")
         miniapp_built = build_miniapp_if_needed()
         if miniapp_built:
             # Invalidate any cached dist path so the web server picks up the fresh build
@@ -692,28 +705,28 @@ class Application:
         else:
             self._status.mark_degraded('miniapp_build', 'dist/ not available — /app/ will show error')
 
-        logger.info("[Phase 2/9] Initializing database...")
+        logger.info("[Phase 2/11] Initializing database...")
         db = self._init_storage()
 
-        logger.info("[Phase 3/9] Seeding data...")
+        logger.info("[Phase 3/11] Seeding data...")
         self._init_data_seed(db)
 
-        logger.info("[Phase 3.5/9] Initializing security layer...")
+        logger.info("[Phase 3.5/11] Initializing security layer...")
         self._init_security()
 
-        logger.info("[Phase 4/9] Initializing AI router...")
+        logger.info("[Phase 4/11] Initializing AI router...")
         self._init_ai_layer()
 
-        logger.info("[Phase 5/9] Starting web server + keep-alive...")
+        logger.info("[Phase 5/11] Starting web server + keep-alive...")
         await self._init_web_layer()
 
-        logger.info("[Phase 6/9] Starting Telegram bot...")
+        logger.info("[Phase 6/11] Starting Telegram bot...")
         await self._init_telegram()
 
-        logger.info("[Phase 7/9] Starting scheduler...")
+        logger.info("[Phase 7/11] Starting scheduler...")
         await self._init_scheduler()
 
-        logger.info("[Phase 8/9] Starting watchdog + memory manager...")
+        logger.info("[Phase 8/11] Starting watchdog + memory manager...")
         self._watchdog_task = asyncio.create_task(self._watchdog_loop())
         self._gc_task = asyncio.create_task(self._gc_loop())
         self._status.mark_ok('watchdog', f'interval={WATCHDOG_INTERVAL_SEC}s')
@@ -726,9 +739,48 @@ class Application:
                 self._supabase_keepalive_task = asyncio.create_task(
                     keepalive_loop(interval_hours=12.0)
                 )
-                logger.info("[Phase 8/9] Supabase keepalive L1 loop started")
+                logger.info("[Phase 8/11] Supabase keepalive L1 loop started")
         except Exception as e:
-            logger.debug(f"[Phase 8/9] Supabase keepalive skip: {e}")
+            logger.debug(f"[Phase 8/11] Supabase keepalive skip: {e}")
+
+        # ============================================================
+        # PRISM v0.1: Phase 8.5 — Telethon A-16 Real-time Listener
+        # ============================================================
+        logger.info("[Phase 8.5/11] Initializing A-16 Telethon listener...")
+        try:
+            from agents.a16_tg_listener import get_tg_monitor
+            tg_monitor = get_tg_monitor()
+            tg_health = tg_monitor.get_health()
+            if tg_health.get('configured', False):
+                self._status.mark_ok('telethon_a16', 'configured, will start with scheduler')
+                logger.info("[Phase 8.5/11] A-16 Telethon: configured (start deferred to scheduler)")
+            else:
+                self._status.mark_degraded('telethon_a16', 'not configured (set TG_API_ID + TG_API_HASH)')
+                logger.info("[Phase 8.5/11] A-16 Telethon: not configured (optional)")
+        except Exception as e:
+            self._status.mark_degraded('telethon_a16', str(e))
+            logger.info(f"[Phase 8.5/11] A-16 Telethon: skipped ({e})")
+
+        # ============================================================
+        # PRISM v0.1: Phase 9 — Embedding Engine Warmup
+        # ============================================================
+        logger.info("[Phase 9/11] PRISM embedding engine warmup...")
+        try:
+            from core.embedding_engine import get_embedding_engine
+            embed_engine = get_embedding_engine()
+            embed_health = embed_engine.get_health()
+            lazy = embed_health.get('lazy_load', True)
+            if lazy:
+                self._status.mark_ok('embeddings', 'lazy-load enabled (will load on first use)')
+                logger.info("[Phase 9/11] Embedding engine: lazy-load (will load on first PPO V11 call)")
+            else:
+                # Force load now
+                embed_engine._ensure_loaded()
+                self._status.mark_ok('embeddings', f'loaded: {embed_health["model_name"]}')
+                logger.info(f"[Phase 9/11] Embedding engine: loaded ({embed_health['model_name']})")
+        except Exception as e:
+            self._status.mark_degraded('embeddings', str(e))
+            logger.info(f"[Phase 9/11] Embedding engine: skipped ({e})")
 
         gc.collect()
 
@@ -740,7 +792,7 @@ class Application:
         mini_app_url = os.getenv('MINI_APP_URL', '')
 
         logger.info("=" * 60)
-        logger.info(f"  STARTUP COMPLETE in {duration:.1f}s")
+        logger.info(f"  PRISM v{VERSION} STARTUP COMPLETE in {duration:.1f}s")
         logger.info(f"  Status: {'ALL OK' if self._status.all_ok else 'DEGRADED'}")
         logger.info(f"  Web: http://0.0.0.0:{port}")
         if render_url:
@@ -749,6 +801,7 @@ class Application:
             logger.info(f"  Mini App: {render_url}/app/")
         if mini_app_url:
             logger.info(f"  Mini App URL: {mini_app_url}")
+        logger.info(f"  Architecture: 20 Agents | 5 AI Providers")
         logger.info(f"  Keep-Alive: 5 layers active")
         logger.info(f"  Version: {VERSION}")
         logger.info("=" * 60)
@@ -775,11 +828,12 @@ class Application:
             miniapp_line = f"📱 Mini App: {'✅ ' + mini_app_url if mini_app_url else '❌ Not configured'}"
             
             msg = (
-                f"🚀 <b>SYSTEM STARTUP COMPLETE</b>\n"
+                f"🚀 <b>PRISM v0.1 SYSTEM STARTUP COMPLETE</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
                 f"⏱ Duration: <b>{duration:.1f}s</b>\n"
                 f"🔗 {render_url}\n"
                 f"📦 Version: {VERSION}\n"
+                f"🤖 Architecture: 20 Agents | 5 AI Providers\n"
                 f"{miniapp_line}\n\n"
                 f"<b>Subsystem Status:</b>\n"
                 f"{self._status.to_telegram_msg()}\n\n"

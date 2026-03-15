@@ -73,5 +73,34 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
+      # === PRISM v0.1: NEW AI Providers ===
+      # OpenRouter (1M context for ATS Simulator + CV Enhancer) — FREE: 200 req/day
+      # Get key at: https://openrouter.ai/keys
+      - key: OPENROUTER_API_KEY
+        sync: false
+      # Mistral AI (Universal fallback) — FREE: 1B tokens/month
+      # Get key at: https://console.mistral.ai/
+      - key: MISTRAL_API_KEY
+        sync: false
+      # === PRISM v0.1: Email Outreach (Brevo / Sendinblue) ===
+      # FREE: 300 emails/day — Get key at: https://app.brevo.com/settings/keys/api
+      - key: BREVO_API_KEY
+        sync: false
+      - key: BREVO_SENDER_EMAIL
+        sync: false
+      # === PRISM v0.1: Email Verification (Hunter.io) ===
+      # FREE: 25 searches/month — Get key at: https://hunter.io/api-keys
+      - key: HUNTER_IO_KEY
+        sync: false
+      # === PRISM v0.1: Scraping API Fallbacks (all FREE) ===
+      - key: SCRAPERAPI_KEY
+        sync: false
+      - key: SCRAPEDO_TOKEN
+        sync: false
+      - key: SCRAPINGBEE_KEY
+        sync: false
+      # === Schedule Mode ===
+      - key: SCHEDULE_MODE
+        value: weekly
     plan: free
     region: oregon

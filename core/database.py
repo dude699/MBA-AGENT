@@ -1,29 +1,47 @@
 """
 ============================================================
-OPERATION FIRST MOVER v5.1 — DATABASE MODULE (INDUSTRIAL GRADE)
+PRISM v0.1 — DATABASE MODULE (INDUSTRIAL GRADE)
 ============================================================
-Complete SQLite database management with all 12 tables,
+Precision Recruitment Intelligence & Scoring Machine
+Complete SQLite database management with 14+ tables,
 migrations, indexes, CRUD operations, backup/restore,
-maintenance, and query builders for all 12 agents.
+maintenance, and query builders for all 20 agents.
 
-Tables:
-    1.  raw_listings         — Unprocessed scraped job listings
-    2.  clean_listings       — Deduplicated, scored listings
-    3.  companies            — 1080+ Indian company database
-    4.  ghost_scores         — 5-signal ghost detection results
-    5.  intent_signals       — Hiring intent signals
-    6.  outcomes             — Application outcome tracking
+Tables (PRISM v0.1 — Schema v3):
+    1.  raw_listings          — Unprocessed scraped job listings
+    2.  clean_listings        — Deduplicated, scored listings
+    3.  companies             — 1080+ Indian company database
+    4.  ghost_scores          — 5-signal ghost detection results
+    5.  intent_signals        — Hiring intent signals
+    6.  outcomes              — Application outcome tracking
     7.  dark_channel_listings — Telegram/X dark channel finds
-    8.  alumni_contacts      — Alumni/network discovery
-    9.  application_packages — Generated cover letters & ATS tweaks
-    10. api_quotas           — API usage tracking per provider
-    11. proxy_health         — Proxy pool health monitoring
-    12. agent_heartbeats     — Agent status & heartbeat tracking
+    8.  alumni_contacts       — Alumni/network discovery
+    9.  application_packages  — Generated cover letters & ATS tweaks
+    10. api_quotas            — API usage tracking per provider (5 providers)
+    11. proxy_health          — Proxy pool health monitoring
+    12. agent_heartbeats      — Agent status & heartbeat (20 agents)
+    13. company_intel         — [PRISM NEW] Deep company research briefs (A-20)
+    14. email_outreach        — [PRISM NEW] Brevo email tracking (A-15/A-19)
+    +   auto_apply_queue      — Application queue for A-13
+    +   user_settings         — User configuration KV store
+    +   __schema_migrations   — Schema version tracking
+
+PRISM v0.1 Changes from OFM v5.1:
+    - 2 new tables: company_intel, email_outreach
+    - 20-agent heartbeat seeds (was 12)
+    - Schema v3 migration with PRISM columns
+    - A-15 email outreach CRUD (send, track, follow-up)
+    - A-16 TG listener dedup (message hash check)
+    - A-18 CV enhancer CRUD (tailored CV tracking)
+    - A-19 outcome amplifier queries (silent applications)
+    - A-20 company intel CRUD (research cache)
+    - Enhanced clean_listings with semantic_cv_score column
+    - 5-provider API quota tracking
 
 Architecture:
     - Thread-safe connection pooling via threading.local()
     - WAL journal mode for concurrent reads
-    - Automatic schema migration system
+    - Automatic schema migration system (v1 → v2 → v3)
     - Comprehensive CRUD for every table
     - Batch insert/update for scraping pipelines
     - Aggregation queries for reports
@@ -72,7 +90,7 @@ except ImportError:
 # CONSTANTS
 # ============================================================
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 MIGRATION_TABLE = "__schema_migrations"
 
 # Listing statuses
@@ -117,6 +135,31 @@ class ChannelType(Enum):
     TWITTER = "twitter"
     DISCORD = "discord"
     REDDIT = "reddit"
+
+
+# ============================================================
+# PRISM v0.1 NEW ENUMS
+# ============================================================
+
+class EmailOutreachStatus(Enum):
+    """PRISM v0.1: Email outreach lifecycle."""
+    QUEUED = "queued"
+    SENT = "sent"
+    DELIVERED = "delivered"
+    OPENED = "opened"
+    CLICKED = "clicked"
+    REPLIED = "replied"
+    BOUNCED = "bounced"
+    FAILED = "failed"
+
+
+class EmailOutreachType(Enum):
+    """PRISM v0.1: Email template types."""
+    ALUMNI_WARM = "alumni_warm"
+    HR_COLD = "hr_cold"
+    DIRECT_APPLICATION = "direct_application"
+    FOLLOWUP = "followup"
+    THANK_YOU = "thank_you"
 
 
 # ============================================================
@@ -358,8 +401,58 @@ class AgentHeartbeat:
 
 
 # ============================================================
-# SQL SCHEMA DEFINITIONS
+# PRISM v0.1 NEW DATA MODELS
 # ============================================================
+
+@dataclass
+class CompanyIntel:
+    """PRISM v0.1: Deep company research brief from A-20."""
+    id: Optional[int] = None
+    company_id: Optional[int] = None
+    company_name: str = ""
+    intel_brief: str = ""
+    personalization_hooks: str = ""  # JSON: list of hook strings
+    key_people: str = ""  # JSON: list of {name, role} dicts
+    recent_news: str = ""  # JSON: list of news items
+    career_page_url: str = ""
+    hiring_status: str = ""  # active_hiring / passive / frozen
+    intern_review_summary: str = ""
+    research_provider: str = ""  # groq_compound / groq / cerebras
+    research_cost_tokens: int = 0
+    created_at: Optional[str] = None
+    expires_at: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class EmailOutreach:
+    """PRISM v0.1: Email outreach record for A-15/A-19."""
+    id: Optional[int] = None
+    recipient_email: str = ""
+    recipient_name: str = ""
+    company_name: str = ""
+    company_id: Optional[int] = None
+    listing_id: Optional[int] = None
+    alumni_contact_id: Optional[int] = None
+    email_type: str = EmailOutreachType.HR_COLD.value
+    subject: str = ""
+    body_preview: str = ""  # first 200 chars of body
+    brevo_message_id: str = ""
+    status: str = EmailOutreachStatus.QUEUED.value
+    opened_at: Optional[str] = None
+    clicked_at: Optional[str] = None
+    replied_at: Optional[str] = None
+    bounced_at: Optional[str] = None
+    followup_count: int = 0
+    last_followup_at: Optional[str] = None
+    personalization_score: float = 0.0  # 0-100 AI quality score
+    sent_at: Optional[str] = None
+    created_at: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
 
 CREATE_TABLES_SQL: List[str] = [
     # ---- Table 1: raw_listings ----
@@ -625,6 +718,59 @@ CREATE_TABLES_SQL: List[str] = [
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
     """,
+
+    # ============================================================
+    # PRISM v0.1: NEW TABLES (Tables 13-14)
+    # ============================================================
+
+    # ---- Table 13: company_intel (A-20 Deep Company Intel) ----
+    """
+    CREATE TABLE IF NOT EXISTS company_intel (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+        company_name TEXT NOT NULL DEFAULT '',
+        intel_brief TEXT DEFAULT '',
+        personalization_hooks TEXT DEFAULT '[]',
+        key_people TEXT DEFAULT '[]',
+        recent_news TEXT DEFAULT '[]',
+        career_page_url TEXT DEFAULT '',
+        hiring_status TEXT DEFAULT '' CHECK(hiring_status IN ('','active_hiring','passive','frozen','unknown')),
+        intern_review_summary TEXT DEFAULT '',
+        research_provider TEXT DEFAULT '',
+        research_cost_tokens INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        expires_at DATETIME,
+        UNIQUE(company_name)
+    )
+    """,
+
+    # ---- Table 14: email_outreach (A-15 Email Applier + A-19 Outcome Amplifier) ----
+    """
+    CREATE TABLE IF NOT EXISTS email_outreach (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        recipient_email TEXT NOT NULL DEFAULT '',
+        recipient_name TEXT DEFAULT '',
+        company_name TEXT DEFAULT '',
+        company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+        listing_id INTEGER REFERENCES clean_listings(id) ON DELETE SET NULL,
+        alumni_contact_id INTEGER REFERENCES alumni_contacts(id) ON DELETE SET NULL,
+        email_type TEXT DEFAULT 'hr_cold' CHECK(email_type IN ('alumni_warm','hr_cold','direct_application','followup','thank_you')),
+        subject TEXT DEFAULT '',
+        body_preview TEXT DEFAULT '',
+        brevo_message_id TEXT DEFAULT '',
+        status TEXT DEFAULT 'queued' CHECK(status IN ('queued','sent','delivered','opened','clicked','replied','bounced','failed')),
+        opened_at DATETIME,
+        clicked_at DATETIME,
+        replied_at DATETIME,
+        bounced_at DATETIME,
+        followup_count INTEGER DEFAULT 0,
+        last_followup_at DATETIME,
+        personalization_score REAL DEFAULT 0.0,
+        sent_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(recipient_email, listing_id, email_type)
+    )
+    """,
 ]
 
 # ============================================================
@@ -700,6 +846,22 @@ CREATE_INDEXES_SQL: List[str] = [
     # agent_heartbeats indexes
     "CREATE INDEX IF NOT EXISTS idx_agent_heartbeats_agent ON agent_heartbeats(agent_id)",
     "CREATE INDEX IF NOT EXISTS idx_agent_heartbeats_status ON agent_heartbeats(status)",
+
+    # PRISM v0.1: company_intel indexes
+    "CREATE INDEX IF NOT EXISTS idx_company_intel_company ON company_intel(company_id)",
+    "CREATE INDEX IF NOT EXISTS idx_company_intel_name ON company_intel(company_name)",
+    "CREATE INDEX IF NOT EXISTS idx_company_intel_expires ON company_intel(expires_at)",
+    "CREATE INDEX IF NOT EXISTS idx_company_intel_created ON company_intel(created_at DESC)",
+
+    # PRISM v0.1: email_outreach indexes
+    "CREATE INDEX IF NOT EXISTS idx_email_outreach_recipient ON email_outreach(recipient_email)",
+    "CREATE INDEX IF NOT EXISTS idx_email_outreach_company ON email_outreach(company_id)",
+    "CREATE INDEX IF NOT EXISTS idx_email_outreach_listing ON email_outreach(listing_id)",
+    "CREATE INDEX IF NOT EXISTS idx_email_outreach_status ON email_outreach(status)",
+    "CREATE INDEX IF NOT EXISTS idx_email_outreach_type ON email_outreach(email_type)",
+    "CREATE INDEX IF NOT EXISTS idx_email_outreach_sent ON email_outreach(sent_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_email_outreach_brevo ON email_outreach(brevo_message_id)",
+    "CREATE INDEX IF NOT EXISTS idx_email_outreach_followup ON email_outreach(followup_count, status)",
 ]
 
 
@@ -720,6 +882,15 @@ AGENT_SEEDS: List[Dict[str, str]] = [
     {"agent_id": "A-10", "agent_name": "ATS Simulator"},
     {"agent_id": "A-11", "agent_name": "Outcome Learner"},
     {"agent_id": "A-12", "agent_name": "Telegram Reporter"},
+    # PRISM v0.1: New agents A-13 through A-20
+    {"agent_id": "A-13", "agent_name": "Auto Applier"},
+    {"agent_id": "A-14", "agent_name": "Multi-Model Router"},
+    {"agent_id": "A-15", "agent_name": "Email Auto-Applier"},
+    {"agent_id": "A-16", "agent_name": "Telegram Group Monitor"},
+    {"agent_id": "A-17", "agent_name": "Adaptive Scheduler"},
+    {"agent_id": "A-18", "agent_name": "CV Intelligence Enhancer"},
+    {"agent_id": "A-19", "agent_name": "Outcome Amplifier"},
+    {"agent_id": "A-20", "agent_name": "Deep Company Intel"},
 ]
 
 
@@ -729,17 +900,18 @@ AGENT_SEEDS: List[Dict[str, str]] = [
 
 class DatabaseManager:
     """
-    Thread-safe SQLite database manager for Operation First Mover.
+    Thread-safe SQLite database manager for PRISM v0.1.
 
     Provides:
     - Connection pooling via threading.local()
     - WAL journal mode for concurrent reads
-    - Schema creation and migration
-    - CRUD operations for all 12 tables
+    - Schema creation and migration (v1 → v2 → v3)
+    - CRUD operations for all 14+ tables
     - Batch operations for scraping pipelines
     - Aggregation queries for reports
     - Backup/restore for ephemeral disk
     - Auto-maintenance (VACUUM, ANALYZE)
+    - PRISM v0.1: company_intel, email_outreach, 20-agent heartbeats
     """
 
     def __init__(self, db_path: Optional[str] = None):
@@ -938,6 +1110,145 @@ class DatabaseManager:
                 )
                 conn.commit()
                 logger.info("Migration v2 complete")
+
+            # ============================================================
+            # Migration v3: PRISM v0.1 — new tables + columns
+            # ============================================================
+            if current_version < 3:
+                logger.info("Running migration v3: PRISM v0.1 — company_intel, email_outreach, semantic_cv_score")
+
+                # Create company_intel table
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS company_intel (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+                        company_name TEXT NOT NULL DEFAULT '',
+                        intel_brief TEXT DEFAULT '',
+                        personalization_hooks TEXT DEFAULT '[]',
+                        key_people TEXT DEFAULT '[]',
+                        recent_news TEXT DEFAULT '[]',
+                        career_page_url TEXT DEFAULT '',
+                        hiring_status TEXT DEFAULT '' CHECK(hiring_status IN ('','active_hiring','passive','frozen','unknown')),
+                        intern_review_summary TEXT DEFAULT '',
+                        research_provider TEXT DEFAULT '',
+                        research_cost_tokens INTEGER DEFAULT 0,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        expires_at DATETIME,
+                        UNIQUE(company_name)
+                    )
+                """)
+
+                # Create email_outreach table
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS email_outreach (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        recipient_email TEXT NOT NULL DEFAULT '',
+                        recipient_name TEXT DEFAULT '',
+                        company_name TEXT DEFAULT '',
+                        company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+                        listing_id INTEGER REFERENCES clean_listings(id) ON DELETE SET NULL,
+                        alumni_contact_id INTEGER REFERENCES alumni_contacts(id) ON DELETE SET NULL,
+                        email_type TEXT DEFAULT 'hr_cold' CHECK(email_type IN ('alumni_warm','hr_cold','direct_application','followup','thank_you')),
+                        subject TEXT DEFAULT '',
+                        body_preview TEXT DEFAULT '',
+                        brevo_message_id TEXT DEFAULT '',
+                        status TEXT DEFAULT 'queued' CHECK(status IN ('queued','sent','delivered','opened','clicked','replied','bounced','failed')),
+                        opened_at DATETIME,
+                        clicked_at DATETIME,
+                        replied_at DATETIME,
+                        bounced_at DATETIME,
+                        followup_count INTEGER DEFAULT 0,
+                        last_followup_at DATETIME,
+                        personalization_score REAL DEFAULT 0.0,
+                        sent_at DATETIME,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(recipient_email, listing_id, email_type)
+                    )
+                """)
+
+                # Add semantic_cv_score to clean_listings (PRISM PPO V11)
+                try:
+                    cursor.execute("ALTER TABLE clean_listings ADD COLUMN semantic_cv_score REAL DEFAULT 0.0")
+                except Exception:
+                    pass  # Column already exists
+
+                # Add tailored_cv_path to application_packages (PRISM A-18)
+                try:
+                    cursor.execute("ALTER TABLE application_packages ADD COLUMN tailored_cv_path TEXT DEFAULT ''")
+                except Exception:
+                    pass
+
+                # Add email to alumni_contacts for outreach (PRISM A-15)
+                try:
+                    cursor.execute("ALTER TABLE alumni_contacts ADD COLUMN email TEXT DEFAULT ''")
+                except Exception:
+                    pass
+
+                try:
+                    cursor.execute("ALTER TABLE alumni_contacts ADD COLUMN email_verified BOOLEAN DEFAULT 0")
+                except Exception:
+                    pass
+
+                # Add followup columns to outcomes for A-19
+                try:
+                    cursor.execute("ALTER TABLE outcomes ADD COLUMN followup_count INTEGER DEFAULT 0")
+                except Exception:
+                    pass
+                try:
+                    cursor.execute("ALTER TABLE outcomes ADD COLUMN last_followup_at DATETIME")
+                except Exception:
+                    pass
+                try:
+                    cursor.execute("ALTER TABLE outcomes ADD COLUMN followup_response TEXT DEFAULT ''")
+                except Exception:
+                    pass
+
+                # Create all new indexes
+                new_indexes = [
+                    "CREATE INDEX IF NOT EXISTS idx_company_intel_company ON company_intel(company_id)",
+                    "CREATE INDEX IF NOT EXISTS idx_company_intel_name ON company_intel(company_name)",
+                    "CREATE INDEX IF NOT EXISTS idx_company_intel_expires ON company_intel(expires_at)",
+                    "CREATE INDEX IF NOT EXISTS idx_company_intel_created ON company_intel(created_at DESC)",
+                    "CREATE INDEX IF NOT EXISTS idx_email_outreach_recipient ON email_outreach(recipient_email)",
+                    "CREATE INDEX IF NOT EXISTS idx_email_outreach_company ON email_outreach(company_id)",
+                    "CREATE INDEX IF NOT EXISTS idx_email_outreach_listing ON email_outreach(listing_id)",
+                    "CREATE INDEX IF NOT EXISTS idx_email_outreach_status ON email_outreach(status)",
+                    "CREATE INDEX IF NOT EXISTS idx_email_outreach_type ON email_outreach(email_type)",
+                    "CREATE INDEX IF NOT EXISTS idx_email_outreach_sent ON email_outreach(sent_at DESC)",
+                    "CREATE INDEX IF NOT EXISTS idx_email_outreach_brevo ON email_outreach(brevo_message_id)",
+                    "CREATE INDEX IF NOT EXISTS idx_email_outreach_followup ON email_outreach(followup_count, status)",
+                    "CREATE INDEX IF NOT EXISTS idx_clean_listings_semantic ON clean_listings(semantic_cv_score DESC)",
+                ]
+                for idx_sql in new_indexes:
+                    try:
+                        cursor.execute(idx_sql)
+                    except Exception:
+                        pass
+
+                # Seed PRISM agents A-13 through A-20
+                prism_agents = [
+                    ("A-13", "Auto Applier"),
+                    ("A-14", "Multi-Model Router"),
+                    ("A-15", "Email Auto-Applier"),
+                    ("A-16", "Telegram Group Monitor"),
+                    ("A-17", "Adaptive Scheduler"),
+                    ("A-18", "CV Intelligence Enhancer"),
+                    ("A-19", "Outcome Amplifier"),
+                    ("A-20", "Deep Company Intel"),
+                ]
+                for agent_id, agent_name in prism_agents:
+                    cursor.execute(
+                        "INSERT OR IGNORE INTO agent_heartbeats (agent_id, agent_name) VALUES (?, ?)",
+                        (agent_id, agent_name)
+                    )
+
+                # Record migration
+                cursor.execute(
+                    "INSERT OR IGNORE INTO __schema_migrations (version, description) VALUES (?, ?)",
+                    (3, "v3: PRISM v0.1 — company_intel, email_outreach, semantic_cv_score, 20-agent seeds")
+                )
+                conn.commit()
+                logger.info("Migration v3 (PRISM v0.1) complete")
 
         except Exception as e:
             logger.error(f"Migration error: {e}")
@@ -2513,6 +2824,79 @@ class DatabaseManager:
             }
 
     # ----------------------------------------------------------
+    # DATA CLEANUP & MANAGEMENT (PRISM v0.1)
+    # ----------------------------------------------------------
+
+    def delete_all_listings(self) -> Dict[str, int]:
+        """Delete ALL listings from raw_listings, clean_listings, and related tables.
+        Used for clean start or database reset. Returns counts deleted."""
+        counts = {}
+        with self.transaction() as cur:
+            # Delete dependent records first (foreign key constraints)
+            for table in ['ghost_scores', 'application_packages', 'auto_apply_queue', 'outcomes']:
+                try:
+                    cur.execute(f"DELETE FROM {table}")
+                    counts[table] = cur.rowcount
+                except Exception:
+                    counts[table] = 0
+            # Delete main listings
+            cur.execute("DELETE FROM clean_listings")
+            counts['clean_listings'] = cur.rowcount
+            cur.execute("DELETE FROM raw_listings")
+            counts['raw_listings'] = cur.rowcount
+        logger.info(f"All listings deleted: {counts}")
+        return counts
+
+    def mark_expired_listings(self, max_days: int = 30) -> int:
+        """Mark listings older than max_days as expired.
+        Also marks listings where posted_days_ago > max_days."""
+        with self.get_cursor() as cur:
+            cur.execute(
+                """
+                UPDATE clean_listings
+                SET status = 'expired', updated_at = CURRENT_TIMESTAMP
+                WHERE status = 'active'
+                  AND (
+                    created_at < datetime('now', ?)
+                    OR posted_days_ago > ?
+                  )
+                """,
+                (f"-{max_days} days", max_days)
+            )
+            expired = cur.rowcount
+            if expired > 0:
+                logger.info(f"Marked {expired} listings as expired (>{max_days} days old)")
+            return expired
+
+    def remove_duplicate_clean_listings(self) -> int:
+        """Remove duplicate entries in clean_listings based on URL.
+        Keeps the entry with the highest ppo_score."""
+        with self.get_cursor() as cur:
+            # Find and delete duplicates, keeping the one with highest ppo_score
+            cur.execute("""
+                DELETE FROM clean_listings
+                WHERE id NOT IN (
+                    SELECT MIN(id) FROM clean_listings
+                    WHERE url IS NOT NULL AND url != ''
+                    GROUP BY url
+                )
+                AND url IS NOT NULL AND url != ''
+                AND id NOT IN (
+                    SELECT id FROM (
+                        SELECT id, ROW_NUMBER() OVER (
+                            PARTITION BY url ORDER BY ppo_score DESC, id ASC
+                        ) as rn
+                        FROM clean_listings
+                        WHERE url IS NOT NULL AND url != ''
+                    ) WHERE rn = 1
+                )
+            """)
+            removed = cur.rowcount
+            if removed > 0:
+                logger.info(f"Removed {removed} duplicate clean listings")
+            return removed
+
+    # ----------------------------------------------------------
     # MAINTENANCE & BACKUP
     # ----------------------------------------------------------
 
@@ -2548,7 +2932,10 @@ class DatabaseManager:
             'ghost_scores', 'intent_signals', 'outcomes',
             'dark_channel_listings', 'alumni_contacts',
             'application_packages', 'api_quotas',
-            'proxy_health', 'agent_heartbeats'
+            'proxy_health', 'agent_heartbeats',
+            # PRISM v0.1 new tables
+            'company_intel', 'email_outreach',
+            'auto_apply_queue',
         ]
         counts = {}
         with self.get_cursor() as cur:
@@ -2643,7 +3030,7 @@ class DatabaseManager:
                     """,
                     (agent['agent_id'], agent['agent_name'])
                 )
-        logger.info("Agent heartbeats seeded (A-01 to A-12)")
+        logger.info("Agent heartbeats seeded (A-01 to A-20)")
 
     # ----------------------------------------------------------
     # MISSING METHODS REQUIRED BY AGENTS
@@ -2873,6 +3260,637 @@ class DatabaseManager:
             row = cur.fetchone()
             return dict(row) if row else {'requests': 0, 'tokens': 0, 'errors': 0}
 
+    # ==================================================================
+    # PRISM v0.1: COMPANY INTEL CRUD (A-20 Deep Company Intel)
+    # ==================================================================
+
+    def upsert_company_intel(self, intel: CompanyIntel) -> Optional[int]:
+        """Insert or update company intel. Returns row ID.
+        Used by A-20 Deep Company Intel."""
+        with self.get_cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO company_intel
+                (company_id, company_name, intel_brief, personalization_hooks,
+                 key_people, recent_news, career_page_url, hiring_status,
+                 intern_review_summary, research_provider, research_cost_tokens,
+                 expires_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(company_name) DO UPDATE SET
+                    company_id = excluded.company_id,
+                    intel_brief = excluded.intel_brief,
+                    personalization_hooks = excluded.personalization_hooks,
+                    key_people = excluded.key_people,
+                    recent_news = excluded.recent_news,
+                    career_page_url = excluded.career_page_url,
+                    hiring_status = excluded.hiring_status,
+                    intern_review_summary = excluded.intern_review_summary,
+                    research_provider = excluded.research_provider,
+                    research_cost_tokens = excluded.research_cost_tokens,
+                    created_at = CURRENT_TIMESTAMP,
+                    expires_at = excluded.expires_at
+                """,
+                (
+                    intel.company_id, intel.company_name, intel.intel_brief,
+                    intel.personalization_hooks, intel.key_people,
+                    intel.recent_news, intel.career_page_url,
+                    intel.hiring_status, intel.intern_review_summary,
+                    intel.research_provider, intel.research_cost_tokens,
+                    intel.expires_at,
+                )
+            )
+            return cur.lastrowid
+
+    def get_company_intel(self, company_name: str) -> Optional[Dict]:
+        """Get company intel by name (checks cache validity).
+        Used by A-18, A-15, A-13."""
+        with self.get_cursor() as cur:
+            cur.execute(
+                """
+                SELECT * FROM company_intel
+                WHERE company_name = ?
+                  AND (expires_at IS NULL OR expires_at > datetime('now'))
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (company_name,)
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    def get_company_intel_by_id(self, company_id: int) -> Optional[Dict]:
+        """Get company intel by company ID.
+        Used by A-13 Auto Applier pre-check."""
+        with self.get_cursor() as cur:
+            cur.execute(
+                """
+                SELECT * FROM company_intel
+                WHERE company_id = ?
+                  AND (expires_at IS NULL OR expires_at > datetime('now'))
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (company_id,)
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    def get_companies_needing_intel(self, limit: int = 20) -> List[Dict]:
+        """Get companies in auto_apply_queue that lack fresh intel.
+        Used by A-20 to prioritize research."""
+        with self.get_cursor() as cur:
+            cur.execute(
+                """
+                SELECT DISTINCT cl.company, cl.company_id, cl.ppo_score,
+                       c.tier, c.sector, c.careers_url, c.name as company_name
+                FROM auto_apply_queue q
+                JOIN clean_listings cl ON q.listing_id = cl.id
+                LEFT JOIN companies c ON cl.company_id = c.id
+                LEFT JOIN company_intel ci ON cl.company = ci.company_name
+                    AND (ci.expires_at IS NULL OR ci.expires_at > datetime('now'))
+                WHERE q.status = 'queued'
+                  AND ci.id IS NULL
+                ORDER BY cl.ppo_score DESC
+                LIMIT ?
+                """,
+                (limit,)
+            )
+            return [dict(row) for row in cur.fetchall()]
+
+    def count_company_intel(self, valid_only: bool = True) -> int:
+        """Count company intel records.
+        Used by A-12 Telegram Reporter for /stats."""
+        with self.get_cursor() as cur:
+            if valid_only:
+                cur.execute(
+                    """SELECT COUNT(*) FROM company_intel
+                       WHERE expires_at IS NULL OR expires_at > datetime('now')"""
+                )
+            else:
+                cur.execute("SELECT COUNT(*) FROM company_intel")
+            return cur.fetchone()[0]
+
+    def cleanup_expired_intel(self) -> int:
+        """Remove expired company intel records.
+        Called by daily maintenance."""
+        with self.get_cursor() as cur:
+            cur.execute(
+                "DELETE FROM company_intel WHERE expires_at IS NOT NULL AND expires_at < datetime('now')"
+            )
+            count = cur.rowcount
+            if count > 0:
+                logger.info(f"[DB] Cleaned up {count} expired company intel records")
+            return count
+
+    # ==================================================================
+    # PRISM v0.1: EMAIL OUTREACH CRUD (A-15 Email Applier + A-19 Outcome Amplifier)
+    # ==================================================================
+
+    def insert_email_outreach(self, email: EmailOutreach) -> Optional[int]:
+        """Insert an email outreach record. Returns row ID.
+        Used by A-15 Email Applier."""
+        with self.get_cursor() as cur:
+            try:
+                cur.execute(
+                    """
+                    INSERT OR IGNORE INTO email_outreach
+                    (recipient_email, recipient_name, company_name, company_id,
+                     listing_id, alumni_contact_id, email_type, subject,
+                     body_preview, brevo_message_id, status,
+                     personalization_score, sent_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        email.recipient_email, email.recipient_name,
+                        email.company_name, email.company_id,
+                        email.listing_id, email.alumni_contact_id,
+                        email.email_type, email.subject,
+                        email.body_preview[:200] if email.body_preview else '',
+                        email.brevo_message_id, email.status,
+                        email.personalization_score, email.sent_at,
+                    )
+                )
+                return cur.lastrowid if cur.rowcount > 0 else None
+            except sqlite3.IntegrityError:
+                return None
+
+    def update_email_status(self, email_id: int, status: str,
+                            brevo_message_id: str = '') -> None:
+        """Update email outreach status.
+        Used by A-15 after sending and by webhook handler."""
+        updates = ["status = ?"]
+        params: list = [status]
+
+        if brevo_message_id:
+            updates.append("brevo_message_id = ?")
+            params.append(brevo_message_id)
+
+        if status == 'sent':
+            updates.append("sent_at = CURRENT_TIMESTAMP")
+        elif status == 'opened':
+            updates.append("opened_at = CURRENT_TIMESTAMP")
+        elif status == 'clicked':
+            updates.append("clicked_at = CURRENT_TIMESTAMP")
+        elif status == 'replied':
+            updates.append("replied_at = CURRENT_TIMESTAMP")
+        elif status == 'bounced':
+            updates.append("bounced_at = CURRENT_TIMESTAMP")
+
+        params.append(email_id)
+        with self.get_cursor() as cur:
+            cur.execute(
+                f"UPDATE email_outreach SET {', '.join(updates)} WHERE id = ?",
+                params
+            )
+
+    def update_email_by_brevo_id(self, brevo_message_id: str,
+                                  status: str) -> None:
+        """Update email status by Brevo message ID (webhook callback).
+        Used by Brevo webhook handler."""
+        with self.get_cursor() as cur:
+            updates = ["status = ?"]
+            params: list = [status]
+
+            if status == 'opened':
+                updates.append("opened_at = CURRENT_TIMESTAMP")
+            elif status == 'clicked':
+                updates.append("clicked_at = CURRENT_TIMESTAMP")
+            elif status == 'bounced':
+                updates.append("bounced_at = CURRENT_TIMESTAMP")
+
+            params.append(brevo_message_id)
+            cur.execute(
+                f"UPDATE email_outreach SET {', '.join(updates)} WHERE brevo_message_id = ?",
+                params
+            )
+
+    def get_email_outreach_queue(self, limit: int = 50) -> List[Dict]:
+        """Get queued emails ready to send.
+        Used by A-15 Email Applier."""
+        with self.get_cursor() as cur:
+            cur.execute(
+                """
+                SELECT e.*, ac.name as contact_name, ac.linkedin_url,
+                       ac.college, ac.current_role, ac.connection_degree
+                FROM email_outreach e
+                LEFT JOIN alumni_contacts ac ON e.alumni_contact_id = ac.id
+                WHERE e.status = 'queued'
+                ORDER BY
+                    CASE e.email_type
+                        WHEN 'alumni_warm' THEN 1
+                        WHEN 'hr_cold' THEN 2
+                        WHEN 'direct_application' THEN 3
+                        WHEN 'followup' THEN 4
+                        WHEN 'thank_you' THEN 5
+                    END,
+                    e.created_at ASC
+                LIMIT ?
+                """,
+                (limit,)
+            )
+            return [dict(row) for row in cur.fetchall()]
+
+    def get_emails_needing_followup(self, min_days: int = 7,
+                                     max_followups: int = 2,
+                                     limit: int = 30) -> List[Dict]:
+        """Get sent emails that need follow-up (no response after N days).
+        Used by A-19 Outcome Amplifier."""
+        with self.get_cursor() as cur:
+            cur.execute(
+                """
+                SELECT e.*, cl.title, cl.company, cl.url, cl.ppo_score,
+                       c.tier, c.sector
+                FROM email_outreach e
+                LEFT JOIN clean_listings cl ON e.listing_id = cl.id
+                LEFT JOIN companies c ON e.company_id = c.id
+                WHERE e.status IN ('sent', 'delivered', 'opened')
+                  AND e.sent_at IS NOT NULL
+                  AND e.sent_at < datetime('now', ?)
+                  AND e.followup_count < ?
+                  AND e.replied_at IS NULL
+                  AND e.bounced_at IS NULL
+                ORDER BY e.sent_at ASC
+                LIMIT ?
+                """,
+                (f"-{min_days} days", max_followups, limit)
+            )
+            return [dict(row) for row in cur.fetchall()]
+
+    def record_followup_sent(self, email_id: int) -> None:
+        """Record that a follow-up was sent for an email.
+        Used by A-19 Outcome Amplifier."""
+        with self.get_cursor() as cur:
+            cur.execute(
+                """
+                UPDATE email_outreach
+                SET followup_count = followup_count + 1,
+                    last_followup_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (email_id,)
+            )
+
+    def get_email_stats_today(self) -> Dict[str, int]:
+        """Get today's email outreach statistics.
+        Used by A-12 Telegram Reporter."""
+        with self.get_cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    COUNT(*) as total,
+                    SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) as sent,
+                    SUM(CASE WHEN status = 'delivered' THEN 1 ELSE 0 END) as delivered,
+                    SUM(CASE WHEN status = 'opened' THEN 1 ELSE 0 END) as opened,
+                    SUM(CASE WHEN status = 'clicked' THEN 1 ELSE 0 END) as clicked,
+                    SUM(CASE WHEN status = 'replied' THEN 1 ELSE 0 END) as replied,
+                    SUM(CASE WHEN status = 'bounced' THEN 1 ELSE 0 END) as bounced,
+                    SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed
+                FROM email_outreach
+                WHERE date(created_at) = date('now')
+                """
+            )
+            row = cur.fetchone()
+            return dict(row) if row else {
+                'total': 0, 'sent': 0, 'delivered': 0, 'opened': 0,
+                'clicked': 0, 'replied': 0, 'bounced': 0, 'failed': 0
+            }
+
+    def count_emails_sent_today(self) -> int:
+        """Count emails sent today (for Brevo quota tracking).
+        Used by A-15 Email Applier."""
+        with self.get_cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*) FROM email_outreach
+                WHERE date(sent_at) = date('now')
+                  AND status != 'failed'
+                """
+            )
+            return cur.fetchone()[0]
+
+    def check_email_already_sent(self, recipient_email: str,
+                                  listing_id: Optional[int] = None,
+                                  email_type: str = 'hr_cold') -> bool:
+        """Check if an email was already sent to this recipient for this listing.
+        Used by A-15 to prevent duplicates."""
+        with self.get_cursor() as cur:
+            if listing_id:
+                cur.execute(
+                    """
+                    SELECT 1 FROM email_outreach
+                    WHERE recipient_email = ? AND listing_id = ? AND email_type = ?
+                    LIMIT 1
+                    """,
+                    (recipient_email, listing_id, email_type)
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT 1 FROM email_outreach
+                    WHERE recipient_email = ? AND email_type = ?
+                      AND sent_at > datetime('now', '-30 days')
+                    LIMIT 1
+                    """,
+                    (recipient_email, email_type)
+                )
+            return cur.fetchone() is not None
+
+    def get_email_engagement_stats(self) -> Dict[str, Any]:
+        """Get overall email engagement statistics.
+        Used by A-12 Telegram Reporter /email command."""
+        with self.get_cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    COUNT(*) as total_sent,
+                    SUM(CASE WHEN opened_at IS NOT NULL THEN 1 ELSE 0 END) as total_opened,
+                    SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) as total_clicked,
+                    SUM(CASE WHEN replied_at IS NOT NULL THEN 1 ELSE 0 END) as total_replied,
+                    SUM(CASE WHEN bounced_at IS NOT NULL THEN 1 ELSE 0 END) as total_bounced,
+                    SUM(followup_count) as total_followups
+                FROM email_outreach
+                WHERE status != 'queued' AND status != 'failed'
+                """
+            )
+            row = cur.fetchone()
+            stats = dict(row) if row else {}
+
+            total = stats.get('total_sent', 0)
+            if total > 0:
+                stats['open_rate'] = round(
+                    (stats.get('total_opened', 0) / total) * 100, 1
+                )
+                stats['click_rate'] = round(
+                    (stats.get('total_clicked', 0) / total) * 100, 1
+                )
+                stats['reply_rate'] = round(
+                    (stats.get('total_replied', 0) / total) * 100, 1
+                )
+                stats['bounce_rate'] = round(
+                    (stats.get('total_bounced', 0) / total) * 100, 1
+                )
+            else:
+                stats['open_rate'] = 0
+                stats['click_rate'] = 0
+                stats['reply_rate'] = 0
+                stats['bounce_rate'] = 0
+
+            # Count by type
+            cur.execute(
+                """
+                SELECT email_type, COUNT(*) as cnt
+                FROM email_outreach
+                WHERE status NOT IN ('queued', 'failed')
+                GROUP BY email_type
+                """
+            )
+            stats['by_type'] = {row['email_type']: row['cnt'] for row in cur.fetchall()}
+
+            return stats
+
+    # ==================================================================
+    # PRISM v0.1: SILENT APPLICATIONS QUERIES (A-19 Outcome Amplifier)
+    # ==================================================================
+
+    def get_silent_applications(self, min_days: int = 7,
+                                 limit: int = 30) -> List[Dict]:
+        """Get applications with no response after N days.
+        Used by A-19 Outcome Amplifier for follow-up targeting."""
+        with self.get_cursor() as cur:
+            cur.execute(
+                """
+                SELECT o.*, cl.title, cl.company, cl.url, cl.ppo_score,
+                       cl.source, c.tier, c.sector, c.name as company_name
+                FROM outcomes o
+                JOIN clean_listings cl ON o.listing_id = cl.id
+                LEFT JOIN companies c ON o.company_id = c.id
+                WHERE o.status = 'applied'
+                  AND o.applied_at IS NOT NULL
+                  AND o.applied_at < datetime('now', ?)
+                  AND o.followup_count < 2
+                ORDER BY o.ppo_score_at_apply DESC, o.applied_at ASC
+                LIMIT ?
+                """,
+                (f"-{min_days} days", limit)
+            )
+            return [dict(row) for row in cur.fetchall()]
+
+    def record_outcome_followup(self, outcome_id: int,
+                                  response: str = '') -> None:
+        """Record a follow-up for an outcome.
+        Used by A-19 Outcome Amplifier."""
+        with self.get_cursor() as cur:
+            cur.execute(
+                """
+                UPDATE outcomes
+                SET followup_count = COALESCE(followup_count, 0) + 1,
+                    last_followup_at = CURRENT_TIMESTAMP,
+                    followup_response = CASE
+                        WHEN ? != '' THEN ?
+                        ELSE COALESCE(followup_response, '')
+                    END
+                WHERE id = ?
+                """,
+                (response, response, outcome_id)
+            )
+
+    # ==================================================================
+    # PRISM v0.1: SEMANTIC CV SCORE (A-08 PPO V11 + A-10 ATS)
+    # ==================================================================
+
+    def update_semantic_cv_score(self, listing_id: int,
+                                   score: float) -> None:
+        """Update the semantic CV-JD match score for a listing.
+        Used by A-08 PPO V11 and A-10 ATS Simulator."""
+        with self.get_cursor() as cur:
+            try:
+                cur.execute(
+                    """
+                    UPDATE clean_listings
+                    SET semantic_cv_score = ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (score, listing_id)
+                )
+            except Exception:
+                # Column might not exist in old schema — graceful degradation
+                pass
+
+    def get_listings_with_semantic_scores(self, min_score: float = 0.5,
+                                            limit: int = 100) -> List[Dict]:
+        """Get listings with high semantic CV-JD match scores.
+        Used by A-13 Auto Applier for priority queue."""
+        with self.get_cursor() as cur:
+            try:
+                cur.execute(
+                    """
+                    SELECT cl.*, c.tier, c.sector, c.cirs
+                    FROM clean_listings cl
+                    LEFT JOIN companies c ON cl.company_id = c.id
+                    WHERE cl.status = 'active'
+                      AND cl.is_ghost = 0
+                      AND cl.semantic_cv_score >= ?
+                    ORDER BY cl.semantic_cv_score DESC, cl.ppo_score DESC
+                    LIMIT ?
+                    """,
+                    (min_score, limit)
+                )
+                return [dict(row) for row in cur.fetchall()]
+            except Exception:
+                # Column not available — fall back to PPO
+                return self.get_top_listings(n=limit)
+
+    # ==================================================================
+    # PRISM v0.1: TAILORED CV TRACKING (A-18 CV Enhancer)
+    # ==================================================================
+
+    def update_tailored_cv_path(self, listing_id: int,
+                                  cv_path: str) -> None:
+        """Record the path to a tailored CV for a listing.
+        Used by A-18 CV Intelligence Enhancer."""
+        with self.get_cursor() as cur:
+            try:
+                cur.execute(
+                    """
+                    UPDATE application_packages
+                    SET tailored_cv_path = ?
+                    WHERE listing_id = ?
+                    """,
+                    (cv_path, listing_id)
+                )
+                if cur.rowcount == 0:
+                    # No package exists yet — create one
+                    cur.execute(
+                        """
+                        INSERT OR IGNORE INTO application_packages
+                        (listing_id, tailored_cv_path)
+                        VALUES (?, ?)
+                        """,
+                        (listing_id, cv_path)
+                    )
+            except Exception as e:
+                logger.debug(f"[DB] update_tailored_cv_path error: {e}")
+
+    def get_tailored_cv_path(self, listing_id: int) -> Optional[str]:
+        """Get tailored CV path for a listing.
+        Used by A-13 Auto Applier."""
+        with self.get_cursor() as cur:
+            try:
+                cur.execute(
+                    "SELECT tailored_cv_path FROM application_packages WHERE listing_id = ?",
+                    (listing_id,)
+                )
+                row = cur.fetchone()
+                if row and row[0]:
+                    return row[0]
+            except Exception:
+                pass
+            return None
+
+    # ==================================================================
+    # PRISM v0.1: ALUMNI EMAIL QUERIES (A-15 Email Applier)
+    # ==================================================================
+
+    def get_alumni_with_emails(self, limit: int = 50) -> List[Dict]:
+        """Get alumni contacts that have email addresses for outreach.
+        Used by A-15 Email Applier."""
+        with self.get_cursor() as cur:
+            try:
+                cur.execute(
+                    """
+                    SELECT ac.*, c.name as company_name, c.tier, c.sector
+                    FROM alumni_contacts ac
+                    LEFT JOIN companies c ON ac.company_id = c.id
+                    WHERE ac.email IS NOT NULL AND ac.email != ''
+                      AND ac.email_verified = 1
+                      AND ac.outreach_status = 'pending'
+                    ORDER BY ac.connection_degree ASC, c.tier ASC
+                    LIMIT ?
+                    """,
+                    (limit,)
+                )
+                return [dict(row) for row in cur.fetchall()]
+            except Exception:
+                # email/email_verified columns may not exist in old schema
+                return []
+
+    def update_alumni_email(self, contact_id: int, email: str,
+                             verified: bool = False) -> None:
+        """Update alumni contact email.
+        Used by A-09 Network Mapper + Hunter.io verification."""
+        with self.get_cursor() as cur:
+            try:
+                cur.execute(
+                    """
+                    UPDATE alumni_contacts
+                    SET email = ?, email_verified = ?
+                    WHERE id = ?
+                    """,
+                    (email, int(verified), contact_id)
+                )
+            except Exception:
+                pass
+
+    def mark_alumni_emailed(self, contact_id: int,
+                             outreach_status: str = 'sent') -> None:
+        """Mark alumni contact as emailed.
+        Used by A-15 Email Applier after sending."""
+        with self.get_cursor() as cur:
+            cur.execute(
+                """
+                UPDATE alumni_contacts
+                SET outreach_status = ?
+                WHERE id = ?
+                """,
+                (outreach_status, contact_id)
+            )
+
+    # ==================================================================
+    # PRISM v0.1: MESSAGE HASH DEDUP (A-16 TG Listener)
+    # ==================================================================
+
+    def check_message_hash_exists(self, message_hash: str) -> bool:
+        """Check if a message hash already exists in dark_channel_listings.
+        Used by A-16 Telegram Group Monitor for instant dedup."""
+        with self.get_cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM dark_channel_listings WHERE message_hash = ? LIMIT 1",
+                (message_hash,)
+            )
+            return cur.fetchone() is not None
+
+    # ==================================================================
+    # PRISM v0.1: 5-PROVIDER API QUOTA (A-14 Multi-Model Router)
+    # ==================================================================
+
+    def get_all_provider_quotas_today(self) -> Dict[str, Dict[str, int]]:
+        """Get today's usage for ALL 5 providers.
+        Used by A-14 Multi-Model Router for quota-aware routing."""
+        date_str = datetime.now(IST).strftime("%Y-%m-%d")
+        providers = ['groq', 'cerebras', 'openrouter', 'groq_compound', 'mistral']
+        result = {}
+        with self.get_cursor() as cur:
+            for provider in providers:
+                cur.execute(
+                    """
+                    SELECT
+                        COALESCE(SUM(requests_made), 0) as total_requests,
+                        COALESCE(SUM(tokens_used), 0) as total_tokens,
+                        COALESCE(SUM(errors), 0) as total_errors,
+                        MAX(rate_limited) as was_rate_limited
+                    FROM api_quotas
+                    WHERE provider = ? AND date = ?
+                    """,
+                    (provider, date_str)
+                )
+                row = cur.fetchone()
+                result[provider] = dict(row) if row else {
+                    'total_requests': 0, 'total_tokens': 0,
+                    'total_errors': 0, 'was_rate_limited': 0
+                }
+        return result
+
     def get_health_report(self) -> Dict[str, Any]:
         """Generate a comprehensive database health report."""
         return {
@@ -2908,7 +3926,7 @@ def get_db(db_path: Optional[str] = None) -> DatabaseManager:
 if __name__ == "__main__":
     """Test database initialization and basic operations."""
     print("=" * 60)
-    print("OPERATION FIRST MOVER v5 — Database Test")
+    print("PRISM v0.1 — Database Test")
     print("=" * 60)
 
     db = DatabaseManager("data/test_firstmover.db")

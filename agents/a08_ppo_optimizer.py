@@ -1,32 +1,47 @@
 """
 ============================================================
-AGENT A-08: PPO RANKING OPTIMIZER — INDUSTRIAL GRADE
+PRISM v0.1 — AGENT A-08: PPO RANKING OPTIMIZER (11-VARIABLE)
 ============================================================
 Ranks ALL clean listings by Probability of Positive Outcome
-using a 10-variable scoring formula with configurable weights.
+using an 11-VARIABLE scoring formula with configurable weights.
+
+PRISM v0.1 Upgrades from OFM v7.0:
+    - V11: Semantic CV-JD Match (NEW) — cosine similarity between
+      user's CV embedding and JD embedding via sentence-transformers
+    - 11 variables instead of 10
+    - Weights rebalanced: V11 contributes 0-15pts to total score
+    - Personalized scoring: same role scores differently for different CVs
+    - Weekly retraining by A-11 includes V11 weight
 
 Schedule:
     07:00 AM IST — Full PPO scoring run (all active listings)
 
 Architecture:
     ┌──────────────────────────────────────────────────┐
-    │              PPO OPTIMIZER (A-08)                 │
+    │       PPO OPTIMIZER V11 (A-08) — PRISM v0.1      │
     ├──────────────────────────────────────────────────┤
     │                                                  │
-    │  PPO = Σ(wi × vi) for i in 1..10                │
+    │  PPO = Σ(wi × vi) for i in 1..11                │
     │                                                  │
-    │  v1:  has_ppo_tag (0/1 × 100)        w1: 0.20   │
-    │  v2:  company_tier_score (0-100)     w2: 0.18   │
-    │  v3:  low_applicant_bonus (0-100)    w3: 0.15   │
-    │  v4:  stipend_normalized (0-100)     w4: 0.08   │
-    │  v5:  duration_fit (0-100)           w5: 0.05   │
-    │  v6:  cirs_score (0-100)             w6: 0.12   │
-    │  v7:  sector_momentum (0-100)        w7: 0.07   │
-    │  v8:  intent_signal (0-100)          w8: 0.08   │
-    │  v9:  historic_callback (0-100)      w9: 0.05   │
+    │  v1:  has_ppo_tag (0/1 × 100)        w1: 0.15   │
+    │  v2:  company_tier_score (0-100)     w2: 0.14   │
+    │  v3:  low_applicant_bonus (0-100)    w3: 0.12   │
+    │  v4:  stipend_normalized (0-100)     w4: 0.06   │
+    │  v5:  duration_fit (0-100)           w5: 0.04   │
+    │  v6:  cirs_score (0-100)             w6: 0.10   │
+    │  v7:  sector_momentum (0-100)        w7: 0.06   │
+    │  v8:  intent_signal (0-100)          w8: 0.07   │
+    │  v9:  historic_callback (0-100)      w9: 0.04   │
     │  v10: recency_bonus (0-100)          w10: 0.02  │
+    │  v11: semantic_cv_match (0-100)      w11: 0.20  │
     │                                                  │
     │  Sum of weights = 1.00                           │
+    │                                                  │
+    │  V11 Innovation:                                 │
+    │  cosine_sim(cv_embed, jd_embed) → 0-100 score    │
+    │  Using all-MiniLM-L6-v2 (384-dim, local)        │
+    │  Makes PPO PERSONALIZED — not just 'good role'   │
+    │  but 'good role FOR YOU'                         │
     │                                                  │
     │  Output: PPO score 0-100 per listing             │
     │  Top 25 shortlisted for morning brief            │
@@ -36,10 +51,11 @@ Architecture:
 Weight Retraining (by A-11):
     After ≥20 outcomes logged, logistic regression retrains
     weights weekly. New weights replace defaults if model
-    accuracy > 60%.
+    accuracy > 60%. V11 weight included in retraining.
 
 Features:
-    - Full 10-variable PPO formula implementation
+    - Full 11-variable PPO formula implementation (PRISM v0.1)
+    - V11 Semantic CV-JD match via local sentence-transformers
     - Per-variable normalization with edge case handling
     - Category-specific stipend normalization
     - Company tier mapping (1=100, 2=80, 3=60, 4=40, 5=20)
@@ -144,17 +160,23 @@ SHORTLIST_MIN_SCORE = 30
 
 @dataclass
 class PPOWeights:
-    """PPO formula weight configuration."""
-    has_ppo_tag: float = 0.20
-    company_tier_score: float = 0.18
-    low_applicant_bonus: float = 0.15
-    stipend_normalized: float = 0.08
-    duration_fit: float = 0.05
-    cirs_score: float = 0.12
-    sector_momentum: float = 0.07
-    intent_signal: float = 0.08
-    historic_callback: float = 0.05
-    recency_bonus: float = 0.02
+    """
+    PRISM v0.1: PPO formula weight configuration (11 variables).
+
+    V11 (semantic_cv_match) is NEW in PRISM v0.1.
+    Weights rebalanced to accommodate V11's 0.20 share.
+    """
+    has_ppo_tag: float = 0.15        # v1: Was 0.20, reduced for V11
+    company_tier_score: float = 0.14  # v2: Was 0.18
+    low_applicant_bonus: float = 0.12 # v3: Was 0.15
+    stipend_normalized: float = 0.06  # v4: Was 0.08
+    duration_fit: float = 0.04        # v5: Was 0.05
+    cirs_score: float = 0.10          # v6: Was 0.12
+    sector_momentum: float = 0.06     # v7: Was 0.07
+    intent_signal: float = 0.07       # v8: Same
+    historic_callback: float = 0.04   # v9: Was 0.05
+    recency_bonus: float = 0.02       # v10: Same
+    semantic_cv_match: float = 0.20   # v11: NEW — cosine(CV, JD) embedding
 
     def validate(self) -> bool:
         """Validate weights sum to 1.0 (±0.01 tolerance)."""
@@ -163,7 +185,8 @@ class PPOWeights:
             self.low_applicant_bonus + self.stipend_normalized +
             self.duration_fit + self.cirs_score +
             self.sector_momentum + self.intent_signal +
-            self.historic_callback + self.recency_bonus
+            self.historic_callback + self.recency_bonus +
+            self.semantic_cv_match  # V11
         )
         return abs(total - 1.0) < 0.01
 
@@ -181,6 +204,7 @@ class PPOWeights:
             self.duration_fit, self.cirs_score,
             self.sector_momentum, self.intent_signal,
             self.historic_callback, self.recency_bonus,
+            self.semantic_cv_match,  # V11
         ]
 
 
@@ -203,6 +227,7 @@ class PPOBreakdown:
     v8_intent_signal: float = 0.0
     v9_callback: float = 0.0
     v10_recency: float = 0.0
+    v11_semantic_cv_match: float = 0.0  # PRISM v0.1: NEW
 
     # Weighted contributions
     w1_contribution: float = 0.0
@@ -215,6 +240,7 @@ class PPOBreakdown:
     w8_contribution: float = 0.0
     w9_contribution: float = 0.0
     w10_contribution: float = 0.0
+    w11_contribution: float = 0.0  # PRISM v0.1: NEW
 
     # Metadata
     raw_data: Dict = field(default_factory=dict)
@@ -232,6 +258,7 @@ class PPOBreakdown:
             ('Intent Signal', self.v8_intent_signal, self.w8_contribution),
             ('Callback Rate', self.v9_callback, self.w9_contribution),
             ('Recency', self.v10_recency, self.w10_contribution),
+            ('🆕 CV-JD Match', self.v11_semantic_cv_match, self.w11_contribution),
         ]
 
         lines = [
@@ -494,6 +521,100 @@ class VariableCalculator:
         score = max(0.0, 100.0 - (posted_days * RECENCY_DECAY_PER_DAY))
         return round(score, 2)
 
+    # ---- v11: Semantic CV-JD Match (PRISM v0.1 NEW) ----
+    @staticmethod
+    def calc_v11_semantic_cv_match(listing: Dict,
+                                    cv_embedding=None,
+                                    embedding_engine=None) -> float:
+        """
+        PRISM v0.1 V11: Semantic CV-to-JD cosine similarity.
+
+        Uses local sentence-transformers (all-MiniLM-L6-v2) to compute
+        384-dimensional embeddings of the user's CV and the job
+        description, then calculates cosine similarity.
+
+        This makes PPO scores PERSONALIZED:
+            - Same McKinsey listing scores differently for Finance vs Marketing CV
+            - Higher match = higher V11 score = higher PPO
+            - V11 contributes up to 15pts (0.15 weight × 100)
+
+        Args:
+            listing: The job listing dict (must have description_text)
+            cv_embedding: Pre-computed CV embedding (384-dim numpy array)
+            embedding_engine: The EmbeddingEngine instance (lazy-loaded)
+
+        Returns:
+            Score from 0 to 100 based on cosine similarity
+        """
+        # If no CV embedding available, return neutral score
+        if cv_embedding is None:
+            return 50.0  # Neutral — no CV uploaded yet
+
+        # Get JD text
+        jd_text = listing.get('description_text', '') or ''
+        title = listing.get('title', '') or ''
+        company = listing.get('company', '') or ''
+        skills = listing.get('skills', '') or ''
+
+        # Combine JD fields for better embedding
+        jd_combined = f"{title} at {company}. {jd_text} {skills}".strip()
+
+        if len(jd_combined) < 20:
+            return 50.0  # Not enough text for meaningful comparison
+
+        try:
+            # Compute JD embedding
+            if embedding_engine is None:
+                try:
+                    from core.embedding_engine import get_embedding_engine
+                    embedding_engine = get_embedding_engine()
+                except ImportError:
+                    return 50.0
+
+            jd_embedding = embedding_engine.encode(jd_combined)
+
+            if jd_embedding is None:
+                return 50.0
+
+            # Compute cosine similarity
+            similarity = _cosine_similarity(cv_embedding, jd_embedding)
+
+            # Map similarity [-1, 1] to score [0, 100]
+            # Typical range for job-cv similarity is 0.2-0.8
+            # Scale so 0.3 = 30, 0.5 = 60, 0.7 = 90, 0.8+ = 100
+            score = max(0.0, min(100.0, similarity * 125.0))
+
+            return round(score, 2)
+
+        except Exception as e:
+            logger.debug(f"[{AGENT_ID}] V11 semantic match error: {e}")
+            return 50.0  # Fallback to neutral
+
+
+def _cosine_similarity(vec_a, vec_b) -> float:
+    """
+    Compute cosine similarity between two vectors.
+    Works with numpy arrays or plain lists.
+    """
+    try:
+        import numpy as np
+        a = np.array(vec_a, dtype=np.float32)
+        b = np.array(vec_b, dtype=np.float32)
+        dot = np.dot(a, b)
+        norm_a = np.linalg.norm(a)
+        norm_b = np.linalg.norm(b)
+        if norm_a == 0 or norm_b == 0:
+            return 0.0
+        return float(dot / (norm_a * norm_b))
+    except ImportError:
+        # Pure Python fallback
+        dot = sum(a * b for a, b in zip(vec_a, vec_b))
+        norm_a = sum(a * a for a in vec_a) ** 0.5
+        norm_b = sum(b * b for b in vec_b) ** 0.5
+        if norm_a == 0 or norm_b == 0:
+            return 0.0
+        return dot / (norm_a * norm_b)
+
 
 # ============================================================
 # PPO SCORE CALCULATOR
@@ -501,8 +622,8 @@ class VariableCalculator:
 
 class PPOScoreCalculator:
     """
-    Calculates the final PPO score using all 10 variables
-    and the configured weights.
+    PRISM v0.1: Calculates the final PPO score using all 11 variables
+    and the configured weights. V11 = Semantic CV-JD Match (NEW).
     """
 
     def __init__(self, db: DatabaseManager, weights: Optional[PPOWeights] = None):
@@ -510,23 +631,71 @@ class PPOScoreCalculator:
         self.weights = weights or PPOWeights()
         self.variables = VariableCalculator(db)
 
+        # PRISM v0.1: Lazy-load embedding engine for V11
+        self._embedding_engine = None
+        self._cv_embedding = None
+
         # Validate weights
         if not self.weights.validate():
             logger.warning(
-                f"[{AGENT_ID}] PPO weights don't sum to 1.0! "
+                f"[{AGENT_ID}] PPO V11 weights don't sum to 1.0! "
                 f"Using defaults."
             )
             self.weights = PPOWeights()
 
+    def _get_cv_embedding(self):
+        """PRISM v0.1: Lazy-load user's CV embedding for V11."""
+        if self._cv_embedding is not None:
+            return self._cv_embedding
+
+        try:
+            from core.embedding_engine import get_embedding_engine
+            self._embedding_engine = get_embedding_engine()
+
+            # Load user's CV text from database or config
+            cv_text = self._load_user_cv_text()
+            if cv_text and len(cv_text) > 50:
+                self._cv_embedding = self._embedding_engine.encode(cv_text)
+                logger.info(f"[{AGENT_ID}] V11: CV embedding loaded ({len(cv_text)} chars)")
+            else:
+                logger.info(f"[{AGENT_ID}] V11: No CV text found, using neutral scores")
+        except ImportError:
+            logger.debug(f"[{AGENT_ID}] V11: embedding_engine not available")
+        except Exception as e:
+            logger.debug(f"[{AGENT_ID}] V11: CV embedding error: {e}")
+
+        return self._cv_embedding
+
+    def _load_user_cv_text(self) -> str:
+        """Load user's CV text from database or file."""
+        try:
+            # Try database first
+            cv_data = self.db.get_user_cv_text()
+            if cv_data:
+                return cv_data
+
+            # Try environment variable
+            import os
+            cv_path = os.environ.get('USER_CV_PATH', '')
+            if cv_path and os.path.exists(cv_path):
+                with open(cv_path, 'r', encoding='utf-8') as f:
+                    return f.read()
+
+        except Exception as e:
+            logger.debug(f"[{AGENT_ID}] CV text load error: {e}")
+
+        return ""
+
     def calculate(self, listing: Dict) -> float:
         """
-        Calculate PPO score for a single listing.
-        
+        PRISM v0.1: Calculate PPO score for a single listing.
+        Now includes V11 (Semantic CV-JD Match).
+
         Returns score from 0 to 100.
         """
         w = self.weights
 
-        # Calculate all 10 variables
+        # Calculate all 11 variables
         v1 = self.variables.calc_v1_ppo_tag(listing)
         v2 = self.variables.calc_v2_tier_score(listing)
         v3 = self.variables.calc_v3_applicant_bonus(listing)
@@ -538,7 +707,14 @@ class PPOScoreCalculator:
         v9 = self.variables.calc_v9_callback(listing)
         v10 = self.variables.calc_v10_recency(listing)
 
-        # Weighted sum
+        # PRISM v0.1: V11 Semantic CV-JD Match
+        cv_embedding = self._get_cv_embedding()
+        v11 = self.variables.calc_v11_semantic_cv_match(
+            listing, cv_embedding=cv_embedding,
+            embedding_engine=self._embedding_engine
+        )
+
+        # Weighted sum (11 variables)
         ppo = (
             w.has_ppo_tag * v1 +
             w.company_tier_score * v2 +
@@ -549,14 +725,15 @@ class PPOScoreCalculator:
             w.sector_momentum * v7 +
             w.intent_signal * v8 +
             w.historic_callback * v9 +
-            w.recency_bonus * v10
+            w.recency_bonus * v10 +
+            w.semantic_cv_match * v11  # V11 NEW
         )
 
         return round(max(0, min(100, ppo)), 2)
 
     def calculate_with_breakdown(self, listing: Dict) -> PPOBreakdown:
         """
-        Calculate PPO score with full variable breakdown.
+        PRISM v0.1: Calculate PPO score with full 11-variable breakdown.
         Useful for /package command and debugging.
         """
         w = self.weights
@@ -572,6 +749,13 @@ class PPOScoreCalculator:
         v9 = self.variables.calc_v9_callback(listing)
         v10 = self.variables.calc_v10_recency(listing)
 
+        # PRISM v0.1: V11 Semantic CV-JD Match
+        cv_embedding = self._get_cv_embedding()
+        v11 = self.variables.calc_v11_semantic_cv_match(
+            listing, cv_embedding=cv_embedding,
+            embedding_engine=self._embedding_engine
+        )
+
         breakdown = PPOBreakdown(
             listing_id=listing.get('id', 0),
             title=listing.get('title', ''),
@@ -586,6 +770,7 @@ class PPOScoreCalculator:
             v8_intent_signal=v8,
             v9_callback=v9,
             v10_recency=v10,
+            v11_semantic_cv_match=v11,  # PRISM v0.1: V11
             w1_contribution=round(w.has_ppo_tag * v1, 2),
             w2_contribution=round(w.company_tier_score * v2, 2),
             w3_contribution=round(w.low_applicant_bonus * v3, 2),
@@ -596,6 +781,7 @@ class PPOScoreCalculator:
             w8_contribution=round(w.intent_signal * v8, 2),
             w9_contribution=round(w.historic_callback * v9, 2),
             w10_contribution=round(w.recency_bonus * v10, 2),
+            w11_contribution=round(w.semantic_cv_match * v11, 2),  # V11
         )
 
         breakdown.total_score = round(
@@ -603,7 +789,8 @@ class PPOScoreCalculator:
             breakdown.w3_contribution + breakdown.w4_contribution +
             breakdown.w5_contribution + breakdown.w6_contribution +
             breakdown.w7_contribution + breakdown.w8_contribution +
-            breakdown.w9_contribution + breakdown.w10_contribution,
+            breakdown.w9_contribution + breakdown.w10_contribution +
+            breakdown.w11_contribution,  # V11
             2
         )
         breakdown.total_score = max(0, min(100, breakdown.total_score))

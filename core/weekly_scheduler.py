@@ -1,40 +1,55 @@
 """
 ============================================================
-OPERATION FIRST MOVER v7.0 — WEEKLY SMART SCHEDULER (ULTIMATE)
+OPERATION FIRST MOVER — PRISM v0.1 WEEKLY SMART SCHEDULER
 ============================================================
-TRANSFORMS the v6.0 scheduler into an AI-POWERED deep crawling
-engine that maximizes every available resource with industrial-
-grade robustness and intelligence.
+PRISM 3-Wave scheduling engine with AI-powered optimization.
 
-KEY UPGRADES FROM v6.0:
-    1. 3-WAVE SCRAPING: Morning + Afternoon + Night (vs 2 waves)
-    2. AI-ENHANCED SCHEDULING: Cerebras predicts best scrape times
-    3. DEEP CRAWL WINDOWS: 4 per week (Mon+Wed+Fri+Sun) vs 1
-    4. PARALLEL PIPELINES: Dedup+Ghost+Enrich run concurrently
-    5. AI QUALITY SCORING: Every listing gets AI quality check
-    6. RESOURCE OPTIMIZER: Auto-redistribute unused quota
-    7. ANOMALY DETECTION: AI detects unusual scraping patterns
-    8. PREDICTIVE PORTAL SELECTION: AI picks portals by freshness
-    9. SMART BATCH SIZING: Dynamic batch sizes based on resources
-    10. CROSS-AGENT CORRELATION: Detect cascade failures
+PRISM v0.1 Upgrades from OFM v7.0:
+    1. 20-Agent Support: Schedules all 20 PRISM agents
+    2. Auto-Apply Integration: A-13 at 08:00 + 15:00 IST
+    3. Email Outreach: A-15 at 09:30 IST daily
+    4. Outcome Tracking: A-19 at 10:30 IST daily
+    5. Company Intel: A-20 at 07:00 IST (pre-apply research)
+    6. A-14 Nightly Reset: midnight IST quota reset
+    7. Sunday Alumni Remap: A-09 at 10:00 IST
 
-WEEKLY PORTAL ROTATION (3 waves):
-    MON: AM-Internshala+GH/Lever | PM-Naukri+IIMjobs | NIGHT-Deep+Enrich
-    TUE: AM-Naukri+Indeed | PM-Glassdoor+Wellfound | NIGHT-ATS Crawl
-    WED: AM-Glassdoor+Workday | PM-Internshala+GH | NIGHT-Deep+Enrich
-    THU: AM-Internshala+Lever | PM-Naukri+IIMjobs | NIGHT-ATS Crawl
-    FRI: AM-Naukri+Indeed | PM-Glassdoor+Wellfound | NIGHT-Deep+Enrich
-    SAT: AM-Glassdoor+Workday | PM-All-Portal-Sweep | NIGHT-Cleanup
-    SUN: DEEP ENRICHMENT DAY — Full AI analysis + PPO retrain
+PRISM 3-WAVE WEEKLY SCHEDULE (IST):
+    Wave 1 (05:15 IST, Mon/Wed/Fri):
+        A-03 -> Internshala + Naukri API + IIMjobs
+        A-06 -> Dedup on overnight batch
+        A-05 -> Ghost scoring
+        A-07 -> Intelligence enrichment + Blue Ocean
+        A-08 -> PPO V11 scoring -> top 25 shortlist
+        A-12 -> MORNING BRIEF
 
-RESOURCE BUDGET (weekly v7.0 — aggressive utilization):
-    Groq:       ~6,000-12,000 req/week (8-12% of 100,800)
-    Cerebras:   ~105,000-175,000 req/week (15-25% of 700,000)
-    SerpAPI:    ~54/week (95% of 57 weekly budget)
-    CF Workers: ~35,000-56,000 req/week (5-8% of 700,000)
-    Webshare:   ~3,360-5,040/week (40-60% of 8,400)
-    ScraperAPI: ~213-225/week (85-90% of 250)
-    Scrape.do:  ~213-225/week (85-90% of 250)
+    Wave 2 (14:00 IST, Tue/Thu/Sat):
+        A-04 -> Greenhouse/Lever/Workday + LinkedIn DDG
+        A-05 -> Ghost scoring (afternoon batch)
+        A-13 -> Auto-apply run #2
+
+    Night (22:30 IST, Mon/Wed):
+        A-04 -> All portals, all Tier 1-3 companies
+        A-05 -> Ghost scoring (night batch)
+
+    Daily Operations (Every Day):
+        08:00 A-13 -> Auto-apply run #1
+        09:00 A-01 -> Intent signal scan
+        09:30 A-15 -> Email outreach (Brevo)
+        10:30 A-19 -> Follow-up check
+        16:00 A-01 -> Second intent scan
+        20:00 A-12 -> EVENING SUMMARY
+
+    Sunday Specials:
+        10:00 A-09 -> Alumni re-mapping
+        14:00 A-04 -> Deep ATS discovery
+        18:00 A-11 -> PPO weight retraining
+        21:00 A-11 -> Second retrain pass
+
+    Always Running:
+        24/7 A-16 -> Telegram Group Monitor
+        24/7 A-02 -> Dark Channel Listener
+        24/7 A-14 -> Multi-Model Router
+        24/7 A-17 -> Adaptive Scheduler
 ============================================================
 """
 
@@ -356,6 +371,70 @@ WEEKLY_SCHEDULE: List[WeeklyScheduleEntry] = [
         days_of_week="sun",
         estimated_duration_min=10, priority=5,
         ai_enhanced=True,
+    ),
+
+    # ==== PRISM v0.1: NEW AGENT SCHEDULES ====
+
+    # A-13 Auto-Apply: 08:00 IST (run #1) + 15:00 IST (run #2)
+    WeeklyScheduleEntry(
+        "auto_apply_am",
+        "Auto-apply run #1 (morning, top PPO listings)",
+        "A-13", 8, 0,
+        days_of_week="mon-sat",
+        estimated_duration_min=30, priority=1,
+    ),
+    WeeklyScheduleEntry(
+        "auto_apply_pm",
+        "Auto-apply run #2 (afternoon, remaining queue)",
+        "A-13", 15, 0,
+        days_of_week="mon-sat",
+        estimated_duration_min=30, priority=2,
+    ),
+
+    # A-15 Email Auto-Applier: 09:30 IST daily
+    WeeklyScheduleEntry(
+        "email_outreach",
+        "Email auto-apply (Brevo cold outreach to HR/alumni)",
+        "A-15", 9, 30,
+        days_of_week="mon-sat",
+        estimated_duration_min=20, priority=2,
+    ),
+
+    # A-19 Outcome Amplifier: 10:30 IST daily
+    WeeklyScheduleEntry(
+        "outcome_followup",
+        "Outcome amplifier (follow-up checks + email tracking)",
+        "A-19", 10, 30,
+        days_of_week="mon-sat",
+        estimated_duration_min=15, priority=3,
+    ),
+
+    # A-20 Deep Company Intel: 1 hour before A-13
+    WeeklyScheduleEntry(
+        "company_intel",
+        "Deep company intel (pre-application research via Groq Compound)",
+        "A-20", 7, 0,
+        days_of_week="mon-sat",
+        estimated_duration_min=25, priority=3,
+        ai_enhanced=True,
+    ),
+
+    # A-09 Alumni Re-mapping: Sunday 10:00
+    WeeklyScheduleEntry(
+        "sunday_alumni_remap",
+        "Sunday alumni re-mapping (DDG/SerpAPI/Hunter.io)",
+        "A-09", 10, 0,
+        days_of_week="sun",
+        estimated_duration_min=30, priority=3,
+    ),
+
+    # A-14 Nightly Reset: midnight IST
+    WeeklyScheduleEntry(
+        "ai_router_nightly_reset",
+        "A-14 Multi-Model Router nightly quota reset + efficiency report",
+        "A-14", 0, 5,
+        days_of_week="mon-sun",
+        estimated_duration_min=2, priority=5,
     ),
 ]
 
@@ -803,6 +882,29 @@ class WeeklyAgentScheduler:
         self._job_count = 0
         self._circuit_breakers: Dict[str, CircuitBreaker] = {}
         self._day_stats: Dict[str, Any] = {}
+        # Schedule conflict avoidance: tracks when a manual /run all or /run pipeline was triggered
+        # If a manual run happened within CONFLICT_COOLDOWN_SEC before a scheduled job,
+        # that scheduled job is SKIPPED to avoid portal clashes and duplicate scraping.
+        self._last_manual_pipeline_run: float = 0.0
+        self.CONFLICT_COOLDOWN_SEC: int = 1800  # 30 minutes
+
+    def mark_manual_pipeline_run(self):
+        """Called by /run pipeline or /run all to record the timestamp.
+        Scheduled scraping jobs within CONFLICT_COOLDOWN_SEC will be skipped."""
+        self._last_manual_pipeline_run = time.time()
+        logger.info(f"[WEEKLY-SCHEDULER] Manual pipeline run marked at {time.time():.0f}. "
+                     f"Scheduled scrapes within {self.CONFLICT_COOLDOWN_SEC}s will be skipped.")
+
+    def should_skip_scheduled_scrape(self, job_id: str = '') -> bool:
+        """Check if a scheduled scrape should be skipped because a manual run just happened."""
+        if self._last_manual_pipeline_run <= 0:
+            return False
+        elapsed = time.time() - self._last_manual_pipeline_run
+        if elapsed < self.CONFLICT_COOLDOWN_SEC:
+            logger.info(f"[WEEKLY-SCHEDULER] SKIPPING scheduled '{job_id}' — manual run was {elapsed:.0f}s ago "
+                         f"(cooldown: {self.CONFLICT_COOLDOWN_SEC}s)")
+            return True
+        return False
 
     @property
     def router(self) -> PortalDayRouter:
@@ -1030,6 +1132,14 @@ class WeeklyAgentScheduler:
             'sunday_deep_ats': self._run_sunday_deep_ats,
             'sunday_ai_retrain': self._run_weekly_retrain,
             'weekly_retrain': self._run_weekly_retrain,
+            # ---- PRISM v0.1: NEW AGENT HANDLERS ----
+            'auto_apply_am': self._run_auto_apply,
+            'auto_apply_pm': self._run_auto_apply,
+            'email_outreach': self._run_email_outreach,
+            'outcome_followup': self._run_outcome_followup,
+            'company_intel': self._run_company_intel,
+            'sunday_alumni_remap': self._run_alumni_remap,
+            'ai_router_nightly_reset': self._run_ai_router_reset,
         }
         return handlers.get(job_id)
 
@@ -1155,6 +1265,10 @@ class WeeklyAgentScheduler:
     # ================================================================
 
     async def _run_smart_portal_scrape_am(self):
+        # PRISM v0.1: Skip if manual run happened recently (conflict avoidance)
+        if self.should_skip_scheduled_scrape('smart_portal_scrape_am'):
+            return
+
         portals = self._router.get_today_portals("am")
         proxy_pool = self._router.get_today_proxy_pool()
         if not portals:
@@ -1168,11 +1282,18 @@ class WeeklyAgentScheduler:
         scraper.set_active_portals(portals)
         scraper.set_proxy_pool_indices(proxy_pool)
 
-        await self._safe_run(
+        result = await self._safe_run(
             'A-03 Wave1 AM Scrape',
             scraper.run_morning_scrape,
             job_timeout=3600,
         )
+
+        # Send run report with portal details
+        if result and isinstance(result, dict):
+            result['portals'] = portals
+        elif result is None:
+            result = {'portals': portals, 'new': 0}
+        await self._send_scheduled_run_report('A-03 Wave 1 AM Scrape', result)
 
         await self._auto_process_pipeline("after Wave 1 AM scrape")
         await self._sync_to_supabase("wave1_am")
@@ -1183,6 +1304,10 @@ class WeeklyAgentScheduler:
     # ================================================================
 
     async def _run_smart_portal_scrape_pm(self):
+        # PRISM v0.1: Skip if manual run happened recently (conflict avoidance)
+        if self.should_skip_scheduled_scrape('smart_portal_scrape_pm'):
+            return
+
         portals = self._router.get_today_portals("pm")
         proxy_pool = self._router.get_today_proxy_pool()
         if not portals:
@@ -1196,11 +1321,17 @@ class WeeklyAgentScheduler:
         scraper.set_active_portals(portals)
         scraper.set_proxy_pool_indices(proxy_pool)
 
-        await self._safe_run(
+        result = await self._safe_run(
             'A-03 Wave2 PM Scrape',
             scraper.run_afternoon_scrape,
             job_timeout=2700,
         )
+
+        if result and isinstance(result, dict):
+            result['portals'] = portals
+        elif result is None:
+            result = {'portals': portals, 'new': 0}
+        await self._send_scheduled_run_report('A-03 Wave 2 PM Scrape', result)
 
         await self._auto_process_pipeline("after Wave 2 PM scrape")
         await self._sync_to_supabase("wave2_pm")
@@ -1225,11 +1356,17 @@ class WeeklyAgentScheduler:
         scraper.set_proxy_pool_indices(proxy_pool)
 
         # Deep mode: scrape more pages, follow deeper pagination
-        await self._safe_run(
+        result = await self._safe_run(
             'A-03 Wave3 Night Deep',
             scraper.run_afternoon_scrape,  # Uses deep config when set
             job_timeout=3600,
         )
+
+        if result and isinstance(result, dict):
+            result['portals'] = portals
+        elif result is None:
+            result = {'portals': portals, 'new': 0}
+        await self._send_scheduled_run_report('A-03 Wave 3 Night Deep', result)
 
         await self._auto_process_pipeline("after Wave 3 Night deep")
         await self._sync_to_supabase("wave3_night")
@@ -1370,6 +1507,150 @@ class WeeklyAgentScheduler:
     async def _run_dark_channels(self):
         from agents.a02_dark_channel import get_dark_channel_listener
         await self._safe_run('A-02 Dark', get_dark_channel_listener().run_batch_check)
+
+    # ================================================================
+    # PRISM v0.1: NEW AGENT HANDLERS
+    # ================================================================
+
+    async def _run_auto_apply(self):
+        """Run A-13 Auto-Apply with Telegram run report."""
+        from agents.a13_auto_apply import get_auto_apply_orchestrator
+        applier = get_auto_apply_orchestrator()
+        result = await self._safe_run('A-13 Auto-Apply', applier.run_auto_apply, job_timeout=1800)
+        # Convert AutoApplyStats to dict for the report
+        report_data = None
+        if result and hasattr(result, 'applied'):
+            report_data = {
+                'processed': getattr(result, 'applied', 0),
+                'errors': getattr(result, 'errors', []),
+                'duration_sec': getattr(result, 'duration_sec', 0),
+            }
+        await self._send_scheduled_run_report('A-13 Auto-Apply', report_data or result)
+
+    async def _run_email_outreach(self):
+        """Run A-15 Email Auto-Applier via Brevo."""
+        from agents.a15_email_applier import get_email_applier
+        applier = get_email_applier()
+        result = await self._safe_run('A-15 Email Outreach', applier.run_outreach, job_timeout=1200)
+        report_data = None
+        if result and hasattr(result, 'sent'):
+            report_data = {
+                'processed': getattr(result, 'sent', 0),
+                'errors': getattr(result, 'errors', []),
+            }
+        await self._send_scheduled_run_report('A-15 Email Outreach', report_data or result)
+
+    async def _run_outcome_followup(self):
+        """Run A-19 Outcome Amplifier for follow-ups."""
+        from agents.a19_outcome_amplifier import get_outcome_amplifier
+        amplifier = get_outcome_amplifier()
+        result = await self._safe_run('A-19 Follow-up', amplifier.run_followup_check, job_timeout=900)
+        report_data = None
+        if result and hasattr(result, 'followups_sent'):
+            report_data = {
+                'processed': getattr(result, 'followups_sent', 0),
+                'errors': getattr(result, 'errors', []),
+            }
+        await self._send_scheduled_run_report('A-19 Outcome Amplifier', report_data or result)
+
+    async def _run_company_intel(self):
+        """Run A-20 Deep Company Intel before auto-apply."""
+        from agents.a20_company_intel import get_company_intel
+        intel = get_company_intel()
+        result = await self._safe_run('A-20 Company Intel', intel.research_batch, job_timeout=1500)
+        await self._send_scheduled_run_report('A-20 Company Intel', result)
+
+    async def _run_alumni_remap(self):
+        """Run A-09 Network Mapper for alumni re-mapping (Sunday)."""
+        from agents.a09_network_mapper import get_network_mapper
+        mapper = get_network_mapper()
+        result = await self._safe_run('A-09 Alumni Remap', mapper.map_network, job_timeout=1800)
+        report_data = None
+        if result and hasattr(result, 'alumni_found'):
+            report_data = {
+                'processed': getattr(result, 'alumni_found', 0),
+            }
+        await self._send_scheduled_run_report('A-09 Alumni Remap', report_data or result)
+
+    async def _run_ai_router_reset(self):
+        """Run A-14 nightly quota reset."""
+        from agents.a14_multi_model_router import get_multi_model_router
+        router = get_multi_model_router()
+        result = await self._safe_run('A-14 Nightly Reset', router.nightly_reset, job_timeout=120)
+        await self._send_scheduled_run_report('A-14 AI Router Reset', result)
+
+    # ================================================================
+    # SCHEDULED RUN TELEGRAM REPORT
+    # ================================================================
+
+    async def _send_scheduled_run_report(self, agent_name: str, result: Any):
+        """Send a Telegram report after each scheduled agent run.
+        Reports: agent name, portal scraped, jobs found, total DB jobs."""
+        try:
+            from agents.a12_telegram_reporter import get_telegram_reporter
+            reporter = get_telegram_reporter()
+            if not reporter._running:
+                return
+
+            from core.database import get_db
+            db = get_db()
+
+            # Gather DB stats
+            total_raw = db.count_raw_listings()
+            total_clean = db.count_clean_listings(status='active')
+            source_counts = db.get_source_counts()
+            raw_source_counts = db.get_raw_source_counts()
+
+            # Extract result info
+            items = 0
+            portals_scraped = []
+            errors = []
+            duration = 0.0
+            if isinstance(result, dict):
+                items = result.get('new', 0) or result.get('total', 0) or result.get('processed', 0) or result.get('items', 0)
+                portals_scraped = result.get('portals', []) or result.get('sources', [])
+                errors = result.get('errors', [])
+                duration = result.get('duration', 0.0) or result.get('duration_sec', 0.0)
+
+            now_ist = datetime.now(IST).strftime('%H:%M IST')
+            portal_str = ', '.join(portals_scraped) if portals_scraped else 'N/A'
+
+            # Source breakdown
+            source_lines = []
+            for src, cnt in sorted(source_counts.items(), key=lambda x: -x[1]):
+                raw_cnt = raw_source_counts.get(src, 0)
+                source_lines.append(f"  {src}: {cnt} clean / {raw_cnt} raw")
+
+            msg = (
+                f"{'=' * 28}\n"
+                f"SCHEDULED RUN REPORT\n"
+                f"{'=' * 28}\n\n"
+                f"Agent: <b>{agent_name}</b>\n"
+                f"Time: {now_ist}\n"
+                f"Status: {'OK' if result is not None else 'FAILED'}\n"
+                f"Items Processed: <b>{items}</b>\n"
+                f"Portals: {portal_str}\n"
+                f"Duration: {duration:.1f}s\n\n"
+                f"DATABASE STATUS:\n"
+                f"  Total Raw Listings: <b>{total_raw}</b>\n"
+                f"  Total Clean (Active): <b>{total_clean}</b>\n\n"
+                f"SOURCE BREAKDOWN:\n"
+            )
+            if source_lines:
+                msg += '\n'.join(source_lines[:12])
+            else:
+                msg += '  No listings yet'
+
+            if errors:
+                msg += f"\n\nErrors ({len(errors)}):\n"
+                for err in errors[:3]:
+                    msg += f"  {str(err)[:80]}\n"
+
+            msg += f"\n{'=' * 28}"
+
+            await reporter.send_message(msg)
+        except Exception as e:
+            logger.debug(f"[WEEKLY-SCHEDULER] Run report send failed: {e}")
 
     # ================================================================
     # SUNDAY DEEP OPERATIONS

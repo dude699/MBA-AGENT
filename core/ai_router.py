@@ -1,38 +1,32 @@
 """
 ============================================================
-OPERATION FIRST MOVER v7.0 — AI ROUTING ENGINE (ULTIMATE)
+PRISM v0.1 — AI ROUTING ENGINE (5-PROVIDER ARCHITECTURE)
 ============================================================
-Dual-brain AI routing system with DEEP INTEGRATION — uses
-AI for every stage of the pipeline, not just classification.
+5-provider AI routing system with PRISM task routing:
 
-v7.0 UPGRADES:
-    - 9 NEW AI TASKS for deeper pipeline integration
-    - Smarter provider selection based on task complexity
-    - Enhanced batch processing with concurrent execution
-    - AI-powered prompt optimization
-    - Deeper analysis tasks for enrichment pipeline
-    - Quality scoring, anomaly detection, schedule optimization
+PROVIDERS (all free tier):
+    1. Groq 70B        — PRIMARY DEEP (cover letters, JD analysis, reports)
+    2. Cerebras 8B/70B — PRIMARY FAST (classification, extraction, parsing)
+    3. OpenRouter      — PRIMARY LONG (1M context: ATS sim, CV tailoring)
+    4. Groq Compound   — AGENTIC (live web search, company research)
+    5. Mistral          — UNIVERSAL FALLBACK (when all else fails)
 
-NEW v7.0 TASKS:
-    Cerebras (fast):
-        - listing_quality_score: Rate listing quality 0-100
-        - salary_benchmark: Benchmark stipend vs market
-        - duplicate_semantic: Semantic duplicate detection
-        - anomaly_detect: Detect scraping anomalies
-        - enrichment_priority: Rank listings for enrichment
-
-    Groq (deep):
-        - deep_jd_parse: Extract 20+ fields from JDs
-        - company_intent_predict: Predict hiring intent
-        - schedule_optimize: Optimize scraping schedule
-        - proxy_strategy: AI proxy routing decisions
+PRISM v0.1 Upgrades from OFM v7.0:
+    - 3 NEW providers: OpenRouter, Groq Compound Beta, Mistral
+    - 54-task PRISM routing table (was 2-provider binary)
+    - Per-provider circuit breakers (5 independent circuits)
+    - Per-provider rate limiters (5 independent limiters)
+    - PRISM_FAILOVER_CHAIN: provider → [fallback1, fallback2]
+    - 18 new PRISM task prompts (email, CV, follow-up, intel)
+    - Groq Compound: built-in web_search + visit_url tools
+    - OpenRouter: OpenAI-compatible API with custom base_url
 
 Architecture:
-    - Task-based routing with automatic fallback
+    - Task-based routing with 2-level fallback chain
     - Quota tracking per-provider with aggressive utilization
     - Response caching with intelligent TTL
     - Structured JSON output parsing
-    - v7.0: Concurrent batch processing
+    - Concurrent batch processing
 ============================================================
 """
 
@@ -61,7 +55,10 @@ except ImportError:
 # Local imports
 from core.config import (
     get_config, TASK_TEMPERATURE_MAP, TASK_MAX_TOKENS_MAP,
-    IST, GroqConfig, CerebrasConfig
+    IST, GroqConfig, CerebrasConfig,
+    # PRISM v0.1 new providers
+    OpenRouterConfig, GroqCompoundConfig, MistralConfig,
+    PRISM_TASK_ROUTING, PRISM_FAILOVER_CHAIN,
 )
 from core.database import get_db
 
@@ -71,9 +68,12 @@ from core.database import get_db
 # ============================================================
 
 class AIProvider(Enum):
-    """Available AI providers."""
+    """Available AI providers (PRISM v0.1: 5 providers)."""
     GROQ = "groq"
     CEREBRAS = "cerebras"
+    OPENROUTER = "openrouter"
+    GROQ_COMPOUND = "groq_compound"
+    MISTRAL = "mistral"
 
 
 class TaskCategory(Enum):
@@ -93,16 +93,18 @@ class CircuitState(Enum):
     HALF_OPEN = "half_open" # Testing recovery
 
 
-# Task to provider mapping
+# Task to provider mapping (legacy — PRISM uses PRISM_TASK_ROUTING from config)
 CEREBRAS_TASKS: Set[str] = {
     'ghost_classify', 'intent_classify', 'extract_basics',
     'dedup_score', 'internshala_parse', 'sector_tag',
     'naukri_parse', 'iimjobs_parse', 'ats_extract',
     'dark_classify', 'signal_score', 'quick_classify',
-    # v7.0 NEW Cerebras tasks
+    # v7.0 Cerebras tasks
     'listing_quality_score', 'salary_benchmark',
     'duplicate_semantic', 'anomaly_detect',
     'enrichment_priority',
+    # PRISM v0.1 NEW Cerebras tasks
+    'followup_draft', 'tg_message_extract', 'schedule_health_check',
 }
 
 GROQ_TASKS: Set[str] = {
@@ -110,9 +112,30 @@ GROQ_TASKS: Set[str] = {
     'jd_analysis', 'outreach_draft', 'company_research',
     'report_compile', 'economic_analysis', 'package_generate',
     'network_outreach', 'deep_analysis',
-    # v7.0 NEW Groq tasks
+    # v7.0 Groq tasks
     'deep_jd_parse', 'company_intent_predict',
     'schedule_optimize', 'proxy_strategy',
+    # PRISM v0.1 NEW Groq tasks
+    'email_personalize', 'alumni_outreach_draft', 'weekly_report_narrative',
+}
+
+# PRISM v0.1: OpenRouter tasks (1M context)
+OPENROUTER_TASKS: Set[str] = {
+    'ats_simulation_full', 'cv_tailor_full',
+    'jd_comprehensive_analysis', 'resume_full_rewrite',
+    'interview_prep_deep',
+}
+
+# PRISM v0.1: Groq Compound tasks (agentic web search)
+GROQ_COMPOUND_TASKS: Set[str] = {
+    'web_search', 'live_research', 'deep_company_intel',
+    'intent_verify', 'funding_verify', 'career_page_scan',
+    'news_aggregate', 'leadership_scan',
+}
+
+# PRISM v0.1: Mistral tasks (fallback)
+MISTRAL_TASKS: Set[str] = {
+    'fallback_classify', 'fallback_generate', 'fallback_analyze',
 }
 
 # Task to category mapping
@@ -150,6 +173,26 @@ TASK_CATEGORIES: Dict[str, TaskCategory] = {
     'company_intent_predict': TaskCategory.ANALYSIS,
     'schedule_optimize': TaskCategory.ANALYSIS,
     'proxy_strategy': TaskCategory.ANALYSIS,
+    # PRISM v0.1 NEW task categories
+    'email_personalize': TaskCategory.GENERATION,
+    'alumni_outreach_draft': TaskCategory.GENERATION,
+    'weekly_report_narrative': TaskCategory.GENERATION,
+    'followup_draft': TaskCategory.GENERATION,
+    'tg_message_extract': TaskCategory.EXTRACTION,
+    'schedule_health_check': TaskCategory.ANALYSIS,
+    'ats_simulation_full': TaskCategory.ANALYSIS,
+    'cv_tailor_full': TaskCategory.GENERATION,
+    'jd_comprehensive_analysis': TaskCategory.ANALYSIS,
+    'resume_full_rewrite': TaskCategory.GENERATION,
+    'interview_prep_deep': TaskCategory.GENERATION,
+    'web_search': TaskCategory.ANALYSIS,
+    'live_research': TaskCategory.ANALYSIS,
+    'deep_company_intel': TaskCategory.ANALYSIS,
+    'intent_verify': TaskCategory.ANALYSIS,
+    'funding_verify': TaskCategory.ANALYSIS,
+    'career_page_scan': TaskCategory.EXTRACTION,
+    'news_aggregate': TaskCategory.ANALYSIS,
+    'leadership_scan': TaskCategory.EXTRACTION,
 }
 
 
@@ -1093,6 +1136,175 @@ Respond in JSON:
     "skip": [id4],
     "reasoning": "brief explanation"
 }}""",
+
+    # ============================================================
+    # PRISM v0.1: NEW PROMPT TEMPLATES
+    # ============================================================
+
+    'email_personalize': """Write 2-3 personalization sentences for a cold outreach email.
+
+Recipient: {recipient_name} ({recipient_role}) at {company}
+Company Intel: {company_intel}
+Listing: {listing_title}
+Connection Type: {connection_type}
+Candidate: MBA student specializing in {specialization}
+
+Requirements:
+- Reference specific company news/achievements from intel
+- Show genuine knowledge of the company
+- Be professional but warm
+- Keep under 60 words total
+- Do NOT use generic flattery
+
+Respond in JSON:
+{{
+    "personalization_lines": ["line1", "line2"],
+    "opening_hook": "attention-grabbing first sentence",
+    "quality_score": 0-100
+}}""",
+
+    'alumni_outreach_draft': """Write a warm alumni outreach message.
+
+Alumni: {alumni_name} (batch {batch_year}, {college})
+Current Role: {current_role} at {company}
+Connection: {connection_type}
+Company Intel: {company_intel}
+Target Role: {target_role}
+
+Write a 100-word message that:
+1. Establishes shared college bond
+2. Shows genuine interest in their career path
+3. Mentions specific company achievement
+4. Has a soft, non-pushy ask for guidance
+5. Is authentic, not templated
+
+Write the message:""",
+
+    'followup_draft': """Write a concise follow-up email for a silent application.
+
+Original Application:
+- Company: {company}
+- Role: {role}
+- Applied: {applied_date} ({days_ago} days ago)
+- Application Method: {method}
+
+Requirements:
+- Under 80 words
+- Professional, not desperate
+- Reference the specific role
+- Add one new value proposition
+- Clear call to action
+
+Respond in JSON:
+{{
+    "subject": "follow-up subject line",
+    "body": "email body text",
+    "tone": "professional/warm/assertive"
+}}""",
+
+    'tg_message_extract': """Extract job/internship details from this Telegram message.
+
+Message:
+{message}
+
+Channel: {channel_name}
+
+Extract if this is a job/internship posting:
+{{
+    "is_job": true/false,
+    "confidence": 0.0-1.0,
+    "company": "company name or null",
+    "role": "job title or null",
+    "location": "location or null",
+    "stipend": "stipend or null",
+    "url": "application link or null",
+    "contact": "contact info or null",
+    "deadline": "deadline or null",
+    "keywords": ["keyword1", "keyword2"]
+}}""",
+
+    'cv_tailor_full': """Rewrite these resume bullet points to match the job description.
+
+Job Description:
+{jd_text}
+
+Missing Keywords: {missing_keywords}
+Keyword Match: {match_pct}%
+
+Current Bullets:
+{bullets}
+
+Company Hooks: {company_hooks}
+
+For each bullet, create an improved version that:
+1. Naturally incorporates 1-2 missing keywords
+2. Maintains truthfulness (don't fabricate experience)
+3. Uses strong action verbs with quantified metrics
+4. Aligns with the specific JD requirements
+5. Keeps similar length to original
+
+Respond in JSON:
+{{
+    "improved_bullets": [
+        {{
+            "original": "original bullet",
+            "improved": "improved bullet with keywords",
+            "keywords_injected": ["keyword1"],
+            "change_type": "keyword_inject/metric_add/verb_strengthen"
+        }}
+    ],
+    "skills_to_add": ["skill1", "skill2"],
+    "summary_tweak": "optional 1-line resume summary adjustment"
+}}""",
+
+    'deep_company_intel': """Research this company for an MBA internship application.
+
+Company: {company}
+Sector: {sector}
+Career Page: {careers_url}
+
+Research the following (use web search):
+1. Latest news (last 3 months)
+2. Recent funding/expansion
+3. Key leadership (CEO, CHRO, Head of HR)
+4. Intern/fresher hiring history
+5. Glassdoor sentiment
+6. Competitor comparison
+
+Generate a 500-word Intel Brief:
+{{
+    "company_name": "...",
+    "intel_brief": "500-word research brief",
+    "personalization_hooks": ["hook1 for cover letter", "hook2", "hook3"],
+    "key_people": [{{"name": "...", "role": "..."}}, ...],
+    "recent_news": ["news1", "news2"],
+    "hiring_status": "active_hiring/passive/frozen",
+    "intern_review_summary": "brief intern experience summary",
+    "career_page_url": "url"
+}}""",
+
+    'schedule_health_check': """Analyze this portal/agent health data and suggest schedule adjustments.
+
+Portal Health:
+{portal_health}
+
+Agent Heartbeats:
+{agent_heartbeats}
+
+AI Quota Usage:
+{quota_usage}
+
+Analyze and suggest:
+{{
+    "healthy_portals": ["portal1"],
+    "degraded_portals": ["portal2"],
+    "failed_portals": ["portal3"],
+    "schedule_adjustments": [
+        {{"agent": "A-03", "action": "delay_2h", "reason": "portal down"}}
+    ],
+    "quota_alert": true/false,
+    "overall_health": "healthy/degraded/critical"
+}}""",
 }
 
 
@@ -1102,13 +1314,17 @@ Respond in JSON:
 
 class AIRouter:
     """
-    Dual-brain AI routing engine that distributes tasks between
-    Groq and Cerebras to maximize free-tier quota utilization.
+    PRISM v0.1: 5-provider AI routing engine that distributes tasks
+    across Groq, Cerebras, OpenRouter, Groq Compound, and Mistral
+    to maximize free-tier quota utilization.
 
     Usage:
         router = AIRouter()
-        response = await router.call("ghost_classify", prompt)
-        response = await router.call("cover_letter", prompt)
+        response = router.call("ghost_classify", prompt)         # → Cerebras
+        response = router.call("cover_letter", prompt)           # → Groq
+        response = router.call("ats_simulation_full", prompt)    # → OpenRouter
+        response = router.call("deep_company_intel", prompt)     # → Groq Compound
+        response = router.call("fallback_classify", prompt)      # → Mistral
     """
 
     _instance = None
@@ -1129,8 +1345,11 @@ class AIRouter:
         # Initialize provider clients (lazy)
         self._groq_client = None
         self._cerebras_client = None
+        self._openrouter_client = None
+        self._mistral_client = None
+        # Groq Compound uses same client as Groq (different model)
 
-        # Rate limiters
+        # Rate limiters (all 5 providers)
         self._groq_limiter = RateLimiter(
             per_minute=self.config.groq.requests_per_minute,
             per_hour=self.config.groq.requests_per_hour,
@@ -1141,13 +1360,37 @@ class AIRouter:
             per_hour=self.config.cerebras.requests_per_hour,
             per_day=self.config.cerebras.daily_request_limit,
         )
+        self._openrouter_limiter = RateLimiter(
+            per_minute=self.config.openrouter.requests_per_minute,
+            per_hour=self.config.openrouter.requests_per_hour,
+            per_day=self.config.openrouter.daily_request_limit,
+        )
+        self._groq_compound_limiter = RateLimiter(
+            per_minute=self.config.groq_compound.requests_per_minute,
+            per_hour=self.config.groq_compound.requests_per_hour,
+            per_day=self.config.groq_compound.daily_request_limit,
+        )
+        self._mistral_limiter = RateLimiter(
+            per_minute=self.config.mistral.requests_per_minute,
+            per_hour=self.config.mistral.requests_per_hour,
+            per_day=self.config.mistral.daily_request_limit,
+        )
 
-        # Circuit breakers
+        # Circuit breakers (all 5 providers)
         self._groq_circuit = CircuitBreaker(
             failure_threshold=5, reset_timeout_sec=300
         )
         self._cerebras_circuit = CircuitBreaker(
             failure_threshold=5, reset_timeout_sec=300
+        )
+        self._openrouter_circuit = CircuitBreaker(
+            failure_threshold=3, reset_timeout_sec=600
+        )
+        self._groq_compound_circuit = CircuitBreaker(
+            failure_threshold=3, reset_timeout_sec=600
+        )
+        self._mistral_circuit = CircuitBreaker(
+            failure_threshold=3, reset_timeout_sec=600
         )
 
         # Response cache
@@ -1161,7 +1404,10 @@ class AIRouter:
         self._task_calls = defaultdict(int)
         self._fallback_count = 0
 
-        logger.info("AI Router initialized (Groq + Cerebras dual-brain)")
+        logger.info(
+            "PRISM v0.1 AI Router initialized "
+            "(Groq + Cerebras + OpenRouter + Groq Compound + Mistral)"
+        )
 
     # ----------------------------------------------------------
     # LAZY CLIENT INITIALIZATION
@@ -1203,16 +1449,74 @@ class AIRouter:
                 raise
         return self._cerebras_client
 
+    def _get_openrouter_client(self):
+        """Lazily initialize OpenRouter client (OpenAI-compatible)."""
+        if self._openrouter_client is None:
+            try:
+                from openai import OpenAI
+                self._openrouter_client = OpenAI(
+                    api_key=self.config.openrouter.api_key,
+                    base_url=self.config.openrouter.base_url,
+                    timeout=self.config.openrouter.timeout_seconds,
+                )
+                logger.info(f"OpenRouter client initialized (model: {self.config.openrouter.model})")
+            except ImportError:
+                logger.warning("OpenAI SDK not installed. Install with: pip install openai")
+                raise
+            except Exception as e:
+                logger.error(f"Failed to initialize OpenRouter client: {e}")
+                raise
+        return self._openrouter_client
+
+    def _get_mistral_client(self):
+        """Lazily initialize Mistral client (OpenAI-compatible)."""
+        if self._mistral_client is None:
+            try:
+                from openai import OpenAI
+                self._mistral_client = OpenAI(
+                    api_key=self.config.mistral.api_key,
+                    base_url=self.config.mistral.base_url,
+                    timeout=self.config.mistral.timeout_seconds,
+                )
+                logger.info(f"Mistral client initialized (model: {self.config.mistral.model})")
+            except ImportError:
+                logger.warning("OpenAI SDK not installed for Mistral. Install with: pip install openai")
+                raise
+            except Exception as e:
+                logger.error(f"Failed to initialize Mistral client: {e}")
+                raise
+        return self._mistral_client
+
     # ----------------------------------------------------------
     # PROVIDER RESOLUTION
     # ----------------------------------------------------------
 
     def _resolve_provider(self, task: str) -> AIProvider:
-        """Determine which provider should handle this task."""
+        """Determine which provider should handle this task.
+        PRISM v0.1: Uses PRISM_TASK_ROUTING table first, falls back to legacy."""
+        # PRISM routing table has highest priority
+        prism_provider = PRISM_TASK_ROUTING.get(task)
+        if prism_provider:
+            provider_map = {
+                'cerebras': AIProvider.CEREBRAS,
+                'groq': AIProvider.GROQ,
+                'openrouter': AIProvider.OPENROUTER,
+                'groq_compound': AIProvider.GROQ_COMPOUND,
+                'mistral': AIProvider.MISTRAL,
+            }
+            return provider_map.get(prism_provider, AIProvider.CEREBRAS)
+
+        # Legacy task sets as fallback
         if task in CEREBRAS_TASKS:
             return AIProvider.CEREBRAS
         elif task in GROQ_TASKS:
             return AIProvider.GROQ
+        elif task in OPENROUTER_TASKS:
+            return AIProvider.OPENROUTER
+        elif task in GROQ_COMPOUND_TASKS:
+            return AIProvider.GROQ_COMPOUND
+        elif task in MISTRAL_TASKS:
+            return AIProvider.MISTRAL
         else:
             # Default: classify/extract -> Cerebras, generate/analyze -> Groq
             category = TASK_CATEGORIES.get(task)
@@ -1222,15 +1526,43 @@ class AIRouter:
             else:
                 return AIProvider.GROQ
 
+    def _get_fallback_providers(self, primary: AIProvider) -> List[AIProvider]:
+        """Get the fallback provider chain using PRISM_FAILOVER_CHAIN.
+        Returns ordered list of fallback providers."""
+        chain = PRISM_FAILOVER_CHAIN.get(primary.value, [])
+        provider_map = {
+            'cerebras': AIProvider.CEREBRAS,
+            'groq': AIProvider.GROQ,
+            'openrouter': AIProvider.OPENROUTER,
+            'groq_compound': AIProvider.GROQ_COMPOUND,
+            'mistral': AIProvider.MISTRAL,
+        }
+        return [provider_map[p] for p in chain if p in provider_map]
+
     def _get_fallback_provider(self, primary: AIProvider) -> AIProvider:
-        """Get the fallback provider."""
-        return AIProvider.GROQ if primary == AIProvider.CEREBRAS else AIProvider.CEREBRAS
+        """Get the first fallback provider (legacy compat)."""
+        fallbacks = self._get_fallback_providers(primary)
+        return fallbacks[0] if fallbacks else AIProvider.MISTRAL
 
     def _get_limiter(self, provider: AIProvider) -> RateLimiter:
-        return self._groq_limiter if provider == AIProvider.GROQ else self._cerebras_limiter
+        limiter_map = {
+            AIProvider.GROQ: self._groq_limiter,
+            AIProvider.CEREBRAS: self._cerebras_limiter,
+            AIProvider.OPENROUTER: self._openrouter_limiter,
+            AIProvider.GROQ_COMPOUND: self._groq_compound_limiter,
+            AIProvider.MISTRAL: self._mistral_limiter,
+        }
+        return limiter_map.get(provider, self._cerebras_limiter)
 
     def _get_circuit(self, provider: AIProvider) -> CircuitBreaker:
-        return self._groq_circuit if provider == AIProvider.GROQ else self._cerebras_circuit
+        circuit_map = {
+            AIProvider.GROQ: self._groq_circuit,
+            AIProvider.CEREBRAS: self._cerebras_circuit,
+            AIProvider.OPENROUTER: self._openrouter_circuit,
+            AIProvider.GROQ_COMPOUND: self._groq_compound_circuit,
+            AIProvider.MISTRAL: self._mistral_circuit,
+        }
+        return circuit_map.get(provider, self._cerebras_circuit)
 
     # ----------------------------------------------------------
     # CORE API CALL
@@ -1240,11 +1572,18 @@ class AIRouter:
                        task: str, max_tokens: int,
                        temperature: float,
                        system_prompt: Optional[str] = None) -> AIResponse:
-        """Make a synchronous API call to a provider."""
+        """Make a synchronous API call to any of 5 providers."""
         start_time = time.time()
 
-        model = (self.config.groq.model if provider == AIProvider.GROQ
-                 else self.config.cerebras.model)
+        # Resolve model for each provider
+        model_map = {
+            AIProvider.GROQ: self.config.groq.model,
+            AIProvider.CEREBRAS: self.config.cerebras.model,
+            AIProvider.OPENROUTER: self.config.openrouter.model,
+            AIProvider.GROQ_COMPOUND: self.config.groq_compound.model,
+            AIProvider.MISTRAL: self.config.mistral.model,
+        }
+        model = model_map.get(provider, self.config.cerebras.model)
 
         messages = []
         if system_prompt:
@@ -1260,7 +1599,7 @@ class AIRouter:
                     max_tokens=max_tokens,
                     temperature=temperature,
                 )
-            else:
+            elif provider == AIProvider.CEREBRAS:
                 client = self._get_cerebras_client()
                 resp = client.chat.completions.create(
                     model=model,
@@ -1268,6 +1607,33 @@ class AIRouter:
                     max_tokens=max_tokens,
                     temperature=temperature,
                 )
+            elif provider == AIProvider.OPENROUTER:
+                client = self._get_openrouter_client()
+                resp = client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                )
+            elif provider == AIProvider.GROQ_COMPOUND:
+                # Groq Compound Beta uses same client as Groq, different model
+                client = self._get_groq_client()
+                resp = client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                )
+            elif provider == AIProvider.MISTRAL:
+                client = self._get_mistral_client()
+                resp = client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                )
+            else:
+                raise ValueError(f"Unknown provider: {provider}")
 
             latency_ms = (time.time() - start_time) * 1000
             content = resp.choices[0].message.content if resp.choices else ""
@@ -1344,7 +1710,7 @@ class AIRouter:
 
         # Resolve provider
         primary = force_provider or self._resolve_provider(task)
-        fallback = self._get_fallback_provider(primary)
+        fallbacks = self._get_fallback_providers(primary)
 
         # Try primary provider
         response = self._try_provider(
@@ -1358,30 +1724,63 @@ class AIRouter:
             self._record_success(primary, task, response)
             return response
 
-        # Primary failed — try fallback
-        logger.warning(f"Primary provider {primary.value} failed for {task}, trying {fallback.value}")
-        self._fallback_count += 1
+        # Primary failed — try fallback chain (PRISM: up to 2 fallbacks)
+        for i, fallback in enumerate(fallbacks):
+            logger.warning(
+                f"Provider {primary.value} failed for {task}, "
+                f"trying fallback #{i+1}: {fallback.value}"
+            )
+            self._fallback_count += 1
 
-        response = self._try_provider(
-            fallback, task, prompt, max_tokens, temperature, system_prompt
+            response = self._try_provider(
+                fallback, task, prompt, max_tokens, temperature, system_prompt
+            )
+            response.fallback_used = True
+
+            if response.success:
+                if use_cache:
+                    self._cache.put(task, prompt, response)
+                self._record_success(fallback, task, response)
+                return response
+
+        # All providers failed
+        self._total_errors += 1
+        logger.error(
+            f"All providers failed for task={task} "
+            f"(tried: {primary.value} + {[f.value for f in fallbacks]})"
         )
-        response.fallback_used = True
-
-        if response.success:
-            if use_cache:
-                self._cache.put(task, prompt, response)
-            self._record_success(fallback, task, response)
-        else:
-            self._total_errors += 1
-            logger.error(f"Both providers failed for task={task}")
 
         return response
+
+    def _is_provider_configured(self, provider: AIProvider) -> bool:
+        """Check if a provider has valid API keys configured."""
+        if provider == AIProvider.GROQ:
+            return bool(self.config.groq.api_key)
+        elif provider == AIProvider.CEREBRAS:
+            return bool(self.config.cerebras.api_key)
+        elif provider == AIProvider.OPENROUTER:
+            return bool(self.config.openrouter.api_key)
+        elif provider == AIProvider.GROQ_COMPOUND:
+            # Uses Groq's API key
+            return bool(self.config.groq.api_key)
+        elif provider == AIProvider.MISTRAL:
+            return bool(self.config.mistral.api_key)
+        return False
 
     def _try_provider(self, provider: AIProvider, task: str,
                       prompt: str, max_tokens: int,
                       temperature: float,
                       system_prompt: Optional[str]) -> AIResponse:
         """Try to call a provider with rate limiting and circuit breaking."""
+        # PRISM v0.1 FIX: Skip providers that have no API key configured
+        if not self._is_provider_configured(provider):
+            return AIResponse(
+                provider=provider.value,
+                task=task,
+                error=f"Provider {provider.value} not configured (API key missing)",
+                success=False,
+            )
+
         limiter = self._get_limiter(provider)
         circuit = self._get_circuit(provider)
 
@@ -1732,7 +2131,7 @@ class AIRouter:
     # ----------------------------------------------------------
 
     def get_health(self) -> Dict[str, Any]:
-        """Get comprehensive router health status."""
+        """Get comprehensive router health status (PRISM: 5 providers)."""
         return {
             'total_calls': self._total_calls,
             'total_tokens': self._total_tokens,
@@ -1749,6 +2148,21 @@ class AIRouter:
                 'circuit_breaker': self._cerebras_circuit.get_status(),
                 'api_key_set': bool(self.config.cerebras.api_key),
             },
+            'openrouter': {
+                'rate_limiter': self._openrouter_limiter.get_usage(),
+                'circuit_breaker': self._openrouter_circuit.get_status(),
+                'api_key_set': bool(self.config.openrouter.api_key),
+            },
+            'groq_compound': {
+                'rate_limiter': self._groq_compound_limiter.get_usage(),
+                'circuit_breaker': self._groq_compound_circuit.get_status(),
+                'api_key_set': bool(self.config.groq.api_key),  # uses same key
+            },
+            'mistral': {
+                'rate_limiter': self._mistral_limiter.get_usage(),
+                'circuit_breaker': self._mistral_circuit.get_status(),
+                'api_key_set': bool(self.config.mistral.api_key),
+            },
             'cache': self._cache.get_stats(),
             'top_tasks': dict(sorted(
                 self._task_calls.items(),
@@ -1757,37 +2171,40 @@ class AIRouter:
         }
 
     def get_quota_report(self) -> str:
-        """Generate a human-readable quota report including search APIs."""
+        """Generate a human-readable quota report for all 5 PRISM providers."""
         health = self.get_health()
         groq_usage = health['groq']['rate_limiter']
         cerebras_usage = health['cerebras']['rate_limiter']
+        openrouter_usage = health['openrouter']['rate_limiter']
+        groq_compound_usage = health['groq_compound']['rate_limiter']
+        mistral_usage = health['mistral']['rate_limiter']
 
         # SerpAPI stats
         from core.config import get_config
         config = get_config()
         serp_key_set = bool(config.serpapi.api_key)
-        serp_monthly = config.serpapi.monthly_limit
-        serp_daily_wd = config.serpapi.daily_budget_weekday
-        serp_daily_we = config.serpapi.daily_budget_weekend
 
         report = (
-            f"📊 <b>API Quota Report</b>\n"
+            f"📊 <b>PRISM v0.1 API Quota Report</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"🤖 <b>Groq</b> ({self.config.groq.model})\n"
+            f"🤖 <b>Groq 70B</b> (PRIMARY DEEP)\n"
             f"  Day: {groq_usage['day']}/{groq_usage['day_limit']} ({groq_usage['day_pct']}%)\n"
-            f"  Hour: {groq_usage['hour']}/{groq_usage['hour_limit']} ({groq_usage['hour_pct']}%)\n"
             f"  Circuit: {health['groq']['circuit_breaker']['state']}\n\n"
-            f"⚡ <b>Cerebras</b> ({self.config.cerebras.model})\n"
+            f"⚡ <b>Cerebras 8B</b> (PRIMARY FAST)\n"
             f"  Day: {cerebras_usage['day']}/{cerebras_usage['day_limit']} ({cerebras_usage['day_pct']}%)\n"
-            f"  Hour: {cerebras_usage['hour']}/{cerebras_usage['hour_limit']} ({cerebras_usage['hour_pct']}%)\n"
             f"  Circuit: {health['cerebras']['circuit_breaker']['state']}\n\n"
-            f"🔍 <b>SerpAPI</b> {'✅' if serp_key_set else '❌ No Key'}\n"
-            f"  Plan: {serp_monthly} searches/month\n"
-            f"  Daily Budget: {serp_daily_wd}/day (weekday) | {serp_daily_we}/day (weekend)\n"
-            f"  Allocation: A-01 intent(2) + A-09 network(3) + on-demand(2)\n\n"
-            f"🦆 <b>DuckDuckGo</b> (unlimited)\n"
-            f"  Hourly cap: {config.ddg.max_queries_per_hour}/hr\n"
-            f"  Daily cap: {config.ddg.max_queries_per_day}/day\n\n"
+            f"🌐 <b>OpenRouter</b> (PRIMARY LONG — 1M ctx)\n"
+            f"  Day: {openrouter_usage['day']}/{openrouter_usage['day_limit']} ({openrouter_usage['day_pct']}%)\n"
+            f"  Circuit: {health['openrouter']['circuit_breaker']['state']}\n"
+            f"  Key: {'✅' if health['openrouter']['api_key_set'] else '❌'}\n\n"
+            f"🔬 <b>Groq Compound</b> (AGENTIC — web search)\n"
+            f"  Day: {groq_compound_usage['day']}/{groq_compound_usage['day_limit']} ({groq_compound_usage['day_pct']}%)\n"
+            f"  Circuit: {health['groq_compound']['circuit_breaker']['state']}\n\n"
+            f"🛡️ <b>Mistral</b> (FALLBACK)\n"
+            f"  Day: {mistral_usage['day']}/{mistral_usage['day_limit']} ({mistral_usage['day_pct']}%)\n"
+            f"  Circuit: {health['mistral']['circuit_breaker']['state']}\n"
+            f"  Key: {'✅' if health['mistral']['api_key_set'] else '❌'}\n\n"
+            f"🔍 <b>SerpAPI</b> {'✅' if serp_key_set else '❌ No Key'}\n\n"
             f"📈 <b>Session Stats</b>\n"
             f"  Total AI calls: {health['total_calls']}\n"
             f"  Total tokens: {health['total_tokens']}\n"
@@ -1813,19 +2230,27 @@ def get_router() -> AIRouter:
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("OPERATION FIRST MOVER v5 — AI Router Test")
+    print("PRISM v0.1 — AI Router Test (5 Providers)")
     print("=" * 60)
 
     router = get_router()
     health = router.get_health()
 
     print(f"\nRouter Health:")
-    print(f"  Groq API Key: {'✅ Set' if health['groq']['api_key_set'] else '❌ Missing'}")
-    print(f"  Cerebras API Key: {'✅ Set' if health['cerebras']['api_key_set'] else '❌ Missing'}")
-    print(f"  Cache: {health['cache']['size']}/{health['cache']['max_size']}")
-    print(f"\nTask Routing:")
+    for provider_name in ['groq', 'cerebras', 'openrouter', 'groq_compound', 'mistral']:
+        prov = health.get(provider_name, {})
+        key_set = '✅ Set' if prov.get('api_key_set') else '❌ Missing'
+        circuit = prov.get('circuit_breaker', {}).get('state', 'N/A')
+        print(f"  {provider_name}: Key={key_set}, Circuit={circuit}")
+
+    print(f"\nCache: {health['cache']['size']}/{health['cache']['max_size']}")
+    print(f"\nTask Routing (PRISM):")
+    print(f"  PRISM routing table: {len(PRISM_TASK_ROUTING)} tasks")
     print(f"  Cerebras tasks: {len(CEREBRAS_TASKS)}")
     print(f"  Groq tasks: {len(GROQ_TASKS)}")
+    print(f"  OpenRouter tasks: {len(OPENROUTER_TASKS)}")
+    print(f"  Groq Compound tasks: {len(GROQ_COMPOUND_TASKS)}")
+    print(f"  Mistral tasks: {len(MISTRAL_TASKS)}")
     print(f"  Prompt templates: {len(PROMPT_TEMPLATES)}")
     print(f"\n{router.get_quota_report()}")
     print("=" * 60)
