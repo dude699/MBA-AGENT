@@ -1,16 +1,21 @@
 """
 ============================================================
-OPERATION FIRST MOVER v7.0 — CORE CONFIGURATION MODULE (ULTIMATE)
+PRISM v0.1 — CORE CONFIGURATION MODULE (ULTIMATE)
 ============================================================
-Complete configuration management system with v7.0 AI-enhanced
-scheduling, aggressive resource utilization, and deep crawling.
+Precision Recruitment Intelligence & Scoring Machine
+Complete configuration management system with PRISM multi-provider
+AI routing, 3-wave scheduling, semantic embeddings, and Brevo email.
 
-v7.0 Changes:
-    - New AI task temperature/token mappings
-    - Aggressive resource budget targets
-    - 3-wave scheduling configuration
-    - Deep crawl parameters
-    - AI quality scoring thresholds
+PRISM v0.1 Changes (from OFM v7.0):
+    - 5 AI Providers: Groq, Cerebras, OpenRouter, Groq Compound, Mistral
+    - PPO V11: Semantic CV-JD match via local embeddings
+    - Brevo email integration (300/day free)
+    - Hunter.io email verification
+    - WeasyPrint PDF CV generation
+    - Local sentence-transformers (all-MiniLM-L6-v2)
+    - 3-wave scheduling: Wave 1 (05:15), Wave 2 (14:00), Night (22:30)
+    - Adaptive scheduler thresholds
+    - 20-agent heartbeat system
 ============================================================
 """
 
@@ -133,7 +138,7 @@ def _get_env_list(key: str, default: Optional[List[str]] = None,
 
 @dataclass(frozen=True)
 class GroqConfig:
-    """Configuration for Groq AI provider (heavy tasks)."""
+    """Configuration for Groq AI provider (heavy tasks — PRIMARY DEEP)."""
     api_key: str
     model: str = "llama-3.3-70b-versatile"
     base_url: str = "https://api.groq.com/openai/v1"
@@ -170,9 +175,10 @@ class GroqConfig:
 
 @dataclass(frozen=True)
 class CerebrasConfig:
-    """Configuration for Cerebras AI provider (fast tasks)."""
+    """Configuration for Cerebras AI provider (fast tasks — PRIMARY FAST)."""
     api_key: str
     model: str = "llama3.1-8b"
+    model_70b: str = "llama3.1-70b"  # PRISM: 70B for ATS Crawler
     base_url: str = "https://api.cerebras.ai/v1"
     max_tokens_default: int = 500
     max_tokens_classify: int = 200
@@ -181,6 +187,7 @@ class CerebrasConfig:
     max_tokens_parse: int = 800
     max_tokens_tag: int = 200
     daily_request_limit: int = 100000  # Generous free tier
+    daily_token_limit: int = 1000000  # 1M tokens/day
     requests_per_minute: int = 60
     requests_per_hour: int = 2000
     temperature_default: float = 0.1
@@ -200,7 +207,151 @@ class CerebrasConfig:
         'listing_quality_score', 'salary_benchmark',
         'duplicate_semantic', 'anomaly_detect',
         'enrichment_priority',
+        # PRISM v0.1 NEW
+        'followup_draft', 'tg_message_extract', 'schedule_health_check',
     })
+
+
+# ============================================================
+# SECTION 2.1: PRISM v0.1 — NEW AI PROVIDER CONFIGURATIONS
+# ============================================================
+
+@dataclass(frozen=True)
+class GroqCompoundConfig:
+    """
+    Configuration for Groq Compound Beta (AGENTIC provider).
+    Uses the same API key as Groq but routes to compound-beta model
+    which has built-in tool use: web_search, visit_url.
+    Used by A-01 (Intent Scanner), A-07 (Enricher), A-20 (Deep Intel).
+    """
+    model: str = "compound-beta"
+    base_url: str = "https://api.groq.com/openai/v1"
+    max_tokens_default: int = 2000
+    max_tokens_web_search: int = 2500
+    max_tokens_deep_research: int = 3000
+    daily_request_limit: int = 1000
+    requests_per_minute: int = 15
+    requests_per_hour: int = 200
+    temperature_default: float = 0.3
+    retry_attempts: int = 3
+    retry_base_delay: float = 3.0
+    retry_max_delay: float = 30.0
+    timeout_seconds: int = 90
+
+    TASKS: frozenset = frozenset({
+        'web_search', 'live_research', 'deep_company_intel',
+        'intent_verify', 'funding_verify', 'career_page_scan',
+        'news_aggregate', 'leadership_scan',
+    })
+
+
+@dataclass(frozen=True)
+class OpenRouterConfig:
+    """
+    Configuration for OpenRouter (PRIMARY LONG — 1M context).
+    Free tier: 200 req/day per model, 20 RPM.
+    Uses OpenAI-compatible API with custom base_url.
+    Model: gemini-2.0-flash-exp:free (1M context window).
+    Used by A-10 (ATS Simulator), A-18 (CV Enhancer).
+    """
+    api_key: str = ""
+    model: str = "google/gemini-2.0-flash-exp:free"
+    base_url: str = "https://openrouter.ai/api/v1"
+    max_tokens_default: int = 2000
+    max_tokens_ats_simulation: int = 4000
+    max_tokens_cv_tailor: int = 3000
+    context_window: int = 1000000
+    daily_request_limit: int = 200
+    requests_per_minute: int = 20
+    requests_per_hour: int = 100
+    temperature_default: float = 0.2
+    retry_attempts: int = 3
+    retry_base_delay: float = 3.0
+    retry_max_delay: float = 30.0
+    timeout_seconds: int = 120
+
+    TASKS: frozenset = frozenset({
+        'ats_simulation_full', 'cv_tailor_full',
+        'jd_comprehensive_analysis', 'resume_full_rewrite',
+        'interview_prep_deep',
+    })
+
+
+@dataclass(frozen=True)
+class MistralConfig:
+    """
+    Configuration for Mistral AI Direct (FALLBACK provider).
+    Free tier: 1B tokens/month, 2 RPM on codestral.
+    Used as universal fallback when Groq/Cerebras/OpenRouter fail.
+    """
+    api_key: str = ""
+    model: str = "mistral-small-latest"
+    base_url: str = "https://api.mistral.ai/v1"
+    max_tokens_default: int = 800
+    daily_request_limit: int = 5000
+    requests_per_minute: int = 2
+    requests_per_hour: int = 100
+    temperature_default: float = 0.3
+    retry_attempts: int = 2
+    retry_base_delay: float = 5.0
+    retry_max_delay: float = 30.0
+    timeout_seconds: int = 60
+
+    TASKS: frozenset = frozenset({
+        'fallback_classify', 'fallback_generate', 'fallback_analyze',
+    })
+
+
+@dataclass(frozen=True)
+class BrevoConfig:
+    """
+    Configuration for Brevo (Sendinblue) email service.
+    Free tier: 300 emails/day, unlimited contacts.
+    Used by A-15 (Email Auto-Applier), A-19 (Outcome Amplifier).
+    """
+    api_key: str = ""
+    sender_email: str = ""
+    sender_name: str = "Abuzar Khan"
+    daily_limit: int = 300
+    max_retries: int = 3
+    retry_delay: float = 5.0
+    followup_wait_days: int = 7
+    max_followups_per_contact: int = 2
+    webhook_enabled: bool = True
+    track_opens: bool = True
+    track_clicks: bool = True
+
+
+@dataclass(frozen=True)
+class HunterConfig:
+    """
+    Configuration for Hunter.io email verification.
+    Free tier: 25 searches/month, 50 verifications/month.
+    Used by A-09 (Network Mapper) and A-15 (Email Applier).
+    """
+    api_key: str = ""
+    monthly_search_limit: int = 25
+    monthly_verify_limit: int = 50
+    timeout_seconds: int = 15
+
+
+@dataclass(frozen=True)
+class EmbeddingConfig:
+    """
+    Configuration for local sentence-transformers embedding engine.
+    Model: all-MiniLM-L6-v2 (384 dimensions, ~80MB).
+    Used by A-06 (Dedup Layer 4), A-08 (PPO V11), A-10 (ATS Simulator).
+    Zero API cost -- runs entirely locally.
+    """
+    model_name: str = "all-MiniLM-L6-v2"
+    dimensions: int = 384
+    lazy_load: bool = True
+    cache_size: int = 10000
+    batch_size: int = 32
+    normalize_embeddings: bool = True
+    dedup_similarity_threshold: float = 0.85
+    cv_jd_good_match: float = 0.60
+    cv_jd_excellent_match: float = 0.75
 
 
 @dataclass
@@ -220,6 +371,58 @@ class AIProviderStatus:
     requests_this_minute: int = 0
     hour_reset_time: Optional[datetime] = None
     minute_reset_time: Optional[datetime] = None
+
+
+# ============================================================
+# SECTION 2.5: PRISM v0.1 — 5-PROVIDER TASK ROUTING TABLE
+# ============================================================
+
+# PRISM Provider Routing: task_name -> provider_key
+# This is the authoritative routing table used by A-14 (Multi-Model Router)
+PRISM_TASK_ROUTING: Dict[str, str] = {
+    # === CEREBRAS (PRIMARY FAST) ===
+    'ghost_classify': 'cerebras', 'intent_classify': 'cerebras',
+    'dark_classify': 'cerebras', 'extract_basics': 'cerebras',
+    'dedup_score': 'cerebras', 'internshala_parse': 'cerebras',
+    'naukri_parse': 'cerebras', 'iimjobs_parse': 'cerebras',
+    'ats_extract': 'cerebras', 'sector_tag': 'cerebras',
+    'signal_score': 'cerebras', 'quick_classify': 'cerebras',
+    'listing_quality_score': 'cerebras', 'salary_benchmark': 'cerebras',
+    'duplicate_semantic': 'cerebras', 'anomaly_detect': 'cerebras',
+    'enrichment_priority': 'cerebras', 'followup_draft': 'cerebras',
+    'tg_message_extract': 'cerebras', 'schedule_health_check': 'cerebras',
+    # === GROQ 70B (PRIMARY DEEP) ===
+    'cover_letter': 'groq', 'jd_analysis': 'groq',
+    'outreach_draft': 'groq', 'company_research': 'groq',
+    'report_compile': 'groq', 'economic_analysis': 'groq',
+    'package_generate': 'groq', 'network_outreach': 'groq',
+    'deep_analysis': 'groq', 'deep_jd_parse': 'groq',
+    'company_intent_predict': 'groq', 'schedule_optimize': 'groq',
+    'proxy_strategy': 'groq', 'resume_tweaks': 'groq',
+    'email_personalize': 'groq', 'alumni_outreach_draft': 'groq',
+    'weekly_report_narrative': 'groq',
+    # === OPENROUTER (PRIMARY LONG — 1M context) ===
+    'ats_simulation': 'openrouter', 'ats_simulation_full': 'openrouter',
+    'cv_tailor_full': 'openrouter', 'jd_comprehensive_analysis': 'openrouter',
+    'resume_full_rewrite': 'openrouter', 'interview_prep_deep': 'openrouter',
+    # === GROQ COMPOUND BETA (AGENTIC — live web search) ===
+    'web_search': 'groq_compound', 'live_research': 'groq_compound',
+    'deep_company_intel': 'groq_compound', 'intent_verify': 'groq_compound',
+    'funding_verify': 'groq_compound', 'career_page_scan': 'groq_compound',
+    'news_aggregate': 'groq_compound', 'leadership_scan': 'groq_compound',
+    # === MISTRAL (FALLBACK ALL) ===
+    'fallback_classify': 'mistral', 'fallback_generate': 'mistral',
+    'fallback_analyze': 'mistral',
+}
+
+# PRISM Provider Failover Chain: provider -> [fallback1, fallback2]
+PRISM_FAILOVER_CHAIN: Dict[str, List[str]] = {
+    'cerebras': ['groq', 'mistral'],
+    'groq': ['cerebras', 'mistral'],
+    'openrouter': ['groq', 'cerebras'],
+    'groq_compound': ['groq', 'cerebras'],
+    'mistral': ['groq', 'cerebras'],
+}
 
 
 # Task to temperature mapping
@@ -260,6 +463,17 @@ TASK_TEMPERATURE_MAP: Dict[str, float] = {
     'company_intent_predict': 0.2,
     'schedule_optimize': 0.1,
     'proxy_strategy': 0.1,
+    # PRISM v0.1 NEW tasks
+    'ats_simulation_full': 0.2, 'cv_tailor_full': 0.3,
+    'jd_comprehensive_analysis': 0.2, 'resume_full_rewrite': 0.3,
+    'interview_prep_deep': 0.4, 'web_search': 0.3,
+    'live_research': 0.3, 'deep_company_intel': 0.3,
+    'intent_verify': 0.2, 'funding_verify': 0.2,
+    'career_page_scan': 0.2, 'news_aggregate': 0.3,
+    'leadership_scan': 0.3, 'email_personalize': 0.6,
+    'alumni_outreach_draft': 0.6, 'weekly_report_narrative': 0.4,
+    'followup_draft': 0.5, 'tg_message_extract': 0.1,
+    'schedule_health_check': 0.1,
 }
 
 # Task to max_tokens mapping
@@ -300,6 +514,17 @@ TASK_MAX_TOKENS_MAP: Dict[str, int] = {
     'company_intent_predict': 1200,
     'schedule_optimize': 800,
     'proxy_strategy': 500,
+    # PRISM v0.1 NEW tasks
+    'ats_simulation_full': 4000, 'cv_tailor_full': 3000,
+    'jd_comprehensive_analysis': 3000, 'resume_full_rewrite': 2500,
+    'interview_prep_deep': 3000, 'web_search': 2500,
+    'live_research': 2500, 'deep_company_intel': 3000,
+    'intent_verify': 1500, 'funding_verify': 1500,
+    'career_page_scan': 2000, 'news_aggregate': 2500,
+    'leadership_scan': 2000, 'email_personalize': 800,
+    'alumni_outreach_draft': 800, 'weekly_report_narrative': 2500,
+    'followup_draft': 500, 'tg_message_extract': 600,
+    'schedule_health_check': 500,
 }
 
 
@@ -1028,9 +1253,32 @@ class RateLimitConfig:
     groq_daily_limit: int = 14400
     groq_per_minute: int = 30
     groq_per_hour: int = 500
+    # Cerebras
     cerebras_daily_limit: int = 100000
     cerebras_per_minute: int = 60
     cerebras_per_hour: int = 2000
+
+    # PRISM v0.1: OpenRouter
+    openrouter_daily_limit: int = 200
+    openrouter_per_minute: int = 20
+    openrouter_per_hour: int = 100
+
+    # PRISM v0.1: Mistral
+    mistral_daily_limit: int = 5000
+    mistral_per_minute: int = 2
+    mistral_per_hour: int = 100
+
+    # PRISM v0.1: Groq Compound Beta
+    groq_compound_daily_limit: int = 1000
+    groq_compound_per_minute: int = 15
+    groq_compound_per_hour: int = 200
+
+    # PRISM v0.1: Brevo
+    brevo_daily_limit: int = 300
+
+    # PRISM v0.1: Hunter.io
+    hunter_monthly_searches: int = 25
+    hunter_monthly_verifications: int = 50
 
     # Cloudflare
     cf_worker_daily_limit: int = 100000
@@ -1080,20 +1328,22 @@ class RateLimitConfig:
 @dataclass
 class PPOWeights:
     """
-    10-variable PPO (Probability of Positive Outcome) scoring weights.
+    PRISM v0.1: 11-variable PPO (Probability of Positive Outcome) scoring weights.
+    V11 = Semantic CV-JD Match (cosine similarity via local embeddings).
     These are the DEFAULT weights used until A-11 retrains them.
     Weights MUST sum to 1.0.
     """
-    has_ppo_tag: float = 0.20
-    company_tier_score: float = 0.18
-    low_applicant_bonus: float = 0.15
-    stipend_normalized: float = 0.08
-    duration_fit: float = 0.05
-    cirs_score: float = 0.12
-    sector_momentum: float = 0.07
-    intent_signal: float = 0.08
-    historic_callback: float = 0.05
+    has_ppo_tag: float = 0.18
+    company_tier_score: float = 0.16
+    low_applicant_bonus: float = 0.13
+    stipend_normalized: float = 0.07
+    duration_fit: float = 0.04
+    cirs_score: float = 0.10
+    sector_momentum: float = 0.06
+    intent_signal: float = 0.07
+    historic_callback: float = 0.04
     recency_bonus: float = 0.02
+    semantic_cv_match: float = 0.13  # PRISM V11: Cosine similarity CV<->JD
 
     def validate(self) -> bool:
         """Verify weights sum to 1.0 (within floating point tolerance)."""
@@ -1102,7 +1352,8 @@ class PPOWeights:
             self.low_applicant_bonus + self.stipend_normalized +
             self.duration_fit + self.cirs_score +
             self.sector_momentum + self.intent_signal +
-            self.historic_callback + self.recency_bonus
+            self.historic_callback + self.recency_bonus +
+            self.semantic_cv_match
         )
         return abs(total - 1.0) < 0.001
 
@@ -1114,6 +1365,7 @@ class PPOWeights:
             self.duration_fit, self.cirs_score,
             self.sector_momentum, self.intent_signal,
             self.historic_callback, self.recency_bonus,
+            self.semantic_cv_match,
         ]
 
     def to_dict(self) -> Dict[str, float]:
@@ -1129,6 +1381,7 @@ class PPOWeights:
             'intent_signal': self.intent_signal,
             'historic_callback': self.historic_callback,
             'recency_bonus': self.recency_bonus,
+            'semantic_cv_match': self.semantic_cv_match,
         }
 
     @classmethod
@@ -1163,6 +1416,10 @@ PPO_PARAMS: Dict[str, Any] = {
     'default_callback_score': 50,
     # v10: recency_bonus
     'recency_decay_per_day': 15,  # -15 points per day
+    # PRISM V11: semantic_cv_match
+    'cv_embedding_cache_ttl_hours': 24,
+    'jd_min_length_for_embedding': 50,
+    'semantic_match_scale': 100,
 }
 
 
@@ -1663,6 +1920,52 @@ class Config:
         self.groq_status = AIProviderStatus(provider='groq')
         self.cerebras_status = AIProviderStatus(provider='cerebras')
 
+        # ---- PRISM v0.1: 3 NEW AI Providers ----
+        self.groq_compound = GroqCompoundConfig()
+        self.openrouter = OpenRouterConfig(
+            api_key=_get_env(
+                'OPENROUTER_API_KEY', default='',
+                description='OpenRouter API key for Gemini 2.0 Flash (1M context)'
+            ),
+        )
+        self.mistral = MistralConfig(
+            api_key=_get_env(
+                'MISTRAL_API_KEY', default='',
+                description='Mistral AI API key (1B tokens/month free)'
+            ),
+        )
+
+        # PRISM v0.1: Brevo email & Hunter.io
+        self.brevo = BrevoConfig(
+            api_key=_get_env(
+                'BREVO_API_KEY', default='',
+                description='Brevo (Sendinblue) API key for email outreach (300/day free)'
+            ),
+            sender_email=_get_env(
+                'BREVO_SENDER_EMAIL', default='',
+                description='Sender email address for Brevo outreach'
+            ),
+        )
+        self.hunter = HunterConfig(
+            api_key=_get_env(
+                'HUNTER_IO_KEY', default='',
+                description='Hunter.io API key for email verification'
+            ),
+        )
+
+        # PRISM v0.1: Local embedding engine config
+        self.embedding = EmbeddingConfig(
+            lazy_load=_get_env(
+                'LAZY_LOAD_EMBEDDINGS', default='true', cast_type=bool,
+                description='Lazy-load sentence-transformers model (recommended on Render)'
+            ),
+        )
+
+        # PRISM v0.1: Provider runtime status (all 5)
+        self.openrouter_status = AIProviderStatus(provider='openrouter')
+        self.groq_compound_status = AIProviderStatus(provider='groq_compound')
+        self.mistral_status = AIProviderStatus(provider='mistral')
+
         # Telegram
         self.telegram = TelegramBotConfig(
             bot_token=_get_env(
@@ -1840,6 +2143,11 @@ class Config:
             'scraperapi_key': bool(self.scraperapi_key),
             'scrapedo_token': bool(self.scrapedo_token),
             'scrapingbee_key': bool(self.scrapingbee_key),
+            # PRISM v0.1 NEW providers
+            'openrouter_api_key': bool(self.openrouter.api_key),
+            'mistral_api_key': bool(self.mistral.api_key),
+            'brevo_api_key': bool(self.brevo.api_key),
+            'hunter_io_key': bool(self.hunter.api_key),
         }
         return checks
 
@@ -1893,7 +2201,7 @@ if __name__ == "__main__":
     """Test configuration loading."""
     cfg = get_config()
     print("=" * 60)
-    print("OPERATION FIRST MOVER v5 — Configuration Report")
+    print("PRISM v0.1 — Configuration Report")
     print("=" * 60)
 
     health = cfg.get_health_report()

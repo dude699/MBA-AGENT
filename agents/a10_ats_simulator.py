@@ -75,7 +75,7 @@ from core.database import get_db, DatabaseManager, ApplicationPackage
 from core.ai_router import get_router, AIRouter
 
 AGENT_ID = "A-10"
-AGENT_NAME = "ATS Keyword Simulator"
+AGENT_NAME = "ATS Simulator"  # PRISM v0.1: Full CV vs JD Forensics
 
 # Common ATS keywords by category
 ATS_KEYWORD_CATEGORIES = {
@@ -344,17 +344,29 @@ class ResumeKeywordScanner:
 
 class ATSSimulator:
     """
-    Master ATS simulation engine.
-    
+    PRISM v0.1: Master ATS simulation engine.
+
     Pipeline:
-        1. Load listing JD from database
-        2. Load user resume from settings
-        3. Extract JD keywords (rule-based + AI)
-        4. Scan resume for keyword matches
-        5. Identify gaps
-        6. Generate resume tweaks (Groq)
-        7. Store result as ApplicationPackage
-        8. Return formatted result
+        PRIMARY (OpenRouter 1M context):
+            1. Load listing JD from database (FULL, no truncation)
+            2. Load user resume from settings (FULL, no truncation)
+            3. Send BOTH to OpenRouter gemini-2.0-flash-exp:free
+               in a single prompt (1M token context window)
+            4. AI performs:
+               a. Extract must-have keywords from JD
+               b. Extract nice-to-have keywords from JD
+               c. Scan CV for all matches
+               d. Score ATS match 0-100
+               e. List ALL missing critical keywords
+               f. Generate 3 specific CV bullet rewrites
+            5. Store result as ApplicationPackage
+
+        FALLBACK (Rule-based + Groq):
+            If OpenRouter unavailable, fall back to:
+            - Rule-based TF-IDF keyword extraction
+            - Groq AI resume tweak generation
+
+    Triggers: PPO >70 (auto) or /ats command (manual)
     """
 
     def __init__(self):
@@ -364,8 +376,12 @@ class ATSSimulator:
         self.scanner = ResumeKeywordScanner()
 
     def simulate(self, listing_id: int, resume_text: str = '') -> ATSSimulationResult:
-        """Run full ATS simulation for a listing."""
-        logger.info(f"[{AGENT_ID}] ATS simulation for listing {listing_id}")
+        """
+        PRISM v0.1: Run full ATS simulation for a listing.
+
+        Strategy: OpenRouter 1M (PRIMARY) -> Rule-based + Groq (FALLBACK)
+        """
+        logger.info(f"[{AGENT_ID}] PRISM ATS simulation for listing {listing_id}")
         self.db.update_agent_heartbeat(AGENT_ID, 'running')
 
         result = ATSSimulationResult(listing_id=listing_id)
@@ -391,40 +407,49 @@ class ATSSimulator:
             result.error = "No resume text. Use /settings to set your resume."
             return result
 
-        # Extract JD keywords
-        jd_keywords = self.jd_extractor.extract_keywords(jd_text)
+        # ===== PRISM v0.1: PRIMARY — OpenRouter 1M Context =====
+        openrouter_result = self._simulate_openrouter_1m(jd_text, resume_text, result)
 
-        # Scan resume
-        scan_result = self.scanner.scan(resume_text, jd_keywords)
+        if openrouter_result and openrouter_result.match_percentage > 0:
+            result = openrouter_result
+            logger.info(
+                f"[{AGENT_ID}] OpenRouter 1M simulation complete: "
+                f"{result.match_percentage:.0f}% match, "
+                f"{len(result.missing_keywords)} gaps"
+            )
+        else:
+            # ===== FALLBACK: Rule-based + Groq =====
+            logger.info(f"[{AGENT_ID}] OpenRouter unavailable, using rule-based fallback")
 
-        result.match_percentage = scan_result['match_percentage']
-        result.total_jd_keywords = scan_result['total_keywords']
-        result.matched_keywords = len(scan_result['matched'])
-        result.matched_keyword_list = scan_result['matched']
-        result.missing_keywords = scan_result['missing']
-        result.partial_matches = scan_result['partial']
-        result.category_scores = scan_result['category_scores']
+            jd_keywords = self.jd_extractor.extract_keywords(jd_text)
+            scan_result = self.scanner.scan(resume_text, jd_keywords)
 
-        # Generate resume tweaks using AI
-        try:
-            response = self.router.simulate_ats(jd_text, resume_text)
-            if response.success:
-                data = response.get_json()
-                if data:
-                    result.resume_tweaks = data.get('resume_tweaks', [])[:5]
-                    result.phrases_to_add = data.get('phrases_to_add', result.missing_keywords[:5])
-                    result.section_suggestions = data.get('section_suggestions', {})
-                    result.overall_assessment = data.get('assessment', '')
-        except Exception as e:
-            logger.debug(f"[{AGENT_ID}] AI tweak generation error: {e}")
+            result.match_percentage = scan_result['match_percentage']
+            result.total_jd_keywords = scan_result['total_keywords']
+            result.matched_keywords = len(scan_result['matched'])
+            result.matched_keyword_list = scan_result['matched']
+            result.missing_keywords = scan_result['missing']
+            result.partial_matches = scan_result['partial']
+            result.category_scores = scan_result['category_scores']
 
-        # Fallback tweaks if AI failed
-        if not result.resume_tweaks and result.missing_keywords:
-            result.resume_tweaks = [
-                f"Add '{kw}' to your skills or experience section"
-                for kw in result.missing_keywords[:5]
-            ]
-            result.phrases_to_add = result.missing_keywords[:5]
+            try:
+                response = self.router.simulate_ats(jd_text, resume_text)
+                if response.success:
+                    data = response.get_json()
+                    if data:
+                        result.resume_tweaks = data.get('resume_tweaks', [])[:5]
+                        result.phrases_to_add = data.get('phrases_to_add', result.missing_keywords[:5])
+                        result.section_suggestions = data.get('section_suggestions', {})
+                        result.overall_assessment = data.get('assessment', '')
+            except Exception as e:
+                logger.debug(f"[{AGENT_ID}] AI tweak generation error: {e}")
+
+            if not result.resume_tweaks and result.missing_keywords:
+                result.resume_tweaks = [
+                    f"Add '{kw}' to your skills or experience section"
+                    for kw in result.missing_keywords[:5]
+                ]
+                result.phrases_to_add = result.missing_keywords[:5]
 
         # Store as ApplicationPackage
         try:
@@ -440,6 +465,130 @@ class ATSSimulator:
 
         self.db.update_agent_heartbeat(AGENT_ID, 'completed', items_processed=1)
         return result
+
+    def _simulate_openrouter_1m(self, jd_text: str, resume_text: str,
+                                  result: ATSSimulationResult) -> Optional[ATSSimulationResult]:
+        """
+        PRISM v0.1 PRIMARY: Full ATS simulation via OpenRouter 1M context.
+
+        Sends the COMPLETE JD and COMPLETE CV in a single prompt to
+        gemini-2.0-flash-exp:free (1M token context window).
+        No truncation — complete forensic analysis of every word.
+        """
+        try:
+            system_prompt = (
+                "You are an expert ATS (Applicant Tracking System) analyst. "
+                "You will receive a COMPLETE job description and a COMPLETE resume/CV. "
+                "Analyze both thoroughly and provide a forensic ATS compatibility report. "
+                "IMPORTANT: Analyze EVERY section of both documents. Do not skip anything. "
+                "Your analysis must be actionable and specific to THIS exact role."
+            )
+
+            prompt = (
+                f"## FULL JOB DESCRIPTION\n{jd_text}\n\n"
+                f"## FULL RESUME/CV\n{resume_text}\n\n"
+                "## ANALYSIS REQUIRED\n"
+                "Perform a complete ATS forensic analysis. Return JSON:\n"
+                "{\n"
+                '    "ats_match_score": <0-100 integer>,\n'
+                '    "must_have_keywords": ["keyword1", "keyword2", ...],\n'
+                '    "nice_to_have_keywords": ["keyword1", "keyword2", ...],\n'
+                '    "matched_keywords": ["keyword1", "keyword2", ...],\n'
+                '    "missing_critical_keywords": ["keyword1", "keyword2", ...],\n'
+                '    "missing_nice_to_have": ["keyword1", "keyword2", ...],\n'
+                '    "bullet_rewrites": [\n'
+                "        {\n"
+                '            "original": "Original bullet from CV (or NEW if adding)",\n'
+                '            "rewritten": "Rewritten bullet with missing keywords naturally added",\n'
+                '            "keywords_added": ["keyword1", "keyword2"]\n'
+                "        }\n"
+                "    ],\n"
+                '    "overall_assessment": "2-3 sentence assessment of ATS compatibility",\n'
+                '    "category_scores": {\n'
+                '        "hard_skills": <0-100>,\n'
+                '        "soft_skills": <0-100>,\n'
+                '        "experience_match": <0-100>,\n'
+                '        "education_match": <0-100>,\n'
+                '        "industry_keywords": <0-100>\n'
+                "    }\n"
+                "}\n"
+                "Provide exactly 3 bullet_rewrites."
+            )
+
+            # Try OpenRouter (1M context) via ai_router
+            response = self.router.route(
+                task_type='full_ats_simulation',
+                prompt=prompt,
+                system_prompt=system_prompt,
+                max_tokens=3000,
+                temperature=0.2,
+                json_mode=True,
+            )
+
+            if not response:
+                return None
+
+            # Parse response
+            text = response.get('text', '') if isinstance(response, dict) else str(response)
+            data = None
+
+            if hasattr(response, 'success') and hasattr(response, 'get_json'):
+                if response.success:
+                    data = response.get_json()
+                else:
+                    return None
+            else:
+                try:
+                    import re as _re
+                    json_match = _re.search(r'\{[\s\S]*\}', text)
+                    if json_match:
+                        data = json.loads(json_match.group())
+                except (json.JSONDecodeError, AttributeError):
+                    return None
+
+            if not data:
+                return None
+
+            # Populate result from OpenRouter response
+            result.match_percentage = float(data.get('ats_match_score', 0))
+            result.total_jd_keywords = (
+                len(data.get('must_have_keywords', [])) +
+                len(data.get('nice_to_have_keywords', []))
+            )
+            result.matched_keywords = len(data.get('matched_keywords', []))
+            result.matched_keyword_list = data.get('matched_keywords', [])
+            result.missing_keywords = data.get('missing_critical_keywords', [])
+            result.partial_matches = data.get('missing_nice_to_have', [])
+            result.category_scores = data.get('category_scores', {})
+            result.overall_assessment = data.get('overall_assessment', '')
+
+            # Process bullet rewrites
+            bullet_rewrites = data.get('bullet_rewrites', [])
+            result.resume_tweaks = []
+            result.phrases_to_add = []
+
+            for rewrite in bullet_rewrites[:3]:
+                if isinstance(rewrite, dict):
+                    original = rewrite.get('original', '')
+                    rewritten = rewrite.get('rewritten', '')
+                    keywords_added = rewrite.get('keywords_added', [])
+
+                    if original == 'NEW':
+                        result.resume_tweaks.append(f"ADD: {rewritten}")
+                    else:
+                        short_orig = original[:50] + '...' if len(original) > 50 else original
+                        result.resume_tweaks.append(
+                            f"REWRITE: '{short_orig}' -> '{rewritten}'"
+                        )
+                    result.phrases_to_add.extend(keywords_added)
+                elif isinstance(rewrite, str):
+                    result.resume_tweaks.append(rewrite)
+
+            return result
+
+        except Exception as e:
+            logger.debug(f"[{AGENT_ID}] OpenRouter 1M simulation error: {e}")
+            return None
 
 
 _simulator_instance: Optional[ATSSimulator] = None

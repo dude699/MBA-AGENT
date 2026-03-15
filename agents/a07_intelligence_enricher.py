@@ -1,10 +1,23 @@
 """
 ============================================================
-AGENT A-07: INTELLIGENCE ENRICHER — INDUSTRIAL GRADE
+PRISM v0.1 — AGENT A-07: INTELLIGENCE ENRICHER
 ============================================================
 Enriches clean listings with competition data, sector analysis,
 Blue Ocean flagging, CIRS (Company Intern Readiness Score)
 computation, and market intelligence.
+
+PRISM v0.1 Upgrades from OFM v7.0:
+    1. Groq Compound web_search for LIVE funding verification
+       - Verifies company funding rounds if >6 months stale
+       - Detects leadership changes (new CEO/CTO = hiring signal)
+       - Real-time company health check before enrichment
+    2. Blue Ocean INSTANT Telegram alerts
+       - Tier 3-4 companies with CIRS >65 and <50 applicants
+       - Fires instant alert to admin (not just morning brief)
+    3. Sector Momentum v2
+       - Rolling 30-day trends from actual application outcomes
+       - Adjusts sector scores based on callback rates
+    4. Enhanced CIRS with live web signals
 
 Schedule:
     06:30 AM IST  — Morning enrichment (post-dedup batch)
@@ -13,6 +26,8 @@ Schedule:
 AI Model:
     Cerebras (`sector_tag`) — sector/sub-sector classification
     Cerebras (`intent_classify`) — market signal correlation
+    Groq Compound (`company_intel_live`) — live funding/leadership verify
+    Groq Compound (`funding_verify`) — real-time funding data
 
 Architecture:
     ┌──────────────────────────────────────────────────┐
@@ -58,11 +73,12 @@ Architecture:
     │                                                  │
     └──────────────────────────────────────────────────┘
 
-Blue Ocean Criteria (from OPERATION_PLAN.md):
+Blue Ocean Criteria (PRISM v0.1):
     - Company Prestige (Tier Score) ≥ 60
-    - Applicant Count ≤ 35
+    - Applicant Count ≤ 50 (relaxed from 35 for Tier 3-4)
     - Stipend ≥ category median (optional bonus)
     - PPO tag present (optional bonus)
+    - NEW: Instant Telegram alert on detection (not batched)
 
 CIRS — Company Intern Readiness Score (0-100):
     Default: 40 (for companies without enough data)
@@ -948,16 +964,30 @@ class IntelligenceEnricher:
 
     def run_enrichment(self, hours: int = 48, limit: int = 2000) -> EnrichmentStats:
         """
-        Run full enrichment pipeline on recent listings.
-        
+        PRISM v0.1: Run full enrichment pipeline on recent listings.
+
+        Pipeline:
+            1. Load un-enriched clean listings
+            2. For each listing:
+               a. Compute competition ratio + percentile
+               b. Check Blue Ocean criteria → INSTANT alert if found
+               c. Compute sector momentum (v2: outcome-based)
+               d. Detect urgency
+               e. Categorize stipend
+            3. Groq Compound: Live funding verification for Tier 1-3 companies
+            4. Batch-update CIRS for companies with new data
+            5. Update clean_listings with enriched data
+            6. Fire instant Telegram alerts for Blue Ocean finds
+            7. Report statistics
+
         Args:
             hours: Process listings from the last N hours
             limit: Maximum listings to process
-        
+
         Returns:
             EnrichmentStats with complete statistics
         """
-        logger.info(f"[{AGENT_ID}] === ENRICHMENT START ===")
+        logger.info(f"[{AGENT_ID}] === PRISM ENRICHMENT START ===")
         start_time = time.time()
         self.db.update_agent_heartbeat(AGENT_ID, 'running')
 
@@ -969,9 +999,10 @@ class IntelligenceEnricher:
         )
         stats.total_processed = len(listings)
 
-        logger.info(f"[{AGENT_ID}] Processing {len(listings)} listings")
+        logger.info(f"[{AGENT_ID}] Processing {len(listings)} listings (PRISM v0.1)")
 
         blue_ocean_alerts = []
+        companies_for_live_verify = set()  # Tier 1-3 companies to verify via Groq Compound
 
         # Enrich each listing
         for i, listing in enumerate(listings):
@@ -996,9 +1027,19 @@ class IntelligenceEnricher:
                             'score': result.blue_ocean_score,
                             'reasons': result.blue_ocean_reasons,
                         })
+                        # PRISM v0.1: INSTANT Blue Ocean alert
+                        self._send_instant_blue_ocean_alert(
+                            listing, result.blue_ocean_score, result.blue_ocean_reasons
+                        )
 
                     if result.urgency_score > 70:
                         stats.urgency_detected += 1
+
+                    # PRISM v0.1: Track companies for live verification
+                    company_id = listing.get('company_id')
+                    company_tier = listing.get('tier', 5)
+                    if company_id and company_tier <= 3:
+                        companies_for_live_verify.add(company_id)
 
                 # Progress logging
                 if (i + 1) % 100 == 0:
@@ -1018,6 +1059,19 @@ class IntelligenceEnricher:
         except Exception as e:
             logger.debug(f"[{AGENT_ID}] CIRS batch update error: {e}")
 
+        # PRISM v0.1: Groq Compound live funding verification
+        # Only verify up to 5 companies per run to conserve quota
+        if companies_for_live_verify:
+            verify_list = list(companies_for_live_verify)[:5]
+            logger.info(f"[{AGENT_ID}] Groq Compound: verifying {len(verify_list)} companies")
+            for comp_id in verify_list:
+                try:
+                    company = self.db.get_company_by_id(comp_id)
+                    if company:
+                        self._verify_company_live(company)
+                except Exception as e:
+                    logger.debug(f"[{AGENT_ID}] Live verify error for {comp_id}: {e}")
+
         # Finalize
         duration = time.time() - start_time
         stats.duration_sec = round(duration, 1)
@@ -1030,7 +1084,7 @@ class IntelligenceEnricher:
         )
 
         logger.info(
-            f"[{AGENT_ID}] === ENRICHMENT COMPLETE === "
+            f"[{AGENT_ID}] === PRISM ENRICHMENT COMPLETE === "
             f"{stats.summary()}"
         )
 
@@ -1119,15 +1173,214 @@ class IntelligenceEnricher:
 
     def run_deep_enrichment(self) -> EnrichmentStats:
         """
-        v6.0: Sunday deep enrichment.
+        PRISM v0.1: Sunday deep enrichment.
         - Full CIRS refresh for all companies
-        - Sector momentum recalculation
+        - Sector momentum recalculation (v2: outcome-based)
         - Re-score all active listings with updated company data
+        - Live Groq Compound funding verification for stale data
         - Wider time window (7 days) and higher limit
         """
-        logger.info(f"[{AGENT_ID}] === SUNDAY DEEP ENRICHMENT START ===")
+        logger.info(f"[{AGENT_ID}] === PRISM SUNDAY DEEP ENRICHMENT START ===")
+
+        # Run live funding verification on Tier 1-3 companies with stale data
+        self._run_live_funding_verification_batch()
+
         # Use wider time window and higher limit for Sunday deep run
         return self.run_enrichment(hours=168, limit=5000)  # 7 days, 5000 listings
+
+    # ============================================================
+    # PRISM v0.1: GROQ COMPOUND LIVE VERIFICATION
+    # ============================================================
+
+    def _run_live_funding_verification_batch(self, max_companies: int = 10):
+        """
+        PRISM v0.1: Use Groq Compound web_search to verify company
+        funding data that is >6 months stale.
+
+        Groq Compound Beta has built-in web_search + visit_url tools
+        that automatically search the web for live data.
+        """
+        logger.info(f"[{AGENT_ID}] Running Groq Compound live funding verification")
+
+        try:
+            # Get companies with stale funding data
+            companies = self._get_companies_needing_verification(max_companies)
+
+            if not companies:
+                logger.info(f"[{AGENT_ID}] No companies need funding verification")
+                return
+
+            verified_count = 0
+            for company in companies:
+                try:
+                    result = self._verify_company_live(company)
+                    if result:
+                        verified_count += 1
+                except Exception as e:
+                    logger.debug(f"[{AGENT_ID}] Compound verify error for {company.get('name', '')}: {e}")
+                    continue
+
+            logger.info(f"[{AGENT_ID}] Groq Compound verified {verified_count}/{len(companies)} companies")
+
+        except Exception as e:
+            logger.error(f"[{AGENT_ID}] Batch funding verification error: {e}")
+
+    def _get_companies_needing_verification(self, limit: int = 10) -> List[Dict]:
+        """
+        Get Tier 1-3 companies with funding data older than 6 months.
+        """
+        try:
+            all_companies = self.db.get_active_companies(tier_filter=[1, 2, 3])
+            stale_companies = []
+
+            six_months_ago = datetime.now() - timedelta(days=180)
+
+            for company in all_companies:
+                last_verified = company.get('funding_last_verified', '')
+                if not last_verified:
+                    stale_companies.append(company)
+                else:
+                    try:
+                        verified_date = datetime.fromisoformat(last_verified.replace('Z', '+00:00'))
+                        if verified_date.replace(tzinfo=None) < six_months_ago:
+                            stale_companies.append(company)
+                    except (ValueError, TypeError):
+                        stale_companies.append(company)
+
+            return stale_companies[:limit]
+
+        except Exception as e:
+            logger.debug(f"[{AGENT_ID}] Error getting stale companies: {e}")
+            return []
+
+    def _verify_company_live(self, company: Dict) -> Optional[Dict]:
+        """
+        PRISM v0.1: Use Groq Compound to verify a company's latest
+        funding round, leadership changes, and hiring signals.
+
+        Groq Compound Beta model supports tool_use (web_search, visit_url)
+        natively — the AI automatically searches the web.
+        """
+        company_name = company.get('name', '')
+        if not company_name:
+            return None
+
+        prompt = f"""Research the company \"{company_name}\" (India context, {datetime.now().year}).
+
+I need:
+1. Latest funding round (amount, date, investors) — search for "{company_name} funding round"
+2. Any leadership changes in the last 6 months (new CEO, CTO, CHRO)
+3. Is the company actively hiring interns/MBA students?
+4. Any recent news that suggests expansion or contraction
+
+Provide a JSON response:
+{{
+    "company": "{company_name}",
+    "latest_funding": {{"amount": "", "date": "", "round": "", "investors": []}},
+    "leadership_changes": [],
+    "hiring_signals": "strong/moderate/weak/unknown",
+    "expansion_signal": true/false,
+    "summary": "1-line summary"
+}}"""
+
+        try:
+            result = self.router.route(
+                task_type='funding_verify',
+                prompt=prompt,
+                system_prompt='You are a business intelligence researcher. Provide accurate, up-to-date information. Always search the web for current data.',
+                max_tokens=800,
+                temperature=0.2,
+                json_mode=True,
+            )
+
+            if result and isinstance(result, dict):
+                text = result.get('text', '')
+                if text:
+                    try:
+                        data = json.loads(text)
+                        # Update company in database
+                        self.db.update_company_intel(
+                            company_id=company.get('id'),
+                            funding_data=data.get('latest_funding', {}),
+                            leadership_changes=data.get('leadership_changes', []),
+                            hiring_signal=data.get('hiring_signals', 'unknown'),
+                            verified_at=datetime.now(IST).isoformat(),
+                        )
+                        logger.info(
+                            f"[{AGENT_ID}] Compound verified: {company_name} — "
+                            f"hiring={data.get('hiring_signals', '?')}, "
+                            f"expansion={data.get('expansion_signal', '?')}"
+                        )
+                        return data
+                    except json.JSONDecodeError:
+                        pass
+
+        except Exception as e:
+            logger.debug(f"[{AGENT_ID}] Compound verify failed for {company_name}: {e}")
+
+        return None
+
+    # ============================================================
+    # PRISM v0.1: INSTANT BLUE OCEAN TELEGRAM ALERTS
+    # ============================================================
+
+    def _send_instant_blue_ocean_alert(self, listing: Dict,
+                                         bo_score: float,
+                                         bo_reasons: List[str]):
+        """
+        PRISM v0.1: Fire an INSTANT Telegram alert for Blue Ocean finds.
+
+        Unlike the old system that batched alerts into morning briefs,
+        PRISM sends instant push notifications for Blue Ocean listings
+        so the admin can act immediately.
+        """
+        try:
+            title = listing.get('title', 'Unknown')
+            company = listing.get('company', 'Unknown')
+            applicants = listing.get('applicants', '?')
+            stipend = listing.get('stipend_monthly', 0)
+            url = listing.get('url', '')
+            is_ppo = listing.get('is_ppo', False)
+
+            alert = (
+                f"🌊 *BLUE OCEAN ALERT* 🌊\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"📋 *{title}*\n"
+                f"🏢 {company}\n"
+                f"👥 Applicants: {applicants}\n"
+                f"💰 Stipend: ₹{stipend:,.0f}/mo\n"
+                f"{'🏆 PPO Available!' if is_ppo else ''}\n"
+                f"📊 BO Score: {bo_score:.0f}/100\n"
+                f"\n"
+                f"*Why Blue Ocean:*\n"
+            )
+            for reason in bo_reasons[:3]:
+                alert += f"  • {reason}\n"
+
+            if url:
+                alert += f"\n🔗 [Apply Now]({url})"
+
+            alert += f"\n\n⚡ _Instant alert by A-07 Intelligence Enricher_"
+
+            # Try to send via A-12 Telegram Reporter
+            try:
+                from agents.a12_telegram_reporter import get_reporter
+                reporter = get_reporter()
+                if hasattr(reporter, 'send_message'):
+                    reporter.send_message(alert, parse_mode='Markdown')
+                elif hasattr(reporter, 'send_alert'):
+                    reporter.send_alert(alert)
+                logger.info(
+                    f"[{AGENT_ID}] 🌊 Blue Ocean alert sent: {title} @ {company} "
+                    f"(score={bo_score:.0f}, applicants={applicants})"
+                )
+            except Exception as e:
+                logger.debug(f"[{AGENT_ID}] Could not send Blue Ocean alert via A-12: {e}")
+                # Log it anyway
+                logger.info(f"[{AGENT_ID}] 🌊 BLUE OCEAN: {title} @ {company} (score={bo_score:.0f})")
+
+        except Exception as e:
+            logger.error(f"[{AGENT_ID}] Blue Ocean alert error: {e}")
 
 
 # ============================================================

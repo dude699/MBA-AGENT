@@ -1,12 +1,13 @@
 // ============================================================
-// HEADER — Ultra Premium Telegram Mini App Header
+// HEADER — PRISM v0.1 Ultra Premium Frosted Glass Header
+// Premium micro-animations, depth effects, smooth transitions
 // ============================================================
 
-import React, { useState } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Search, SlidersHorizontal, ArrowUpDown, Sparkles,
-  X, Shield, Clock
+  X, Shield, Clock, Zap
 } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { hapticFeedback } from '@/utils/helpers';
@@ -21,53 +22,103 @@ export default function Header() {
 
   const [searchFocused, setSearchFocused] = useState(false);
   const [searchValue, setSearchValue] = useState(filters.search);
+  const searchTimeoutRef = useRef<NodeJS.Timeout>();
 
-  const handleSearchChange = (value: string) => {
+  // Debounced search
+  const handleSearchChange = useCallback((value: string) => {
     setSearchValue(value);
-    setTimeout(() => setSearch(value), 300);
-  };
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    searchTimeoutRef.current = setTimeout(() => setSearch(value), 250);
+  }, [setSearch]);
+
+  useEffect(() => {
+    return () => {
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    };
+  }, []);
 
   return (
     <header className="sticky top-0 z-30" style={{
-      background: 'rgba(0,0,0,0.92)',
-      backdropFilter: 'blur(20px) saturate(180%)',
-      WebkitBackdropFilter: 'blur(20px) saturate(180%)',
-      borderBottom: '1px solid rgba(255,255,255,0.06)',
+      background: 'rgba(5,5,8,0.95)',
+      backdropFilter: 'blur(24px) saturate(180%)',
+      WebkitBackdropFilter: 'blur(24px) saturate(180%)',
+      borderBottom: '1px solid rgba(255,255,255,0.05)',
     }}>
       {/* Top Bar */}
       <div className="px-4 pt-3 pb-2">
         <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl flex items-center justify-center bg-white">
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="black" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
-              </svg>
-            </div>
+          {/* Brand */}
+          <div className="flex items-center gap-3">
+            <motion.div
+              className="w-10 h-10 rounded-xl flex items-center justify-center relative overflow-hidden"
+              style={{
+                background: 'linear-gradient(135deg, #ffffff 0%, #f0f0f0 100%)',
+                boxShadow: '0 2px 12px rgba(255,255,255,0.15)',
+              }}
+              whileTap={{ scale: 0.92 }}
+            >
+              <Zap className="w-5 h-5 text-black" strokeWidth={2.5} />
+              {/* Subtle shine effect */}
+              <div
+                className="absolute inset-0 opacity-30"
+                style={{
+                  background: 'linear-gradient(135deg, transparent 40%, rgba(255,255,255,0.8) 50%, transparent 60%)',
+                }}
+              />
+            </motion.div>
             <div>
-              <h1 className="text-base font-bold leading-tight tracking-tight" style={{ color: '#ffffff' }}>
+              <h1 className="text-[15px] font-bold leading-tight tracking-tight" style={{ color: '#ffffff' }}>
                 InternHub Pro
               </h1>
-              <p className="text-[10px] font-medium tracking-wider uppercase" style={{ color: '#9ca3af' }}>
-                {totalCount.toLocaleString()} Opportunities
-              </p>
+              <div className="flex items-center gap-1.5">
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" style={{ boxShadow: '0 0 6px rgba(52,211,153,0.5)' }} />
+                <p className="text-[10px] font-medium tracking-wide" style={{ color: 'rgba(255,255,255,0.45)' }}>
+                  {totalCount > 0 ? `${totalCount.toLocaleString()} Opportunities` : 'PRISM Intelligence Active'}
+                </p>
+              </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => { setLLMPanelOpen(!isLLMPanelOpen); hapticFeedback('light'); }}
-              className="relative p-2 rounded-xl transition-all duration-200"
-              style={isLLMPanelOpen ? { background: 'var(--gradient-ai)', color: 'white' } : { background: '#1a1a1a', color: '#aaa' }}
-            >
-              <Sparkles className="w-4 h-4" />
-              <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-emerald-400 border border-black" />
-            </button>
-          </div>
+          {/* AI Sparkles Button */}
+          <motion.button
+            onClick={() => { setLLMPanelOpen(!isLLMPanelOpen); hapticFeedback('light'); }}
+            className="relative p-2.5 rounded-xl"
+            style={{
+              background: isLLMPanelOpen
+                ? 'linear-gradient(135deg, #6366f1, #8b5cf6)'
+                : 'rgba(255,255,255,0.06)',
+              boxShadow: isLLMPanelOpen ? '0 4px 16px rgba(99,102,241,0.3)' : 'none',
+            }}
+            whileTap={{ scale: 0.9 }}
+            whileHover={{ scale: 1.05 }}
+            transition={{ type: 'spring', stiffness: 400, damping: 15 }}
+          >
+            <Sparkles className="w-[18px] h-[18px]" style={{ color: isLLMPanelOpen ? '#fff' : 'rgba(255,255,255,0.5)' }} />
+            <span
+              className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2"
+              style={{
+                background: '#10b981',
+                borderColor: 'rgba(5,5,8,0.95)',
+                boxShadow: '0 0 6px rgba(16,185,129,0.4)',
+              }}
+            />
+          </motion.button>
         </div>
 
-        {/* Search Bar - Premium Glass */}
-        <div className={`relative transition-all duration-300 rounded-xl ${searchFocused ? 'ring-2 ring-primary-900/8' : ''}`}>
-          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-primary-300" />
+        {/* Search Bar */}
+        <motion.div
+          className="relative rounded-xl overflow-hidden"
+          animate={{
+            boxShadow: searchFocused
+              ? '0 0 0 2px rgba(255,255,255,0.1), 0 4px 16px rgba(0,0,0,0.2)'
+              : '0 0 0 1px rgba(255,255,255,0.06)',
+          }}
+          transition={{ duration: 0.25 }}
+        >
+          <Search
+            className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 transition-colors duration-200"
+            style={{ color: searchFocused ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.25)' }}
+          />
           <input
             type="text"
             value={searchValue}
@@ -75,48 +126,74 @@ export default function Header() {
             onFocus={() => setSearchFocused(true)}
             onBlur={() => setSearchFocused(false)}
             placeholder="Search companies, roles, skills..."
-            className="w-full pl-10 pr-10 py-2.5 rounded-xl text-sm text-white placeholder-white/30 focus:outline-none transition-all duration-300"
-            style={{ background: '#0a0a0a', border: '1px solid rgba(255,255,255,0.1)' }}
+            className="w-full pl-10 pr-10 py-2.5 rounded-xl text-sm text-white placeholder-white/25 focus:outline-none transition-all duration-300"
+            style={{
+              background: searchFocused ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.04)',
+            }}
           />
-          {searchValue && (
-            <button
-              onClick={() => { handleSearchChange(''); hapticFeedback('light'); }}
-              className="absolute right-3 top-1/2 -translate-y-1/2 p-0.5 rounded-full bg-primary-200 hover:bg-primary-300 transition-colors"
-            >
-              <X className="w-3 h-3 text-primary-700" />
-            </button>
-          )}
-        </div>
+          <AnimatePresence>
+            {searchValue && (
+              <motion.button
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.8 }}
+                onClick={() => { handleSearchChange(''); hapticFeedback('light'); }}
+                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-full transition-colors"
+                style={{ background: 'rgba(255,255,255,0.1)' }}
+              >
+                <X className="w-3 h-3 text-white/60" />
+              </motion.button>
+            )}
+          </AnimatePresence>
+        </motion.div>
       </div>
 
       {/* Action Bar */}
       <div className="px-4 pb-2.5 flex items-center gap-2">
         {/* Filter Button */}
-        <button
+        <motion.button
           onClick={() => { setFilterOpen(!isFilterOpen); hapticFeedback('light'); }}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 ${
             isFilterOpen || activeFilterCount > 0
-              ? 'bg-white text-black shadow-sm'
-              : 'text-white/70 border border-white/10 hover:border-white/20'
+              ? 'bg-white text-black'
+              : 'text-white/60 hover:text-white/80'
           }`}
+          style={{
+            border: isFilterOpen || activeFilterCount > 0 ? 'none' : '1px solid rgba(255,255,255,0.08)',
+            boxShadow: isFilterOpen || activeFilterCount > 0 ? '0 2px 8px rgba(255,255,255,0.1)' : 'none',
+          }}
+          whileTap={{ scale: 0.95 }}
         >
           <SlidersHorizontal className="w-3.5 h-3.5" />
           <span>Filters</span>
-          {activeFilterCount > 0 && (
-            <span className="bg-white/20 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold min-w-[18px] text-center">
-              {activeFilterCount}
-            </span>
-          )}
-        </button>
+          <AnimatePresence>
+            {activeFilterCount > 0 && (
+              <motion.span
+                initial={{ scale: 0 }}
+                animate={{ scale: 1 }}
+                exit={{ scale: 0 }}
+                className="text-[10px] px-1.5 py-0.5 rounded-full font-bold min-w-[18px] text-center"
+                style={{
+                  background: isFilterOpen || activeFilterCount > 0 ? '#0a0a0a' : 'rgba(255,255,255,0.15)',
+                  color: isFilterOpen || activeFilterCount > 0 ? '#fff' : '#fff',
+                }}
+              >
+                {activeFilterCount}
+              </motion.span>
+            )}
+          </AnimatePresence>
+        </motion.button>
 
         {/* Sort Button */}
-        <button
+        <motion.button
           onClick={() => { setSortOpen(!isSortOpen); hapticFeedback('light'); }}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white/70 border border-white/10 hover:border-white/20 transition-all duration-200"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white/60 hover:text-white/80 transition-all duration-200"
+          style={{ border: '1px solid rgba(255,255,255,0.08)' }}
+          whileTap={{ scale: 0.95 }}
         >
           <ArrowUpDown className="w-3.5 h-3.5" />
           <span>Sort</span>
-        </button>
+        </motion.button>
 
         {/* Quick Filter Chips */}
         <div className="flex-1 overflow-x-auto scrollbar-none flex items-center gap-1.5">
@@ -158,21 +235,28 @@ export default function Header() {
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
             className="overflow-hidden"
             style={{ borderTop: '1px solid rgba(255,255,255,0.04)' }}
           >
             <div className="px-4 py-2 flex items-center justify-between" style={{ background: 'rgba(255,255,255,0.03)' }}>
               <div className="flex items-center gap-2">
-                <div className="w-5 h-5 rounded-md flex items-center justify-center text-white" style={{ background: 'var(--gradient-accent)' }}>
+                <motion.div
+                  className="w-6 h-6 rounded-lg flex items-center justify-center text-white"
+                  style={{ background: 'var(--gradient-accent)' }}
+                  initial={{ scale: 0 }}
+                  animate={{ scale: 1 }}
+                  transition={{ type: 'spring', stiffness: 400, damping: 15 }}
+                >
                   <span className="text-[10px] font-bold">{selectedIds.size}</span>
-                </div>
-                <span className="text-xs font-medium text-primary-700">
-                  Selected from <span className="font-bold text-primary-900 capitalize">{lockedSource}</span>
+                </motion.div>
+                <span className="text-xs font-medium" style={{ color: 'rgba(255,255,255,0.6)' }}>
+                  Selected from <span className="font-bold text-white capitalize">{lockedSource}</span>
                 </span>
               </div>
               <button
                 onClick={() => { useAppStore.getState().deselectAll(); hapticFeedback('light'); }}
-                className="text-xs font-semibold text-status-danger hover:underline"
+                className="text-xs font-semibold text-red-400 hover:text-red-300 transition-colors"
               >
                 Clear All
               </button>
@@ -191,16 +275,21 @@ function QuickChip({
   label: string; icon?: React.ReactNode; active: boolean; onClick: () => void;
 }) {
   return (
-    <button
+    <motion.button
       onClick={() => { onClick(); hapticFeedback('light'); }}
-      className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold whitespace-nowrap transition-all duration-200 ${
+      className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold whitespace-nowrap transition-colors duration-200 ${
         active
-          ? 'bg-white text-black shadow-sm'
-          : 'text-white/60 border border-white/10 hover:border-white/20'
+          ? 'bg-white text-black'
+          : 'text-white/50 hover:text-white/70'
       }`}
+      style={{
+        border: active ? 'none' : '1px solid rgba(255,255,255,0.06)',
+        boxShadow: active ? '0 1px 6px rgba(255,255,255,0.08)' : 'none',
+      }}
+      whileTap={{ scale: 0.92 }}
     >
       {icon}
       {label}
-    </button>
+    </motion.button>
   );
 }

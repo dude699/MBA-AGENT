@@ -1,12 +1,13 @@
 // ============================================================
-// INTERNSHIP CARD — Ultra Premium Card Component
+// INTERNSHIP CARD — PRISM v0.1 Ultra Premium Card
+// Smooth entrance, depth hover, micro-interactions
 // ============================================================
 
 import React, { memo, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import {
   MapPin, Clock, Users, Star, Shield, CheckCircle2,
-  TrendingUp, AlertTriangle, Check, Building2
+  TrendingUp, AlertTriangle, Check, Building2, Sparkles
 } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import {
@@ -31,6 +32,9 @@ const InternshipCard = memo(function InternshipCard({ internship, index }: Props
 
   const canSelect = !lockedSource || lockedSource === internship.source;
 
+  const isBlueOcean = internship.matchScore >= 80 && internship.applicants < 50;
+  const isHighPay = internship.stipend >= 25000;
+
   const handleSelect = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     if (!canSelect && !isSelected) return;
@@ -45,11 +49,33 @@ const InternshipCard = memo(function InternshipCard({ internship, index }: Props
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 12 }}
+      initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.25, delay: Math.min(index * 0.03, 0.3) }}
-      className={`internship-card ${isSelected ? 'selected' : ''} ${internship.alreadyApplied ? 'opacity-60' : ''}`}
+      transition={{
+        duration: 0.4,
+        delay: Math.min(index * 0.04, 0.3),
+        ease: [0.22, 1, 0.36, 1],
+      }}
+      className={`internship-card ${isSelected ? 'selected' : ''} ${internship.alreadyApplied ? 'opacity-55' : ''}`}
+      style={{
+        willChange: 'transform',
+      }}
     >
+      {/* Blue Ocean Badge */}
+      {isBlueOcean && !internship.isPremium && (
+        <div
+          className="absolute -top-1.5 right-4 text-[9px] font-bold px-2.5 py-0.5 uppercase tracking-wider rounded-b-md flex items-center gap-1"
+          style={{
+            background: 'linear-gradient(135deg, #059669, #10b981)',
+            color: '#ffffff',
+            boxShadow: '0 2px 8px rgba(5,150,105,0.3)',
+          }}
+        >
+          <Sparkles className="w-2.5 h-2.5" />
+          Blue Ocean
+        </div>
+      )}
+
       {/* Premium Badge */}
       {internship.isPremium && (
         <div className="absolute -top-1.5 right-4 premium-tag">
@@ -61,13 +87,14 @@ const InternshipCard = memo(function InternshipCard({ internship, index }: Props
         {/* Top Row: Source + Deadline + Select */}
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
-            <span
+            <motion.span
               className="source-badge"
-              style={{ backgroundColor: sourceConfig.color + '12', color: sourceConfig.color }}
+              style={{ backgroundColor: sourceConfig.color + '10', color: sourceConfig.color }}
+              whileTap={{ scale: 0.95 }}
             >
               <SourceIcon source={internship.source} size={12} />
               {sourceConfig.name}
-            </span>
+            </motion.span>
             {internship.isVerified && (
               <span className="flex items-center gap-0.5 text-[10px] text-emerald-600 font-medium">
                 <Shield className="w-3 h-3" />
@@ -77,11 +104,13 @@ const InternshipCard = memo(function InternshipCard({ internship, index }: Props
 
           <div className="flex items-center gap-2">
             {deadline.expired ? (
-              <span className="text-[10px] font-semibold text-status-danger bg-status-danger/8 px-2 py-0.5 rounded-md">
+              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md"
+                style={{ background: '#fef2f2', color: '#dc2626' }}>
                 Expired
               </span>
             ) : deadline.urgent ? (
-              <span className="text-[10px] font-semibold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md flex items-center gap-0.5">
+              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md flex items-center gap-0.5"
+                style={{ background: '#fffbeb', color: '#d97706' }}>
                 <AlertTriangle className="w-3 h-3" /> {deadline.text}
               </span>
             ) : (
@@ -90,29 +119,41 @@ const InternshipCard = memo(function InternshipCard({ internship, index }: Props
               </span>
             )}
 
-            {/* Checkbox */}
-            <button
+            {/* Checkbox — animated */}
+            <motion.button
               onClick={handleSelect}
-              className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all duration-200 ${
+              className={`w-5.5 h-5.5 rounded-lg border-2 flex items-center justify-center transition-colors duration-200 ${
                 isSelected
                   ? 'border-primary-900 bg-primary-900'
                   : canSelect
                     ? 'border-primary-300 hover:border-primary-500'
                     : 'border-primary-200 opacity-40 cursor-not-allowed'
               }`}
+              whileTap={canSelect ? { scale: 0.85 } : {}}
             >
-              {isSelected && <Check className="w-3 h-3 text-white" />}
-            </button>
+              {isSelected && (
+                <motion.div
+                  initial={{ scale: 0 }}
+                  animate={{ scale: 1 }}
+                  transition={{ type: 'spring', stiffness: 500, damping: 15 }}
+                >
+                  <Check className="w-3 h-3 text-white" />
+                </motion.div>
+              )}
+            </motion.button>
           </div>
         </div>
 
         {/* Company + Title */}
         <div className="mb-3">
           <div className="flex items-center gap-1.5 mb-1">
-            <div className="w-6 h-6 bg-primary-50 rounded-lg flex items-center justify-center">
+            <div
+              className="w-7 h-7 rounded-lg flex items-center justify-center"
+              style={{ background: '#f8f9fa', border: '1px solid rgba(229,231,235,0.6)' }}
+            >
               <Building2 className="w-3.5 h-3.5 text-primary-400" />
             </div>
-            <span className="text-xs font-semibold text-primary-500 line-clamp-1">
+            <span className="text-xs font-semibold text-primary-500 line-clamp-1 flex-1">
               {internship.company}
             </span>
             {internship.companyRating > 0 && (
@@ -140,9 +181,19 @@ const InternshipCard = memo(function InternshipCard({ internship, index }: Props
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 mb-3">
           {/* Stipend */}
           <div className="flex items-center gap-1">
-            <span className="text-sm font-bold text-stipend-high">
+            <span
+              className="text-sm font-bold"
+              style={{
+                color: isHighPay ? '#059669' : '#0a0a0a',
+              }}
+            >
               {formatStipend(internship.stipend)}
             </span>
+            {isHighPay && (
+              <span className="text-[8px] font-bold px-1 py-0.5 rounded bg-emerald-50 text-emerald-600">
+                TOP
+              </span>
+            )}
           </div>
 
           {/* Duration */}
@@ -171,7 +222,8 @@ const InternshipCard = memo(function InternshipCard({ internship, index }: Props
             {internship.skills.slice(0, 4).map((skill) => (
               <span
                 key={skill}
-                className="text-[10px] font-medium px-2 py-0.5 bg-primary-50 text-primary-600 rounded-md"
+                className="text-[10px] font-medium px-2 py-0.5 rounded-md transition-colors"
+                style={{ background: '#f3f4f6', color: '#4b5563', border: '1px solid rgba(229,231,235,0.5)' }}
               >
                 {skill}
               </span>
@@ -185,17 +237,21 @@ const InternshipCard = memo(function InternshipCard({ internship, index }: Props
         )}
 
         {/* Bottom Stats Row */}
-        <div className="flex items-center justify-between pt-2.5" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+        <div className="flex items-center justify-between pt-2.5" style={{ borderTop: '1px solid rgba(229,231,235,0.5)' }}>
           <div className="flex items-center gap-3">
-            {/* Match Score */}
-            <div className="flex items-center gap-1">
+            {/* Match Score — with color-coded ring */}
+            <div className="flex items-center gap-1.5">
               <div
-                className="w-1.5 h-1.5 rounded-full"
-                style={{ backgroundColor: getMatchScoreColor(internship.matchScore) }}
-              />
-              <span className="text-[10px] font-bold" style={{ color: getMatchScoreColor(internship.matchScore) }}>
-                {internship.matchScore}%
-              </span>
+                className="w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold"
+                style={{
+                  background: getMatchScoreColor(internship.matchScore) + '12',
+                  color: getMatchScoreColor(internship.matchScore),
+                  border: `1.5px solid ${getMatchScoreColor(internship.matchScore)}30`,
+                }}
+              >
+                {internship.matchScore}
+              </div>
+              <span className="text-[10px] font-medium text-primary-400">Match</span>
             </div>
 
             {/* Success Rate */}
@@ -229,9 +285,9 @@ const InternshipCard = memo(function InternshipCard({ internship, index }: Props
           </div>
         </div>
 
-        {/* Openings + Ghost Score (if concerning) */}
+        {/* Openings + Ghost Score */}
         {(internship.openings > 1 || internship.ghostScore > 50) && (
-          <div className="flex items-center gap-3 mt-2">
+          <div className="flex items-center gap-2 mt-2">
             {internship.openings > 1 && (
               <span className="text-[10px] font-medium text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md">
                 {internship.openings} openings

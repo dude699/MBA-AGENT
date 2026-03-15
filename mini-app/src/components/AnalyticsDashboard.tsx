@@ -29,7 +29,7 @@ export default function AnalyticsDashboard() {
 
   if (isLoading || !analytics) {
     return (
-      <div className="px-5 py-8 overflow-y-auto" style={{ WebkitOverflowScrolling: 'touch', paddingBottom: '120px' }}>
+      <div className="px-5 py-8" style={{ paddingBottom: '120px' }}>
         <div className="space-y-4">
           {Array.from({ length: 6 }).map((_, i) => (
             <div key={i} className="skeleton h-24 rounded-2xl" />
@@ -40,7 +40,7 @@ export default function AnalyticsDashboard() {
   }
 
   return (
-    <div className="px-4 py-4 space-y-4 overflow-y-auto" style={{ WebkitOverflowScrolling: 'touch', paddingBottom: '120px' }} id="analytics">
+    <div className="px-4 py-4 space-y-4" style={{ paddingBottom: '120px' }} id="analytics">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">

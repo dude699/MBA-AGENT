@@ -928,6 +928,9 @@ class TelegramReporter:
             'dbstatus': self._cmd_dbstatus,
             'latestjobs': self._cmd_latestjobs,
             'alljobs': self._cmd_alljobs,
+            # Database management
+            'cleardb': self._cmd_cleardb,
+            'expireold': self._cmd_expireold,
             # Menu trigger
             'menu': self._cmd_menu,
         }
@@ -2310,6 +2313,10 @@ class TelegramReporter:
             'desc': 'Full pipeline: scrape → dedup → ghost → enrich → PPO → brief',
             'steps': ['scrape', 'dedup', 'ghost', 'enrich', 'ppo', 'brief'],
         },
+        'all': {
+            'desc': 'ALL PORTALS + ATS + Full processing pipeline (irrespective of schedule)',
+            'steps': ['scrape', 'afternoon', 'ats_crawl', 'dark', 'intent', 'dedup', 'ghost', 'enrich', 'ppo', 'brief'],
+        },
         'scrape': {
             'desc': 'A-03: Internshala full scrape (10 categories)',
             'agent': 'A-03',
@@ -2522,6 +2529,15 @@ class TelegramReporter:
     async def _run_pipeline_bg(self, chat_id: int, task_name: str, steps: list):
         """Background task: Run full pipeline with per-step streaming."""
         total_start = time.time()
+
+        # PRISM v0.1: Mark manual pipeline run for schedule conflict avoidance
+        try:
+            from core.weekly_scheduler import get_weekly_scheduler
+            scheduler = get_weekly_scheduler()
+            scheduler.mark_manual_pipeline_run()
+        except Exception:
+            pass  # Scheduler may not be initialized yet
+
         await self._stream_msg(
             chat_id,
             "🚀 <b>FULL PIPELINE STARTING</b>\n"
@@ -2590,6 +2606,26 @@ class TelegramReporter:
             lines.append(f"\n⚠️ {len(failed)} step(s) failed: {', '.join(failed)}")
         else:
             lines.append(f"\n🎉 All {len(steps)} steps completed!")
+
+        # PRISM v0.1: Add real DB stats to pipeline completion report
+        try:
+            from core.database import get_db
+            db = get_db()
+            total_raw = db.count_raw_listings()
+            total_clean = db.count_clean_listings(status='active')
+            source_counts = db.get_source_counts()
+            raw_source_counts = db.get_raw_source_counts()
+
+            lines.append(f"\n📊 <b>DATABASE STATUS:</b>")
+            lines.append(f"  Raw Listings: <b>{total_raw}</b>")
+            lines.append(f"  Clean (Active): <b>{total_clean}</b>")
+            if source_counts:
+                lines.append(f"\n📦 <b>Source Breakdown:</b>")
+                for src, cnt in sorted(source_counts.items(), key=lambda x: -x[1]):
+                    raw_cnt = raw_source_counts.get(src, 0)
+                    lines.append(f"  {src}: {cnt} clean / {raw_cnt} raw")
+        except Exception:
+            pass
 
         lines.append(f"\n💡 Use /top or /morning to see results.")
         await self._stream_msg(chat_id, '\n'.join(lines))
@@ -3547,7 +3583,8 @@ class TelegramReporter:
     # ================================================================
 
     async def send_morning_brief(self):
-        """Send scheduled morning brief at 07:15 IST."""
+        """Send scheduled morning brief at 07:15 IST.
+        PRISM v0.1: Includes source breakdown, portal stats, and DB counts."""
         logger.info(f"[{AGENT_ID}] Sending morning brief...")
         data = self.db.get_morning_brief_data()
         # Add source counts for the brief
@@ -3555,11 +3592,36 @@ class TelegramReporter:
             data['source_counts'] = self.db.get_source_counts()
         except Exception:
             data['source_counts'] = {}
+        # PRISM v0.1: Add raw source counts and total DB stats
+        try:
+            data['raw_source_counts'] = self.db.get_raw_source_counts()
+            data['total_raw'] = self.db.count_raw_listings()
+            data['total_clean'] = self.db.count_clean_listings(status='active')
+            data['total_ghost'] = self.db.count_clean_listings(is_ghost=True)
+        except Exception:
+            pass
         msg = self.formatter.morning_brief(data)
+        # Append DB summary
+        try:
+            db_summary = (
+                f"\n\n📊 <b>Database Summary:</b>\n"
+                f"  Raw listings: {data.get('total_raw', 0)}\n"
+                f"  Clean (active): {data.get('total_clean', 0)}\n"
+                f"  Ghost flagged: {data.get('total_ghost', 0)}\n"
+            )
+            source_counts = data.get('source_counts', {})
+            if source_counts:
+                db_summary += "\n📡 <b>By Source:</b>\n"
+                for src, cnt in sorted(source_counts.items(), key=lambda x: -x[1])[:10]:
+                    db_summary += f"  {src}: {cnt}\n"
+            msg += db_summary
+        except Exception:
+            pass
         await self.send_message(msg)
 
     async def send_evening_summary(self):
-        """Send scheduled evening summary at 10:00 PM IST."""
+        """Send scheduled evening summary at 10:00 PM IST.
+        PRISM v0.1: Includes full source/portal breakdown and DB stats."""
         logger.info(f"[{AGENT_ID}] Sending evening summary...")
         data = {
             'today_total': self.db.count_clean_listings(hours=24),
@@ -3567,7 +3629,42 @@ class TelegramReporter:
             'applied_today': self.db.count_outcomes_today(),
             'dark_finds': self.db.count_dark_listings_today(),
         }
+        # PRISM v0.1: Add comprehensive portal and DB stats
+        try:
+            data['source_counts'] = self.db.get_source_counts()
+            data['raw_source_counts'] = self.db.get_raw_source_counts()
+            data['total_raw'] = self.db.count_raw_listings()
+            data['total_clean'] = self.db.count_clean_listings(status='active')
+            data['total_ghost'] = self.db.count_clean_listings(is_ghost=True)
+            data['category_counts'] = self.db.get_category_counts()
+        except Exception:
+            pass
         msg = self.formatter.evening_summary(data)
+        # Append comprehensive DB report
+        try:
+            db_report = (
+                f"\n\n📊 <b>End-of-Day Database Report:</b>\n"
+                f"  Total raw listings: {data.get('total_raw', 0)}\n"
+                f"  Total clean (active): {data.get('total_clean', 0)}\n"
+                f"  Ghost flagged: {data.get('total_ghost', 0)}\n"
+                f"  New today (24h): {data.get('today_total', 0)}\n"
+                f"  Applied today: {data.get('applied_today', 0)}\n"
+                f"  Dark channel finds: {data.get('dark_finds', 0)}\n"
+            )
+            source_counts = data.get('source_counts', {})
+            if source_counts:
+                db_report += "\n📡 <b>Jobs by Portal:</b>\n"
+                for src, cnt in sorted(source_counts.items(), key=lambda x: -x[1]):
+                    raw_cnt = data.get('raw_source_counts', {}).get(src, 0)
+                    db_report += f"  {src}: {cnt} active / {raw_cnt} raw\n"
+            cat_counts = data.get('category_counts', {})
+            if cat_counts:
+                db_report += "\n📂 <b>By Category:</b>\n"
+                for cat, cnt in sorted(cat_counts.items(), key=lambda x: -x[1])[:8]:
+                    db_report += f"  {cat}: {cnt}\n"
+            msg += db_report
+        except Exception:
+            pass
         await self.send_message(msg)
 
     async def send_urgent_alert(self, company: str, signal_score: float,
@@ -4027,6 +4124,81 @@ class TelegramReporter:
             await update.message.reply_text(f"❌ Error: {str(e)[:200]}")
 
     @command_error_boundary
+    # ================================================================
+    # DATABASE MANAGEMENT COMMANDS (PRISM v0.1)
+    # ================================================================
+
+    @command_error_boundary
+    async def _cmd_cleardb(self, update, context):
+        """Delete ALL listings from the database (admin only). Use: /cleardb confirm"""
+        telegram_id = update.effective_user.id if update.effective_user else 0
+        if not self.security.is_admin(telegram_id):
+            await update.message.reply_text("🔒 Admin-only command.")
+            return
+
+        if not context.args or context.args[0].lower() != 'confirm':
+            await update.message.reply_text(
+                "⚠️ <b>WARNING: This will delete ALL listings!</b>\n\n"
+                "This action will remove:\n"
+                "- All raw listings\n"
+                "- All clean (processed) listings\n"
+                "- All ghost scores\n"
+                "- All application packages\n"
+                "- All auto-apply queue entries\n"
+                "- All outcomes\n\n"
+                "To confirm, type: <code>/cleardb confirm</code>\n\n"
+                "After clearing, use <code>/run all</code> to re-scrape everything.",
+                parse_mode='HTML'
+            )
+            return
+
+        try:
+            from core.database import get_db
+            db = get_db()
+            counts = db.delete_all_listings()
+            total = sum(counts.values())
+
+            details = '\n'.join(f"  {k}: {v}" for k, v in counts.items())
+            await update.message.reply_text(
+                f"🗑️ <b>Database Cleared!</b>\n\n"
+                f"Deleted {total} total records:\n{details}\n\n"
+                f"💡 Run <code>/run all</code> to re-scrape all portals.",
+                parse_mode='HTML'
+            )
+        except Exception as e:
+            await update.message.reply_text(f"❌ Error clearing database: {str(e)[:200]}")
+
+    @command_error_boundary
+    async def _cmd_expireold(self, update, context):
+        """Mark old listings as expired. Use: /expireold [days] (default 30)"""
+        telegram_id = update.effective_user.id if update.effective_user else 0
+        if not self.security.is_admin(telegram_id):
+            await update.message.reply_text("🔒 Admin-only command.")
+            return
+
+        max_days = 30
+        if context.args:
+            try:
+                max_days = int(context.args[0])
+            except ValueError:
+                pass
+
+        try:
+            from core.database import get_db
+            db = get_db()
+            expired = db.mark_expired_listings(max_days)
+            deduped = db.remove_duplicate_clean_listings()
+
+            await update.message.reply_text(
+                f"🧹 <b>Cleanup Complete!</b>\n\n"
+                f"  Expired: <b>{expired}</b> listings (>{max_days} days old)\n"
+                f"  Deduped: <b>{deduped}</b> duplicate entries removed\n\n"
+                f"💡 Active listings remain unchanged.",
+                parse_mode='HTML'
+            )
+        except Exception as e:
+            await update.message.reply_text(f"❌ Error: {str(e)[:200]}")
+
     async def _cmd_menu(self, update, context):
         """Send the persistent reply keyboard menu + Mini App inline button."""
         telegram_id = update.effective_user.id if update.effective_user else 0

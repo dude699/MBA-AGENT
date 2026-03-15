@@ -1,17 +1,19 @@
 # ============================================================
-# OPERATION FIRST MOVER v6.0 — ZERO COST MBA HUNT AGENT
-# Complete Python Dependencies
+# PRISM v0.1 — PRECISION RECRUITMENT INTELLIGENCE & SCORING MACHINE
+# Complete Python Dependencies (20-Agent Architecture)
 # ============================================================
 
-# === AI & LLM Providers ===
-groq>=0.9
-cerebras-cloud-sdk>=1.0
+# === AI & LLM Providers (5 providers) ===
+groq>=0.9                  # Groq 70B (PRIMARY DEEP) + Compound Beta (AGENTIC)
+cerebras-cloud-sdk>=1.0    # Cerebras 8B/70B (PRIMARY FAST)
+openai>=1.0                # OpenRouter (PRIMARY LONG — 1M context, OpenAI-compatible)
+# mistralai>=0.1           # Mistral (FALLBACK) — uses REST API directly, no SDK needed
 
 # === HTTP & Scraping ===
 curl_cffi>=0.7
 requests>=2.31
 aiohttp>=3.9
-httpx>=0.27                # v6.0: Async HTTP client with connection pooling
+httpx>=0.27                # Async HTTP client with connection pooling
 beautifulsoup4>=4.12
 lxml>=5.0
 
@@ -21,7 +23,7 @@ lxml>=5.0
 
 # === Telegram ===
 python-telegram-bot>=21.0,<23.0
-telethon>=1.36
+telethon>=1.36             # A-16: MTProto real-time group listener
 
 # === Twitter/X ===
 tweepy>=4.14
@@ -37,13 +39,26 @@ scikit-learn>=1.4
 numpy>=1.26
 nltk>=3.8
 
+# === PRISM v0.1: Local Embeddings (PPO V11 + Dedup Layer 4) ===
+sentence-transformers>=2.0 # all-MiniLM-L6-v2 (384-dim, ~80MB)
+torch>=2.0                 # Required by sentence-transformers (CPU only)
+
+# === PRISM v0.1: Email Outreach ===
+sib-api-v3-sdk>=7.0        # Brevo (Sendinblue) email API (300/day free)
+
+# === PRISM v0.1: Email Verification ===
+# pyhunter>=1.7            # Hunter.io (25 searches/month) — optional
+
+# === PRISM v0.1: CV Generation ===
+weasyprint>=60.0           # HTML-to-PDF CV rendering
+
 # === Scheduling ===
 APScheduler>=3.10
 
 # === Proxy & Anonymity ===
 stem>=1.8
 
-# === Resilience & Self-Healing (v6.0) ===
+# === Resilience & Self-Healing ===
 tenacity>=8.2              # Retry with exponential backoff + jitter
 tldextract>=5.0            # Robust domain extraction
 

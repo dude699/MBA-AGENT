@@ -423,7 +423,7 @@ export default function SettingsPage() {
   const [expandedSource, setExpandedSource] = useState<string | null>(null);
 
   return (
-    <div className="px-4 py-4 space-y-4 overflow-y-auto" style={{ WebkitOverflowScrolling: 'touch', paddingBottom: '120px' }}>
+    <div className="px-4 py-4 space-y-4" style={{ paddingBottom: '120px' }}>
       {/* User Profile Card */}
       <UserProfileSection />
 
