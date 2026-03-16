@@ -102,5 +102,10 @@ services:
       # === Schedule Mode ===
       - key: SCHEDULE_MODE
         value: weekly
+      # === One-Time DB Reset ===
+      # Set to "true" to wipe ALL listings (SQLite + Supabase) on next deploy.
+      # MUST be removed after the reset deploy completes!
+      # - key: FORCE_DB_RESET
+      #   value: "true"
     plan: free
     region: oregon
