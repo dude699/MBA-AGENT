@@ -436,6 +436,31 @@ class Application:
             self._status.mark_degraded('seed', 'skipped (no db)')
             return
 
+        # ── ONE-TIME DB RESET (env-var triggered) ────────────────
+        # Set FORCE_DB_RESET=true in Render env vars for a single wipe.
+        # After it runs, REMOVE the env var so the next deploy keeps data.
+        force_reset = os.getenv('FORCE_DB_RESET', '').lower() in ('true', '1', 'yes')
+        if force_reset:
+            logger.warning("[Phase 3] *** FORCE_DB_RESET=true detected — wiping ALL listings ***")
+            try:
+                counts = db.delete_all_listings()
+                logger.warning(f"[Phase 3] SQLite wiped: {counts}")
+            except Exception as e:
+                logger.error(f"[Phase 3] SQLite wipe failed: {e}")
+
+            try:
+                from core.supabase_client import is_operational as _sb_ok
+                if _sb_ok():
+                    from core.supabase_db import SupabaseJobDB
+                    sb_counts = SupabaseJobDB.clear_all_jobs()
+                    logger.warning(f"[Phase 3] Supabase wiped: {sb_counts}")
+            except Exception as e:
+                logger.error(f"[Phase 3] Supabase wipe failed: {e}")
+
+            logger.warning("[Phase 3] *** DB RESET COMPLETE — NOW REMOVE FORCE_DB_RESET env var ***")
+            logger.warning("[Phase 3] *** If you don't remove it, data will be wiped on EVERY deploy! ***")
+        # ─────────────────────────────────────────────────────────
+
         try:
             from core.company_db_seed import seed_companies, TOTAL_COMPANIES
             count = seed_companies()
@@ -448,18 +473,10 @@ class Application:
             db.seed_agent_heartbeats()
             detail += ", heartbeats A-01..A-20 (PRISM)"
 
-            # Clear Supabase old data on fresh deploy (Render ephemeral disk = fresh SQLite)
-            # If SQLite is empty but Supabase has old data, clear it for consistency
-            try:
-                from core.supabase_client import is_operational as _sb_ok
-                if _sb_ok():
-                    from core.supabase_db import SupabaseJobDB
-                    sb_counts = SupabaseJobDB.clear_all_jobs()
-                    if sb_counts and not sb_counts.get("error"):
-                        logger.info(f"[Phase 3] Supabase cleared for fresh start: {sb_counts}")
-                        detail += f", supabase cleared"
-            except Exception as e:
-                logger.debug(f"[Phase 3] Supabase clear skipped: {e}")
+            # NOTE: Supabase data is NEVER auto-cleared on startup.
+            # Supabase is the persistent store — clearing it loses all scraped data.
+            # Use the admin endpoint POST /api/admin/reset-db or Telegram /admin_reset
+            # for intentional one-time resets.
 
             self._status.mark_ok('seed', detail)
             logger.info(f"[Phase 3] {detail}")
@@ -520,33 +537,22 @@ class Application:
 
     async def _init_web_layer_early(self):
         """Start web server immediately to satisfy Render's port detection.
-        Mini-app routes will be registered later after the build completes."""
+        
+        All routes (including /app/ and /api/*) are registered upfront because
+        aiohttp freezes the router on startup — routes CANNOT be added after.
+        The mini-app handlers gracefully return a 'Not Built' page if dist/
+        doesn't exist yet, and will serve files dynamically once dist/ appears.
+        """
         try:
             from core.keepalive import get_keepalive_manager, get_health_tracker
             self._keepalive = get_keepalive_manager()
-            # Start with skip_miniapp=True so it doesn't try to register mini-app routes yet
-            await self._keepalive.start(skip_miniapp=True)
+            await self._keepalive.start()
 
             port = os.getenv('PORT', '10000')
-            logger.info(f"[Phase 1.5] Web server port {port} OPEN (health endpoints active)")
+            logger.info(f"[Phase 1.5] Web server port {port} OPEN (all endpoints active incl. /app/ /api/*)")
         except Exception as e:
             logger.error(f"[Phase 1.5] Early web server FAILED: {e}")
             logger.error("[Phase 1.5] CRITICAL: Render health checks will fail!")
-
-    async def _register_miniapp_routes(self):
-        """Register mini-app API routes after the build is complete."""
-        try:
-            from core.keepalive import get_keepalive_manager
-            km = get_keepalive_manager()
-            if km and hasattr(km, '_app') and km._app:
-                try:
-                    from core.miniapp_api import register_miniapp_routes
-                    register_miniapp_routes(km._app)
-                    logger.info("[Phase 1.6] Mini-app API routes registered post-build")
-                except Exception as e:
-                    logger.warning(f"[Phase 1.6] Mini-app route registration failed: {e}")
-        except Exception as e:
-            logger.debug(f"[Phase 1.6] Mini-app route registration skipped: {e}")
 
     # ================================================================
     # PHASE 5: WEB LAYER FINALIZATION (keep-alive layers)
@@ -734,12 +740,14 @@ class Application:
         config = self._init_foundation()
 
         # Phase 1.5: Start web server IMMEDIATELY to satisfy Render port check
-        # This opens port 10000 right away with a basic health endpoint
-        # Mini-app routes will be registered later after the build completes
-        logger.info("[Phase 1.5/11] Starting web server early (port binding)...")
+        # All routes (incl /app/ /api/*) registered upfront — aiohttp freezes
+        # router on start so routes CANNOT be added later.
+        # Mini-app handlers gracefully show "Not Built" if dist/ is missing.
+        logger.info("[Phase 1.5/11] Starting web server (all routes incl. mini-app)...")
         await self._init_web_layer_early()
 
-        # Phase 1.6: Build mini-app (can take 2-3 minutes, but port is already open)
+        # Phase 1.6: Build mini-app if dist/ doesn't exist yet
+        # (routes already registered — handlers check dist/ dynamically)
         logger.info("[Phase 1.6/11] Checking mini-app build status...")
         miniapp_built = build_miniapp_if_needed()
         if miniapp_built:
@@ -751,9 +759,6 @@ class Application:
             self._status.mark_ok('miniapp_build', 'dist/ ready')
         else:
             self._status.mark_degraded('miniapp_build', 'dist/ not available — /app/ will show error')
-
-        # Register mini-app routes now that build is done
-        await self._register_miniapp_routes()
 
         logger.info("[Phase 2/11] Initializing database...")
         db = self._init_storage()
