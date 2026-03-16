@@ -112,6 +112,9 @@
     overflow: visible !important;
     min-height: 0;
     touch-action: pan-y pan-x;
+    /* Ensure main content is not hidden behind sticky header */
+    position: relative;
+    z-index: 1;
   }
 
   .tab-content {
@@ -362,10 +365,14 @@
   .internship-card {
     @apply relative rounded-2xl;
     background: #ffffff;
-    border: 1px solid rgba(229,231,235,0.8);
-    box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+    border: 1.5px solid rgba(229,231,235,0.9);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.04), 0 0 0 0.5px rgba(0,0,0,0.02);
     transition: all 0.35s var(--ease-premium);
     will-change: transform, box-shadow;
+    /* Ensure card is clickable and above any overlapping elements */
+    position: relative;
+    z-index: 1;
+    cursor: pointer;
   }
   .internship-card:hover {
     border-color: rgba(209,213,219,0.9);

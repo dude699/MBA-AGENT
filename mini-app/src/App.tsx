@@ -38,6 +38,11 @@ export default function App() {
   const [sbTotal, setSbTotal] = useState(0);
   const [sbHasMore, setSbHasMore] = useState(false);
 
+  // Keep a window-level cache of Supabase jobs so InternshipDetail can find them
+  useEffect(() => {
+    (window as any).__sbJobsCache = sbJobs;
+  }, [sbJobs]);
+
   const {
     isLoading, hasMore, totalCount, selectedIds, lockedSource,
     filters, sort, selectBySource, deselectAll,

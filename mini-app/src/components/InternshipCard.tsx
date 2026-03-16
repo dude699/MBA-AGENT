@@ -83,7 +83,7 @@ const InternshipCard = memo(function InternshipCard({ internship, index }: Props
         </div>
       )}
 
-      <div className="p-4 cursor-pointer" onClick={handleOpen} role="button" tabIndex={0}>
+      <div className="p-4 cursor-pointer active:bg-gray-50 transition-colors" onClick={handleOpen} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter') handleOpen(); }}>
         {/* Top Row: Source + Deadline + Select */}
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
@@ -119,28 +119,30 @@ const InternshipCard = memo(function InternshipCard({ internship, index }: Props
               </span>
             )}
 
-            {/* Checkbox — animated */}
+            {/* Checkbox — animated, sized for touch */}
             <motion.button
               onClick={handleSelect}
               className={`flex-shrink-0 rounded-lg border-2 flex items-center justify-center transition-colors duration-200 ${
                 isSelected
                   ? 'border-[#0a0a0a] bg-[#0a0a0a]'
                   : canSelect
-                    ? 'border-[#d1d5db] hover:border-[#6b7280]'
-                    : 'border-[#e5e7eb] opacity-40 cursor-not-allowed'
+                    ? 'border-[#9ca3af] hover:border-[#6b7280] bg-white'
+                    : 'border-[#d1d5db] bg-[#f9fafb] opacity-50 cursor-not-allowed'
               }`}
-              style={{ width: '22px', height: '22px', minWidth: '22px' }}
+              style={{ width: '26px', height: '26px', minWidth: '26px' }}
               whileTap={canSelect ? { scale: 0.85 } : {}}
             >
-              {isSelected && (
+              {isSelected ? (
                 <motion.div
                   initial={{ scale: 0 }}
                   animate={{ scale: 1 }}
                   transition={{ type: 'spring', stiffness: 500, damping: 15 }}
                 >
-                  <Check className="w-3 h-3 text-white" />
+                  <Check className="w-3.5 h-3.5 text-white" />
                 </motion.div>
-              )}
+              ) : canSelect ? (
+                <div className="w-2.5 h-2.5 rounded-sm border border-[#d1d5db]" />
+              ) : null}
             </motion.button>
           </div>
         </div>

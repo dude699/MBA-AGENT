@@ -23,7 +23,11 @@ export default function InternshipDetail() {
 
   if (!isDetailOpen) return null;
 
-  const item = internships.find((i) => i.id === isDetailOpen);
+  // Search in store internships first, then check window-level cache for Supabase jobs
+  let item = internships.find((i) => i.id === isDetailOpen || String(i.id) === String(isDetailOpen));
+  if (!item && (window as any).__sbJobsCache) {
+    item = (window as any).__sbJobsCache.find((i: Internship) => i.id === isDetailOpen || String(i.id) === String(isDetailOpen));
+  }
   if (!item) return null;
 
   const sourceConfig = SOURCE_CONFIG[item.source];
