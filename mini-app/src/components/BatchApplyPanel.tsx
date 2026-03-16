@@ -82,7 +82,7 @@ export default function BatchApplyPanel() {
             </button>
           </div>
 
-          <div className="flex-1 overflow-y-auto pb-24">
+          <div className="flex-1 overflow-y-auto" style={{ paddingBottom: '24px' }}>
             {/* Source Lock Notice */}
             {lockedSource && (
               <div className="mx-5 mt-4 p-3 bg-accent/5 border border-accent/20 rounded-xl">
@@ -299,7 +299,7 @@ export default function BatchApplyPanel() {
           </div>
 
           {/* Action Button */}
-          <div className="absolute bottom-0 left-0 right-0 p-4 bg-white/95 backdrop-blur-md border-t border-surface-border">
+          <div className="sticky bottom-0 left-0 right-0 p-4 bg-white border-t border-[#e5e7eb]" style={{ paddingBottom: 'calc(1rem + env(safe-area-inset-bottom, 0px))' }}>
             {batch.status === 'running' ? (
               <button
                 onClick={() => { useAppStore.getState().cancelBatch(); hapticFeedback('medium'); }}

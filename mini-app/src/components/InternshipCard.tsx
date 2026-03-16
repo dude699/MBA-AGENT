@@ -83,7 +83,7 @@ const InternshipCard = memo(function InternshipCard({ internship, index }: Props
         </div>
       )}
 
-      <div className="p-4" onClick={handleOpen}>
+      <div className="p-4 cursor-pointer" onClick={handleOpen} role="button" tabIndex={0}>
         {/* Top Row: Source + Deadline + Select */}
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
@@ -122,13 +122,14 @@ const InternshipCard = memo(function InternshipCard({ internship, index }: Props
             {/* Checkbox — animated */}
             <motion.button
               onClick={handleSelect}
-              className={`w-5.5 h-5.5 rounded-lg border-2 flex items-center justify-center transition-colors duration-200 ${
+              className={`flex-shrink-0 rounded-lg border-2 flex items-center justify-center transition-colors duration-200 ${
                 isSelected
-                  ? 'border-primary-900 bg-primary-900'
+                  ? 'border-[#0a0a0a] bg-[#0a0a0a]'
                   : canSelect
-                    ? 'border-primary-300 hover:border-primary-500'
-                    : 'border-primary-200 opacity-40 cursor-not-allowed'
+                    ? 'border-[#d1d5db] hover:border-[#6b7280]'
+                    : 'border-[#e5e7eb] opacity-40 cursor-not-allowed'
               }`}
+              style={{ width: '22px', height: '22px', minWidth: '22px' }}
               whileTap={canSelect ? { scale: 0.85 } : {}}
             >
               {isSelected && (

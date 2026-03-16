@@ -69,8 +69,8 @@ export default function InternshipDetail() {
             </div>
           </div>
 
-          {/* Content — padding-bottom accounts for fixed bottom action bar */}
-          <div className="flex-1 overflow-y-auto" style={{ paddingBottom: 'calc(80px + env(safe-area-inset-bottom, 0px))' }}>
+          {/* Content — scrollable */}
+          <div className="flex-1 overflow-y-auto">
             {/* Hero Section */}
             <div className="px-5 pt-4 pb-3">
               {/* Source & Status */}
@@ -250,9 +250,9 @@ export default function InternshipDetail() {
             )}
           </div>
 
-          {/* Bottom Action Bar — fixed with safe area padding */}
+          {/* Bottom Action Bar — sticky with safe area padding */}
           <div
-            className="absolute bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-surface-border flex gap-3"
+            className="sticky bottom-0 left-0 right-0 bg-white border-t border-[#e5e7eb] flex gap-3"
             style={{ padding: '1rem 1rem calc(1rem + env(safe-area-inset-bottom, 0px))' }}
           >
             <button

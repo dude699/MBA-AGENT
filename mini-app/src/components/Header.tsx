@@ -38,11 +38,12 @@ export default function Header() {
   }, []);
 
   return (
-    <header className="sticky top-0 z-30" style={{
-      background: 'rgba(5,5,8,0.95)',
+    <header className="sticky top-0 z-40" style={{
+      background: 'rgba(5,5,8,0.97)',
       backdropFilter: 'blur(24px) saturate(180%)',
       WebkitBackdropFilter: 'blur(24px) saturate(180%)',
-      borderBottom: '1px solid rgba(255,255,255,0.05)',
+      borderBottom: '1px solid rgba(255,255,255,0.08)',
+      paddingTop: 'env(safe-area-inset-top, 0px)',
     }}>
       {/* Top Bar */}
       <div className="px-4 pt-3 pb-2">
@@ -149,7 +150,7 @@ export default function Header() {
       </div>
 
       {/* Action Bar */}
-      <div className="px-4 pb-2.5 flex items-center gap-2">
+      <div className="px-4 pb-3 flex items-center gap-2 overflow-x-auto scrollbar-none">
         {/* Filter Button */}
         <motion.button
           onClick={() => { setFilterOpen(!isFilterOpen); hapticFeedback('light'); }}
