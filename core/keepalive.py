@@ -289,7 +289,7 @@ class WebServer:
         self._port = int(os.getenv('PORT', '10000'))
         self.health = _health
 
-    def _create_app(self) -> web.Application:
+    def _create_app(self, skip_miniapp: bool = False) -> web.Application:
         app = web.Application()
         app.router.add_get('/', self._handle_root)
         app.router.add_get('/health', self._handle_health)
@@ -310,23 +310,26 @@ class WebServer:
         except Exception as e:
             logger.warning(f"[WEBSERVER] Auth route registration failed: {e}")
         
-        # Register Mini-App API routes + static file serving
-        try:
-            from core.miniapp_api import register_miniapp_routes
-            register_miniapp_routes(app)
-            logger.info("[WEBSERVER] Mini-App API routes registered")
-        except ImportError as e:
-            logger.warning(f"[WEBSERVER] Mini-App API module not available: {e}")
-        except Exception as e:
-            logger.warning(f"[WEBSERVER] Mini-App route registration failed: {e}")
+        # Register Mini-App API routes + static file serving (skip if building)
+        if not skip_miniapp:
+            try:
+                from core.miniapp_api import register_miniapp_routes
+                register_miniapp_routes(app)
+                logger.info("[WEBSERVER] Mini-App API routes registered")
+            except ImportError as e:
+                logger.warning(f"[WEBSERVER] Mini-App API module not available: {e}")
+            except Exception as e:
+                logger.warning(f"[WEBSERVER] Mini-App route registration failed: {e}")
+        else:
+            logger.info("[WEBSERVER] Mini-App routes deferred (building...)") 
         
         return app
 
-    async def start(self):
+    async def start(self, skip_miniapp: bool = False):
         if not AIOHTTP_AVAILABLE:
             raise RuntimeError("aiohttp not installed")
 
-        self._app = self._create_app()
+        self._app = self._create_app(skip_miniapp=skip_miniapp)
         self._runner = web.AppRunner(self._app, access_log=None)
         await self._runner.setup()
 
@@ -335,7 +338,7 @@ class WebServer:
         )
         await self._site.start()
         logger.info(f"[WEBSERVER] Listening on 0.0.0.0:{self._port}")
-        logger.info(f"[WEBSERVER] Endpoints: / /health /status /ping /telegram-status /app/ /api/*")
+        logger.info(f"[WEBSERVER] Endpoints: / /health /status /ping /telegram-status" + (" /app/ /api/*" if not skip_miniapp else " (mini-app pending)"))
 
     async def stop(self):
         if self._site:
@@ -563,8 +566,13 @@ class KeepAliveManager:
         self.self_ping = SelfPingLoop(self.web_server.port)
         self.health = _health
 
-    async def start(self):
-        await self.web_server.start()
+    @property
+    def _app(self):
+        """Access the underlying aiohttp application for dynamic route registration."""
+        return self.web_server._app
+
+    async def start(self, skip_miniapp: bool = False):
+        await self.web_server.start(skip_miniapp=skip_miniapp)
         self.self_ping.start()
 
         logger.info(

@@ -236,35 +236,33 @@ def normalize_stipend(stipend_text: str) -> float:
     # Handle K suffix (10K = 10000)
     if 'k' in text:
         text = text.replace('k', '')
-        numbers = re.findall(r'\d[\d.]*', text)
+        numbers = re.findall(r'\d+(?:\.\d+)?', text)
         if numbers:
             try:
                 return float(numbers[0]) * 1000
-            except ValueError:
+            except (ValueError, TypeError):
                 return 0.0
 
-    # Extract all numbers (must contain at least one digit)
-    numbers = re.findall(r'\d[\d.]*', text)
+    # Extract all numbers (must contain at least one digit, filter out lone dots)
+    numbers = [n for n in re.findall(r'\d[\d,.]*', text) if n.replace(',', '').replace('.', '').strip()]
 
     if not numbers:
         return 0.0
 
+    def _safe_float(s: str) -> float:
+        """Safely convert string to float, handling Indian comma format."""
+        try:
+            return float(s.replace(',', '').strip())
+        except (ValueError, TypeError):
+            return 0.0
+
     # If range (e.g., "10000 - 15000"), take average
     if len(numbers) >= 2:
-        try:
-            low = float(numbers[0])
-            high = float(numbers[1])
-            monthly = (low + high) / 2
-        except (ValueError, IndexError):
-            try:
-                monthly = float(numbers[0])
-            except ValueError:
-                return 0.0
+        low = _safe_float(numbers[0])
+        high = _safe_float(numbers[1])
+        monthly = (low + high) / 2 if high > 0 else low
     else:
-        try:
-            monthly = float(numbers[0])
-        except ValueError:
-            return 0.0
+        monthly = _safe_float(numbers[0])
 
     # Handle "lump sum" or "total" — estimate monthly
     if 'lump' in stipend_text.lower() or 'total' in stipend_text.lower():
@@ -292,13 +290,17 @@ def normalize_duration(duration_text: str) -> int:
         return 0
 
     text = duration_text.strip().lower()
-    numbers = re.findall(r'[\d.]+', text)
+    # Only match actual numbers (digits, optionally with decimal point between digits)
+    numbers = re.findall(r'\d+(?:\.\d+)?', text)
     if not numbers:
         return 0
 
-    value = float(numbers[0])
-    if len(numbers) >= 2:
-        value = float(numbers[1])
+    try:
+        value = float(numbers[0])
+        if len(numbers) >= 2:
+            value = float(numbers[1])
+    except (ValueError, TypeError):
+        return 0
 
     if 'week' in text:
         return max(1, int(value / 4.33))

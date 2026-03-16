@@ -34,6 +34,9 @@ export default function BatchApplyPanel() {
   const maxBatch = sourceConfig?.maxBatchSize || 5;
   const hasCreds = credentials.some((c) => c.source === lockedSource && c.isValid);
   const credReq = CREDENTIAL_REQUIREMENTS.find((c) => c.source === lockedSource);
+  // For sources without credential requirements (ashby, greenhouse, etc.), allow direct apply
+  const isDirectApplySource = !credReq;
+  const canApply = hasCreds || isDirectApplySource;
 
   const selectedInternships = internships.filter((i) => selectedIds.has(i.id));
 
@@ -156,10 +159,22 @@ export default function BatchApplyPanel() {
                   <span className="flex items-center gap-1 text-[10px] font-bold text-status-success">
                     <CheckCircle2 className="w-3 h-3" /> Saved
                   </span>
+                ) : isDirectApplySource ? (
+                  <span className="flex items-center gap-1 text-[10px] font-bold text-status-info">
+                    <Info className="w-3 h-3" /> Direct Apply
+                  </span>
                 ) : (
                   <span className="text-[10px] font-bold text-status-warning">Required</span>
                 )}
               </div>
+
+              {isDirectApplySource && !hasCreds && (
+                <div className="p-3 bg-blue-50 border border-blue-100 rounded-xl mb-2">
+                  <p className="text-[11px] text-blue-700">
+                    This source supports direct application via URL. Click "Apply" to open the application page in your browser.
+                  </p>
+                </div>
+              )}
 
               {!hasCreds && !showCredForm && (
                 <button
@@ -314,15 +329,15 @@ export default function BatchApplyPanel() {
             ) : (
               <button
                 onClick={() => { executeBatch(); hapticFeedback('heavy'); }}
-                disabled={selectedIds.size === 0 || !hasCreds}
+                disabled={selectedIds.size === 0 || !canApply}
                 className={`w-full py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all ${
-                  selectedIds.size > 0 && hasCreds
+                  selectedIds.size > 0 && canApply
                     ? 'bg-accent text-white hover:bg-accent-light'
                     : 'bg-primary-200 text-primary-500 cursor-not-allowed'
                 }`}
               >
                 <Play className="w-4 h-4" />
-                {!hasCreds ? 'Add Credentials First' : `Apply to ${Math.min(selectedIds.size, maxBatch)} Internships`}
+                {!canApply ? 'Add Credentials First' : isDirectApplySource ? `Open ${Math.min(selectedIds.size, maxBatch)} Application Pages` : `Apply to ${Math.min(selectedIds.size, maxBatch)} Internships`}
               </button>
             )}
           </div>
