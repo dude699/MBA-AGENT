@@ -1171,6 +1171,26 @@ class StealthHTTPClient:
                 return None
         return None
 
+    def get_text(self, url: str, site: str = "",
+                 **kwargs) -> Optional[str]:
+        """GET request returning just the text body."""
+        result = self.get(url, site=site, **kwargs)
+        if result and result.get('status_code', 0) == 200:
+            return result.get('text', '')
+        return None
+
+    def post_json(self, url: str, site: str = "",
+                  json_data: Optional[Dict] = None,
+                  **kwargs) -> Optional[Dict]:
+        """POST request expecting JSON response."""
+        result = self.post(url, site=site, json_data=json_data, **kwargs)
+        if result and result.get('text'):
+            try:
+                return json.loads(result['text'])
+            except json.JSONDecodeError:
+                return None
+        return None
+
     def get_with_retry(self, url: str, site: str = "",
                        max_retries: int = 3,
                        **kwargs) -> Optional[Dict]:

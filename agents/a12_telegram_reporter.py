@@ -4158,10 +4158,20 @@ class TelegramReporter:
             counts = db.delete_all_listings()
             total = sum(counts.values())
 
+            # Also clear Supabase
+            sb_result = {}
+            try:
+                from core.supabase_db import SupabaseDB
+                sb_result = SupabaseDB.clear_all_jobs()
+            except Exception as sb_err:
+                sb_result = {"error": str(sb_err)[:100]}
+
             details = '\n'.join(f"  {k}: {v}" for k, v in counts.items())
+            sb_details = '\n'.join(f"  {k}: {v}" for k, v in sb_result.items())
             await update.message.reply_text(
                 f"🗑️ <b>Database Cleared!</b>\n\n"
-                f"Deleted {total} total records:\n{details}\n\n"
+                f"<b>SQLite:</b> Deleted {total} total records:\n{details}\n\n"
+                f"<b>Supabase:</b>\n{sb_details}\n\n"
                 f"💡 Run <code>/run all</code> to re-scrape all portals.",
                 parse_mode='HTML'
             )

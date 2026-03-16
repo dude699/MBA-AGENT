@@ -1745,7 +1745,9 @@ class WeeklyAgentScheduler:
                 return
 
             jobs = []
+            tier_map = {1: 'tier1', 2: 'tier2', 3: 'tier3', 4: 'startup', 5: 'startup'}
             for row in recent:
+                tier_num = row.get("tier")
                 jobs.append({
                     "title": row.get("title", ""),
                     "company": row.get("company", ""),
@@ -1764,6 +1766,10 @@ class WeeklyAgentScheduler:
                     "location_type": "remote" if row.get("is_wfh") else "onsite",
                     "sector": row.get("sector", ""),
                     "content_hash": row.get("content_hash", ""),
+                    "company_tier": tier_map.get(tier_num, "startup") if tier_num else "startup",
+                    "is_premium": bool(row.get("is_blue_ocean", False)),
+                    "is_verified": True,
+                    "skills": row.get("skills", "[]"),
                 })
 
             batch_id = f"sync_{trigger}_{datetime.now(IST).strftime('%Y%m%d_%H%M')}"

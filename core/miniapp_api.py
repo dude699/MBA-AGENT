@@ -978,11 +978,16 @@ def _compute_posted_date(listing: Dict) -> str:
 
 def _transform_listing(listing: Dict, detailed: bool = False) -> Dict:
     """Transform a database listing dict to frontend-friendly format."""
-    tier_map = {1: 'tier1', 2: 'tier1', 3: 'tier2', 4: 'tier3', 5: 'startup'}
+    # Map company DB tiers (1-5) to frontend tier labels
+    # Tier 1 = Elite (81 companies), Tier 2 = Strong MNC (220), Tier 3 = Indian Unicorn (180)
+    # Tier 4 = Growing Startup (320), Tier 5 = Niche/Sector (280)
+    tier_map = {1: 'tier1', 2: 'tier2', 3: 'tier3', 4: 'startup', 5: 'startup'}
     source_map = {
         'internshala': 'internshala', 'naukri': 'naukri', 'linkedin': 'linkedin',
         'indeed': 'indeed', 'iimjobs': 'iimjobs', 'glassdoor': 'glassdoor',
-        'greenhouse': 'angellist', 'lever': 'angellist', 'wellfound': 'wellfound',
+        'greenhouse': 'greenhouse', 'lever': 'lever', 'wellfound': 'wellfound',
+        'smartrecruiters': 'smartrecruiters', 'ashby': 'ashby',
+        'unstop': 'unstop', 'workday': 'workday',
     }
 
     lid = listing.get('id', 0)
@@ -1546,6 +1551,49 @@ async def handle_system_health(request: web.Request) -> web.Response:
     })
 
 
+async def handle_admin_reset_db(request):
+    """Admin endpoint to reset all database listings for fresh start.
+    POST /api/admin/reset-db
+    Body: { "confirm": true, "clear_supabase": true }
+    """
+    try:
+        body = await request.json() if request.can_read_body else {}
+    except Exception:
+        body = {}
+
+    if not body.get("confirm"):
+        return _json_response({"success": False, "error": "Send {confirm: true} to confirm"}, status=400)
+
+    results = {}
+
+    # Clear local SQLite
+    try:
+        from core.database import get_db
+        db = get_db()
+        counts = db.delete_all_listings()
+        results["sqlite"] = counts
+        logger.info(f"[{MODULE_ID}] Admin DB reset - SQLite: {counts}")
+    except Exception as e:
+        results["sqlite_error"] = str(e)
+
+    # Clear Supabase if requested
+    if body.get("clear_supabase", True):
+        try:
+            from core.supabase_db import SupabaseDB
+            sb_counts = SupabaseDB.clear_all_jobs()
+            results["supabase"] = sb_counts
+            logger.info(f"[{MODULE_ID}] Admin DB reset - Supabase: {sb_counts}")
+        except Exception as e:
+            results["supabase_error"] = str(e)
+
+    return _json_response({
+        "success": True,
+        "message": "Database reset complete. All old listings cleared.",
+        "results": results,
+        "timestamp": datetime.now(IST).isoformat(),
+    })
+
+
 # ============================================================
 # ROUTE REGISTRATION
 # ============================================================
@@ -1582,6 +1630,9 @@ def register_miniapp_routes(app):
 
     # System health check
     app.router.add_get('/api/system/health', handle_system_health)
+
+    # Admin: Database reset (clears all listings for fresh start)
+    app.router.add_post('/api/admin/reset-db', handle_admin_reset_db)
 
     # Mini-app: All static file serving is DYNAMIC (not add_static)
     # This way, even if dist/ is built AFTER server startup, files will be served.

@@ -236,12 +236,15 @@ def normalize_stipend(stipend_text: str) -> float:
     # Handle K suffix (10K = 10000)
     if 'k' in text:
         text = text.replace('k', '')
-        numbers = re.findall(r'[\d.]+', text)
+        numbers = re.findall(r'\d[\d.]*', text)
         if numbers:
-            return float(numbers[0]) * 1000
+            try:
+                return float(numbers[0]) * 1000
+            except ValueError:
+                return 0.0
 
-    # Extract all numbers
-    numbers = re.findall(r'[\d.]+', text)
+    # Extract all numbers (must contain at least one digit)
+    numbers = re.findall(r'\d[\d.]*', text)
 
     if not numbers:
         return 0.0
@@ -253,9 +256,15 @@ def normalize_stipend(stipend_text: str) -> float:
             high = float(numbers[1])
             monthly = (low + high) / 2
         except (ValueError, IndexError):
-            monthly = float(numbers[0])
+            try:
+                monthly = float(numbers[0])
+            except ValueError:
+                return 0.0
     else:
-        monthly = float(numbers[0])
+        try:
+            monthly = float(numbers[0])
+        except ValueError:
+            return 0.0
 
     # Handle "lump sum" or "total" — estimate monthly
     if 'lump' in stipend_text.lower() or 'total' in stipend_text.lower():
@@ -2142,8 +2151,11 @@ class AshbyDirectScraper:
                     'Accept': 'application/json',
                     'User-Agent': random.choice(DESKTOP_USER_AGENTS),
                 })
-                if resp and resp.status_code == 200:
-                    data = resp.json()
+                if resp and resp.get('status_code') == 200:
+                    try:
+                        data = json.loads(resp.get('text', '{}'))
+                    except (json.JSONDecodeError, TypeError):
+                        data = {}
                     jobs = data.get('jobs', [])
                     for job in jobs:
                         listing = self._parse_ashby_job(job, slug, batch_id)
@@ -2153,9 +2165,9 @@ class AshbyDirectScraper:
                                 all_listings.append(listing)
                             except Exception:
                                 pass
-                    logger.info(f"[{AGENT_ID}] Ashby/{slug}: {len(jobs)} jobs found")
+                    logger.info(f"[{AGENT_ID}] Ashby/{slug}: {len(jobs)} jobs found (total: {len(jobs)})")
                 else:
-                    logger.debug(f"[{AGENT_ID}] Ashby/{slug}: HTTP {getattr(resp, 'status_code', 'N/A')}")
+                    logger.debug(f"[{AGENT_ID}] Ashby/{slug}: HTTP {resp.get('status_code', 'N/A') if resp else 'N/A'}")
             except Exception as e:
                 logger.error(f"[{AGENT_ID}] Ashby/{slug} error: {e}")
 
@@ -2292,8 +2304,11 @@ class SmartRecruitersScraper:
                     'Accept': 'application/json',
                     'User-Agent': random.choice(DESKTOP_USER_AGENTS),
                 })
-                if resp and resp.status_code == 200:
-                    data = resp.json()
+                if resp and resp.get('status_code') == 200:
+                    try:
+                        data = json.loads(resp.get('text', '{}'))
+                    except (json.JSONDecodeError, TypeError):
+                        data = {}
                     postings = data.get('content', [])
                     for posting in postings:
                         listing = self._parse_sr_posting(posting, company_id, batch_id)
@@ -2305,7 +2320,7 @@ class SmartRecruitersScraper:
                                 pass
                     logger.info(f"[{AGENT_ID}] SmartRecruiters/{company_id}: {len(postings)} postings")
                 else:
-                    logger.debug(f"[{AGENT_ID}] SmartRecruiters/{company_id}: HTTP {getattr(resp, 'status_code', 'N/A')}")
+                    logger.debug(f"[{AGENT_ID}] SmartRecruiters/{company_id}: HTTP {resp.get('status_code', 'N/A') if resp else 'N/A'}")
             except Exception as e:
                 logger.error(f"[{AGENT_ID}] SmartRecruiters/{company_id} error: {e}")
 

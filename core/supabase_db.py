@@ -689,6 +689,45 @@ class SupabaseJobDB:
 
         return deleted
 
+    @staticmethod
+    def clear_all_jobs() -> Dict[str, int]:
+        """
+        Delete ALL jobs from latest_jobs and all_jobs tables.
+        Used for clean start after major architectural changes.
+        """
+        if not is_operational():
+            return {"error": "not operational"}
+
+        client = get_supabase()
+        if not client:
+            return {"error": "no client"}
+
+        counts = {}
+        try:
+            # Clear latest_jobs
+            try:
+                resp = client.table("latest_jobs").delete().neq("id", 0).execute()
+                counts["latest_jobs"] = len(resp.data) if resp.data else 0
+            except Exception as e:
+                logger.debug(f"[{MODULE_ID}] Clear latest_jobs error: {e}")
+                counts["latest_jobs"] = 0
+
+            # Clear all_jobs
+            try:
+                resp = client.table("all_jobs").delete().neq("id", 0).execute()
+                counts["all_jobs"] = len(resp.data) if resp.data else 0
+            except Exception as e:
+                logger.debug(f"[{MODULE_ID}] Clear all_jobs error: {e}")
+                counts["all_jobs"] = 0
+
+            logger.info(f"[{MODULE_ID}] Cleared all Supabase jobs: {counts}")
+            record_success()
+        except Exception as e:
+            logger.error(f"[{MODULE_ID}] clear_all_jobs error: {e}")
+            record_failure()
+
+        return counts
+
     # ---- STATS ----
 
     @staticmethod
