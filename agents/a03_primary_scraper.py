@@ -2436,10 +2436,13 @@ class PrimaryScraper:
             for portal in PORTAL_RATE_LIMITS.keys()
         }
 
-    def set_active_portals(self, portals: list):
-        """Set which portals to scrape this session (v6.0 compat)."""
+    def set_active_portals(self, portals: Optional[list]):
+        """Set which portals to scrape this session. Pass None to scrape ALL portals."""
         self._active_portals = portals
-        logger.info(f"[{AGENT_ID}] Active portals set: {portals}")
+        if portals is not None:
+            logger.info(f"[{AGENT_ID}] Active portals set: {portals}")
+        else:
+            logger.info(f"[{AGENT_ID}] Active portals cleared — ALL portals will be scraped")
 
     def set_proxy_pool_indices(self, indices: list):
         """Set proxy pool indices (v6.0 compat)."""

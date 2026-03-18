@@ -3,13 +3,14 @@
 // ============================================================
 
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
-import { useQuery, useInfiniteQuery, useMutation } from '@tanstack/react-query';
+import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
 import { useAppStore } from '@/store/useAppStore';
 import {
   fetchInternships,
   fetchInternshipById,
   fetchAnalytics,
   applyToInternship,
+  batchApplyToInternships,
   chatWithLLM,
 } from '@/services/api';
 import { applyFilters, applySorting, deduplicateInternships, hapticFeedback } from '@/utils/helpers';
@@ -100,12 +101,6 @@ export function useBatchApply() {
     setBatchState, startBatch, completeBatch, cancelBatch, markApplied,
   } = useAppStore();
 
-  const applyMutation = useMutation({
-    mutationFn: async ({ id, creds }: { id: string; creds: Record<string, string> }) => {
-      return applyToInternship(id, creds);
-    },
-  });
-
   const executeBatch = useCallback(async () => {
     if (selectedIds.size === 0) {
       toast.error('No internships selected');
@@ -130,14 +125,139 @@ export function useBatchApply() {
       }
     }
 
+    const { internships: storeInternships } = useAppStore.getState();
+    const ids = Array.from(selectedIds);
+
     // For direct-apply sources (no credential requirements),
-    // open each job URL in a new tab
+    // open each job URL in a new tab AND mark as applied via API
     if (!needsCreds) {
-      const { internships: storeInternships } = useAppStore.getState();
-      const ids = Array.from(selectedIds);
+      startBatch();
+      hapticFeedback('medium');
+      let openedCount = 0;
+      
+      for (let i = 0; i < ids.length; i++) {
+        if (useAppStore.getState().batch.status === 'paused') break;
+        setBatchState({ currentIndex: i, status: 'running' });
+        
+        const item = storeInternships.find((int) => int.id === ids[i]);
+        if (item?.sourceUrl) {
+          window.open(item.sourceUrl, '_blank');
+          openedCount++;
+        }
+        
+        // Mark applied in backend
+        try {
+          await applyToInternship(ids[i], {});
+        } catch {}
+        
+        markApplied(ids[i], 'applied');
+        setBatchState({
+          processedIds: [...useAppStore.getState().batch.processedIds, ids[i]],
+          successCount: openedCount,
+        });
+        
+        // Small delay between opens to avoid popup blockers
+        if (i < ids.length - 1) {
+          await new Promise((r) => setTimeout(r, 800));
+        }
+      }
+      
+      completeBatch();
+      hapticFeedback('heavy');
+      toast.success(`Opened ${openedCount} application pages`);
+      return;
+    }
+
+    // For credential-based sources, use batch-apply API
+    const cred = credentials.find((c) => c.source === lockedSource)!;
+    startBatch();
+    hapticFeedback('medium');
+
+    try {
+      // Call the batch-apply API endpoint
+      const batchResult = await batchApplyToInternships(
+        ids,
+        cred.credentials,
+        lockedSource
+      );
+
+      if (batchResult.success && batchResult.data) {
+        const { results, summary } = batchResult.data;
+        let successCount = 0;
+        let failCount = 0;
+        const processedIds: string[] = [];
+        const failedIds: string[] = [];
+        const errors: Array<{ internshipId: string; error: string; timestamp: string; retryable: boolean }> = [];
+
+        for (const result of results) {
+          const id = String(result.id);
+          setBatchState({ currentIndex: processedIds.length + failedIds.length, status: 'running' });
+
+          if (result.success) {
+            markApplied(id, 'applied');
+            successCount++;
+            processedIds.push(id);
+
+            // For auto_apply_failed, still open the URL as fallback
+            if (result.method === 'auto_apply_failed' && result.source_url) {
+              window.open(result.source_url, '_blank');
+            }
+          } else {
+            failCount++;
+            failedIds.push(id);
+            errors.push({
+              internshipId: id,
+              error: result.error || 'Application failed',
+              timestamp: new Date().toISOString(),
+              retryable: true,
+            });
+
+            // Open the source URL as fallback for failed auto-apply
+            if (result.source_url) {
+              window.open(result.source_url, '_blank');
+              markApplied(id, 'applied'); // Still mark since we opened the page
+            }
+          }
+        }
+
+        setBatchState({
+          processedIds,
+          failedIds,
+          successCount,
+          failCount,
+          errors,
+        });
+
+        completeBatch();
+        hapticFeedback('heavy');
+        
+        if (successCount > 0 && failCount === 0) {
+          toast.success(`${successCount} applications submitted successfully!`);
+        } else if (successCount > 0 && failCount > 0) {
+          toast.success(`${successCount} applied, ${failCount} opened for manual apply`);
+        } else {
+          toast.error(`Auto-apply failed. ${failCount} pages opened for manual application.`);
+        }
+      } else {
+        // API call failed entirely — fallback to opening URLs
+        let openedCount = 0;
+        for (const id of ids) {
+          const item = storeInternships.find((int) => int.id === id);
+          if (item?.sourceUrl) {
+            window.open(item.sourceUrl, '_blank');
+            markApplied(id, 'applied');
+            openedCount++;
+          }
+        }
+        completeBatch();
+        hapticFeedback('medium');
+        toast.error(`Server error. Opened ${openedCount} pages for manual apply.`);
+      }
+    } catch (err: any) {
+      // Network error — fallback to opening URLs
       let openedCount = 0;
       for (const id of ids) {
-        const item = storeInternships.find((i) => i.id === id);
+        const item = storeInternships.find((int) => int.id === id);
         if (item?.sourceUrl) {
           window.open(item.sourceUrl, '_blank');
           markApplied(id, 'applied');
@@ -145,72 +265,9 @@ export function useBatchApply() {
         }
       }
       completeBatch();
-      toast.success(`Opened ${openedCount} application pages`);
-      return;
+      hapticFeedback('medium');
+      toast.error(`Connection error. Opened ${openedCount} pages for manual apply.`);
     }
-
-    const cred = credentials.find((c) => c.source === lockedSource)!;
-    startBatch();
-    hapticFeedback('medium');
-
-    const ids = Array.from(selectedIds);
-    let successCount = 0;
-    let failCount = 0;
-
-    for (let i = 0; i < ids.length; i++) {
-      if (useAppStore.getState().batch.status === 'paused') break;
-
-      setBatchState({ currentIndex: i, status: 'running' });
-
-      try {
-        const result = await applyMutation.mutateAsync({
-          id: ids[i],
-          creds: cred.credentials,
-        });
-
-        if (result.success) {
-          markApplied(ids[i], 'applied');
-          successCount++;
-          setBatchState({
-            processedIds: [...batch.processedIds, ids[i]],
-            successCount,
-          });
-        } else {
-          failCount++;
-          setBatchState({
-            failedIds: [...batch.failedIds, ids[i]],
-            failCount,
-            errors: [...batch.errors, {
-              internshipId: ids[i],
-              error: result.error || 'Unknown error',
-              timestamp: new Date().toISOString(),
-              retryable: true,
-            }],
-          });
-        }
-      } catch (err: any) {
-        failCount++;
-        setBatchState({
-          failedIds: [...batch.failedIds, ids[i]],
-          failCount,
-          errors: [...batch.errors, {
-            internshipId: ids[i],
-            error: err.message || 'Network error',
-            timestamp: new Date().toISOString(),
-            retryable: true,
-          }],
-        });
-      }
-
-      // Add delay between applications (realistic pacing)
-      if (i < ids.length - 1) {
-        await new Promise((r) => setTimeout(r, 2000 + Math.random() * 3000));
-      }
-    }
-
-    completeBatch();
-    hapticFeedback('heavy');
-    toast.success(`Batch complete: ${successCount} applied, ${failCount} failed`);
   }, [selectedIds, lockedSource, credentials, batch]);
 
   return {

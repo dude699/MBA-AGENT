@@ -1,5 +1,7 @@
 // ============================================================
 // BATCH APPLY PANEL — Auto-Apply with Source Locking & Security
+// v2.0: Fully working batch apply with progress, fallback, and
+//       proper action buttons that are always visible
 // ============================================================
 
 import React, { useState } from 'react';
@@ -7,7 +9,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   X, Play, Pause, CheckCircle2, AlertTriangle, Shield, Lock,
   Clock, Zap, ChevronRight, AlertOctagon, Info, Loader2,
-  Eye, EyeOff, Key
+  Eye, EyeOff, Key, ExternalLink, Send, RotateCcw
 } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { useBatchApply, useCountdown } from '@/hooks/useHooks';
@@ -39,6 +41,7 @@ export default function BatchApplyPanel() {
   const canApply = hasCreds || isDirectApplySource;
 
   const selectedInternships = internships.filter((i) => selectedIds.has(i.id));
+  const applyCount = Math.min(selectedIds.size, maxBatch);
 
   const handleSaveCredentials = () => {
     if (!lockedSource) return;
@@ -50,6 +53,11 @@ export default function BatchApplyPanel() {
     });
     setShowCredForm(false);
     hapticNotification('success');
+  };
+
+  const handleStartApply = () => {
+    executeBatch();
+    hapticFeedback('heavy');
   };
 
   return (
@@ -85,7 +93,7 @@ export default function BatchApplyPanel() {
             </button>
           </div>
 
-          <div className="flex-1 overflow-y-auto" style={{ paddingBottom: '24px' }}>
+          <div className="flex-1 overflow-y-auto" style={{ paddingBottom: '8px' }}>
             {/* Source Lock Notice */}
             {lockedSource && (
               <div className="mx-5 mt-4 p-3 bg-accent/5 border border-accent/20 rounded-xl">
@@ -160,8 +168,8 @@ export default function BatchApplyPanel() {
                     <CheckCircle2 className="w-3 h-3" /> Saved
                   </span>
                 ) : isDirectApplySource ? (
-                  <span className="flex items-center gap-1 text-[10px] font-bold text-status-info">
-                    <Info className="w-3 h-3" /> Direct Apply
+                  <span className="flex items-center gap-1 text-[10px] font-bold text-blue-600">
+                    <ExternalLink className="w-3 h-3" /> Direct Apply
                   </span>
                 ) : (
                   <span className="text-[10px] font-bold text-status-warning">Required</span>
@@ -170,19 +178,35 @@ export default function BatchApplyPanel() {
 
               {isDirectApplySource && !hasCreds && (
                 <div className="p-3 bg-blue-50 border border-blue-100 rounded-xl mb-2">
-                  <p className="text-[11px] text-blue-700">
-                    This source supports direct application via URL. Click "Apply" to open the application page in your browser.
+                  <div className="flex items-center gap-2 mb-1">
+                    <ExternalLink className="w-3.5 h-3.5 text-blue-600" />
+                    <span className="text-[11px] font-bold text-blue-700">Direct Application</span>
+                  </div>
+                  <p className="text-[11px] text-blue-600">
+                    This source supports direct application. Clicking "Apply" will open {applyCount} application {applyCount === 1 ? 'page' : 'pages'} in your browser and mark them as applied.
                   </p>
                 </div>
               )}
 
-              {!hasCreds && !showCredForm && (
+              {!isDirectApplySource && !hasCreds && !showCredForm && (
                 <button
                   onClick={() => { setShowCredForm(true); hapticFeedback('light'); }}
-                  className="w-full py-3 bg-surface-muted border border-dashed border-primary-300 rounded-xl text-xs font-semibold text-primary-600 hover:bg-surface-light transition-all"
+                  className="w-full py-3 bg-surface-muted border border-dashed border-primary-300 rounded-xl text-xs font-semibold text-primary-600 hover:bg-surface-light transition-all active:scale-[0.98]"
                 >
                   + Add {sourceConfig?.name || 'Platform'} Credentials
                 </button>
+              )}
+
+              {!isDirectApplySource && hasCreds && !showCredForm && (
+                <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-xl mb-2">
+                  <div className="flex items-center gap-2 mb-1">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                    <span className="text-[11px] font-bold text-emerald-700">Auto-Apply Ready</span>
+                  </div>
+                  <p className="text-[11px] text-emerald-600">
+                    PRISM will generate personalized cover letters and submit applications to {sourceConfig?.name || 'the portal'} automatically. Failed applications will fall back to manual apply.
+                  </p>
+                </div>
               )}
 
               {showCredForm && credReq && (
@@ -237,14 +261,14 @@ export default function BatchApplyPanel() {
               <div className="space-y-2">
                 {selectedInternships.slice(0, 10).map((item, idx) => (
                   <div key={item.id} className="flex items-center gap-3 p-2.5 bg-surface-muted rounded-xl">
-                    <span className="w-5 h-5 bg-accent rounded-md flex items-center justify-center text-white text-[10px] font-bold">
+                    <span className="w-5 h-5 bg-accent rounded-md flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0">
                       {idx + 1}
                     </span>
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-semibold text-primary-800 line-clamp-1">{item.title}</p>
-                      <p className="text-[10px] text-primary-500">{item.company}</p>
+                      <p className="text-[10px] text-primary-500 line-clamp-1">{item.company}</p>
                     </div>
-                    <span className="text-xs font-bold text-stipend-high whitespace-nowrap">
+                    <span className="text-xs font-bold text-stipend-high whitespace-nowrap flex-shrink-0">
                       {item.stipend > 0 ? `₹${(item.stipend/1000).toFixed(0)}K` : 'Unpaid'}
                     </span>
                   </div>
@@ -303,7 +327,7 @@ export default function BatchApplyPanel() {
               <div className="mx-5 mt-4 p-4 bg-status-success/5 rounded-xl border border-status-success/20">
                 <div className="flex items-center gap-2 mb-1">
                   <CheckCircle2 className="w-4 h-4 text-status-success" />
-                  <span className="text-xs font-bold text-status-success">Batch Complete — Ready for Next</span>
+                  <span className="text-xs font-bold text-status-success">Batch Complete</span>
                 </div>
                 <p className="text-[11px] text-primary-600">
                   {batch.successCount} applications submitted successfully.
@@ -313,32 +337,61 @@ export default function BatchApplyPanel() {
             )}
           </div>
 
-          {/* Action Button */}
-          <div className="sticky bottom-0 left-0 right-0 p-4 bg-white border-t border-[#e5e7eb]" style={{ paddingBottom: 'calc(1rem + env(safe-area-inset-bottom, 0px))' }}>
+          {/* ============================================ */}
+          {/* ACTION BUTTON — Always visible, sticky bottom */}
+          {/* ============================================ */}
+          <div
+            className="flex-shrink-0 p-4 bg-white border-t border-surface-border"
+            style={{ paddingBottom: 'calc(1rem + env(safe-area-inset-bottom, 0px))' }}
+          >
             {batch.status === 'running' ? (
               <button
                 onClick={() => { useAppStore.getState().cancelBatch(); hapticFeedback('medium'); }}
-                className="w-full py-3 bg-status-danger text-white rounded-xl font-semibold text-sm flex items-center justify-center gap-2"
+                className="w-full py-3.5 bg-red-600 text-white rounded-xl font-semibold text-sm flex items-center justify-center gap-2 active:scale-[0.98] transition-transform"
               >
                 <Pause className="w-4 h-4" /> Pause Batch
               </button>
             ) : batch.status === 'cooldown' && !isComplete ? (
-              <button disabled className="w-full py-3 bg-primary-200 text-primary-500 rounded-xl font-semibold text-sm cursor-not-allowed flex items-center justify-center gap-2">
-                <Lock className="w-4 h-4" /> Locked — {remaining}
+              <button
+                disabled
+                className="w-full py-3.5 bg-gray-200 text-gray-500 rounded-xl font-semibold text-sm cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                <Lock className="w-4 h-4" /> Cooldown — {remaining}
               </button>
             ) : (
               <button
-                onClick={() => { executeBatch(); hapticFeedback('heavy'); }}
+                onClick={handleStartApply}
                 disabled={selectedIds.size === 0 || !canApply}
-                className={`w-full py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all ${
+                className={`w-full py-3.5 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all active:scale-[0.98] ${
                   selectedIds.size > 0 && canApply
-                    ? 'bg-accent text-white hover:bg-accent-light'
-                    : 'bg-primary-200 text-primary-500 cursor-not-allowed'
+                    ? 'bg-[#0a0a0a] text-white shadow-lg hover:shadow-xl'
+                    : 'bg-gray-200 text-gray-500 cursor-not-allowed'
                 }`}
               >
-                <Play className="w-4 h-4" />
-                {!canApply ? 'Add Credentials First' : isDirectApplySource ? `Open ${Math.min(selectedIds.size, maxBatch)} Application Pages` : `Apply to ${Math.min(selectedIds.size, maxBatch)} Internships`}
+                {!canApply ? (
+                  <>
+                    <Key className="w-4 h-4" /> Add Credentials First
+                  </>
+                ) : isDirectApplySource ? (
+                  <>
+                    <ExternalLink className="w-4 h-4" /> Open {applyCount} Application {applyCount === 1 ? 'Page' : 'Pages'}
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-4 h-4" /> Auto-Apply to {applyCount} {applyCount === 1 ? 'Internship' : 'Internships'}
+                  </>
+                )}
               </button>
+            )}
+
+            {/* Quick info below button */}
+            {selectedIds.size > 0 && canApply && batch.status === 'idle' && (
+              <p className="text-[10px] text-primary-400 text-center mt-2">
+                {isDirectApplySource
+                  ? 'Opens application pages in your browser for manual submission'
+                  : 'PRISM generates cover letters and submits applications automatically'
+                }
+              </p>
             )}
           </div>
         </motion.div>

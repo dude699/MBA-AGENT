@@ -232,7 +232,9 @@ async def handle_apply(request: web.Request) -> web.Response:
     """
     POST /api/apply/:id
 
-    Mark a listing as applied.
+    Apply to a listing. For credential-based sources (Internshala, etc.),
+    delegates to A-13 Auto-Apply Orchestrator for actual submission.
+    For direct-apply sources, marks as applied and returns the source URL.
     """
     try:
         from core.database import get_db, Outcome
@@ -248,6 +250,48 @@ async def handle_apply(request: web.Request) -> web.Response:
         if not listing:
             return _json_response({"success": False, "error": "Listing not found"}, status=404)
 
+        # Parse request body for credentials
+        credentials = {}
+        try:
+            body = await request.json()
+            credentials = body.get('credentials', {})
+        except Exception:
+            pass
+
+        source = (listing.get('source', '') or '').lower()
+        source_url = listing.get('source_url', '') or listing.get('url', '') or ''
+        apply_result = {'method': 'direct', 'source_url': source_url}
+
+        # For credential-based sources, attempt real application via A-13
+        if credentials and source in ('internshala', 'naukri', 'greenhouse', 'lever'):
+            try:
+                from agents.a13_auto_apply import get_auto_applier
+                applier = get_auto_applier()
+                attempt = applier.apply_single(listing, credentials)
+                if attempt and attempt.success:
+                    apply_result = {
+                        'method': 'auto_apply',
+                        'external_id': attempt.external_app_id,
+                        'cover_letter': attempt.cover_letter[:500] if attempt.cover_letter else '',
+                    }
+                else:
+                    error_msg = attempt.error if attempt else 'Auto-apply not available'
+                    apply_result = {
+                        'method': 'auto_apply_failed',
+                        'error': error_msg,
+                        'source_url': source_url,
+                        'fallback': 'manual',
+                    }
+                    # Still mark as applied since user initiated
+            except Exception as e:
+                logger.warning(f"[{MODULE_ID}] A-13 auto-apply failed for {lid}: {e}")
+                apply_result = {
+                    'method': 'auto_apply_error',
+                    'error': str(e)[:200],
+                    'source_url': source_url,
+                    'fallback': 'manual',
+                }
+
         outcome = Outcome(
             listing_id=lid,
             company_id=listing.get('company_id'),
@@ -259,11 +303,130 @@ async def handle_apply(request: web.Request) -> web.Response:
 
         return _json_response({
             "success": True,
-            "data": {"status": "applied", "listing_id": lid},
+            "data": {
+                "status": "applied",
+                "listing_id": lid,
+                "apply_result": apply_result,
+            },
         })
 
     except Exception as e:
         logger.error(f"[{MODULE_ID}] /api/apply error: {e}")
+        return _json_response({"success": False, "error": str(e)}, status=500)
+
+
+async def handle_batch_apply(request: web.Request) -> web.Response:
+    """
+    POST /api/batch-apply
+    Body: {
+        "listing_ids": [1, 2, 3],
+        "credentials": {"email": "...", "password": "..."},
+        "source": "internshala"
+    }
+
+    Batch apply to multiple listings. For credential-based sources,
+    delegates to A-13 with cover letter generation and anti-ban measures.
+    For direct sources, returns source URLs for manual opening.
+    """
+    try:
+        from core.database import get_db, Outcome
+        db = get_db()
+
+        body = await request.json()
+        listing_ids = body.get('listing_ids', [])
+        credentials = body.get('credentials', {})
+        source = body.get('source', '')
+
+        if not listing_ids:
+            return _json_response({"success": False, "error": "No listing IDs provided"}, status=400)
+
+        # Cap at 10 per batch for safety
+        listing_ids = listing_ids[:10]
+
+        results = []
+        success_count = 0
+        fail_count = 0
+
+        for lid_raw in listing_ids:
+            try:
+                lid = int(lid_raw)
+            except (ValueError, TypeError):
+                results.append({'id': lid_raw, 'success': False, 'error': 'Invalid ID'})
+                fail_count += 1
+                continue
+
+            listing = db.get_clean_listing_by_id(lid)
+            if not listing:
+                results.append({'id': lid, 'success': False, 'error': 'Not found'})
+                fail_count += 1
+                continue
+
+            source_url = listing.get('source_url', '') or listing.get('url', '') or ''
+            lst_source = (listing.get('source', '') or '').lower()
+
+            apply_method = 'direct'
+            apply_error = ''
+            external_id = ''
+
+            # Attempt A-13 auto-apply for credential-based sources
+            if credentials and lst_source in ('internshala', 'naukri', 'greenhouse', 'lever'):
+                try:
+                    from agents.a13_auto_apply import get_auto_applier
+                    applier = get_auto_applier()
+                    attempt = applier.apply_single(listing, credentials)
+                    if attempt and attempt.success:
+                        apply_method = 'auto_applied'
+                        external_id = attempt.external_app_id or ''
+                    else:
+                        apply_method = 'auto_apply_failed'
+                        apply_error = attempt.error if attempt else 'Failed'
+                except Exception as e:
+                    apply_method = 'auto_apply_error'
+                    apply_error = str(e)[:100]
+
+            # Record outcome regardless
+            try:
+                outcome = Outcome(
+                    listing_id=lid,
+                    company_id=listing.get('company_id'),
+                    status='applied',
+                    ppo_score_at_apply=listing.get('ppo_score', 0),
+                )
+                db.insert_outcome(outcome)
+                db.update_clean_listing_scores(lid, status='applied')
+            except Exception:
+                pass
+
+            is_success = apply_method in ('auto_applied', 'direct')
+            if is_success:
+                success_count += 1
+            else:
+                fail_count += 1
+
+            results.append({
+                'id': lid,
+                'success': is_success,
+                'method': apply_method,
+                'source_url': source_url,
+                'external_id': external_id,
+                'error': apply_error,
+            })
+
+        return _json_response({
+            "success": True,
+            "data": {
+                "results": results,
+                "summary": {
+                    "total": len(results),
+                    "success": success_count,
+                    "failed": fail_count,
+                },
+            },
+            "timestamp": datetime.now(IST).isoformat(),
+        })
+
+    except Exception as e:
+        logger.error(f"[{MODULE_ID}] /api/batch-apply error: {e}")
         return _json_response({"success": False, "error": str(e)}, status=500)
 
 
@@ -1612,6 +1775,7 @@ def register_miniapp_routes(app):
     app.router.add_get('/api/internships/{id}', handle_internship_detail)
     app.router.add_get('/api/analytics', handle_analytics)
     app.router.add_post('/api/apply/{id}', handle_apply)
+    app.router.add_post('/api/batch-apply', handle_batch_apply)
     app.router.add_post('/api/llm/chat', handle_llm_chat)
     app.router.add_get('/api/sources', handle_sources)
     app.router.add_get('/api/filters', handle_filters)

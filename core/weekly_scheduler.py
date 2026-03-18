@@ -886,17 +886,29 @@ class WeeklyAgentScheduler:
         # If a manual run happened within CONFLICT_COOLDOWN_SEC before a scheduled job,
         # that scheduled job is SKIPPED to avoid portal clashes and duplicate scraping.
         self._last_manual_pipeline_run: float = 0.0
-        self.CONFLICT_COOLDOWN_SEC: int = 1800  # 30 minutes
+        self._manual_pipeline_running: bool = False
+        self.CONFLICT_COOLDOWN_SEC: int = 3600  # 60 minutes cooldown after admin trigger
 
-    def mark_manual_pipeline_run(self):
+    def mark_manual_pipeline_run(self, running: bool = True):
         """Called by /run pipeline or /run all to record the timestamp.
-        Scheduled scraping jobs within CONFLICT_COOLDOWN_SEC will be skipped."""
+        Scheduled scraping jobs within CONFLICT_COOLDOWN_SEC will be skipped.
+        Call with running=False when the manual pipeline completes."""
         self._last_manual_pipeline_run = time.time()
-        logger.info(f"[WEEKLY-SCHEDULER] Manual pipeline run marked at {time.time():.0f}. "
-                     f"Scheduled scrapes within {self.CONFLICT_COOLDOWN_SEC}s will be skipped.")
+        self._manual_pipeline_running = running
+        if running:
+            logger.info(f"[WEEKLY-SCHEDULER] Manual pipeline run STARTED at {time.time():.0f}. "
+                         f"ALL scheduled scrapes will be PAUSED until completion + {self.CONFLICT_COOLDOWN_SEC}s cooldown.")
+        else:
+            logger.info(f"[WEEKLY-SCHEDULER] Manual pipeline run COMPLETED. "
+                         f"Scheduled scrapes will resume after {self.CONFLICT_COOLDOWN_SEC}s cooldown.")
 
     def should_skip_scheduled_scrape(self, job_id: str = '') -> bool:
-        """Check if a scheduled scrape should be skipped because a manual run just happened."""
+        """Check if a scheduled scrape should be skipped because a manual run is active or just completed."""
+        # Skip if manual pipeline is currently running
+        if self._manual_pipeline_running:
+            logger.info(f"[WEEKLY-SCHEDULER] SKIPPING scheduled '{job_id}' — admin manual pipeline is STILL RUNNING")
+            return True
+
         if self._last_manual_pipeline_run <= 0:
             return False
         elapsed = time.time() - self._last_manual_pipeline_run
@@ -1342,6 +1354,10 @@ class WeeklyAgentScheduler:
 
     async def _run_smart_portal_scrape_night(self):
         """Night deep crawl — AI-selected portals with deep pagination."""
+        # PRISM v0.1: Skip if manual run happened recently (conflict avoidance)
+        if self.should_skip_scheduled_scrape('smart_portal_scrape_night'):
+            return
+
         portals = self._router.get_today_portals("night")
         proxy_pool = self._router.get_today_proxy_pool()
         if not portals:
