@@ -1,74 +1,66 @@
 # ============================================================
 # PRISM v0.1 — PRECISION RECRUITMENT INTELLIGENCE & SCORING MACHINE
-# Complete Python Dependencies (20-Agent Architecture)
+# Optimized Dependencies for 512MB Render Free Tier
+# ============================================================
+# MEMORY BUDGET: 512MB total
+#   Python runtime: ~50MB
+#   Core deps (aiohttp, telegram, etc.): ~80MB
+#   AI SDK clients (groq, cerebras, openai): ~30MB
+#   Scraping (curl_cffi, bs4, lxml): ~40MB
+#   NLP (rapidfuzz, nltk): ~20MB
+#   Supabase + DB: ~30MB
+#   Application logic + data: ~50MB
+#   ─── TOTAL: ~300MB (leaves ~200MB headroom for spikes)
+#
+# REMOVED to fix OOM crashes:
+#   - torch (~800MB installed, ~200MB RAM) — REMOVED
+#   - sentence-transformers (~500MB installed, ~100MB RAM) — REMOVED
+#   - scikit-learn (~100MB installed, ~50MB RAM) — REMOVED
+#   - weasyprint (~80MB with system deps) — REMOVED
+#   - sib-api-v3-sdk (~30MB) — use httpx REST calls instead
+#   - tweepy (~20MB) — use httpx REST calls instead
+#   - stem (~15MB) — unused in practice
+#   - openpyxl (~20MB) — unused in practice
 # ============================================================
 
-# === AI & LLM Providers (5 providers) ===
-groq>=0.9                  # Groq 70B (PRIMARY DEEP) + Compound Beta (AGENTIC)
-cerebras-cloud-sdk>=1.0    # Cerebras 8B/70B (PRIMARY FAST)
-openai>=1.0                # OpenRouter (PRIMARY LONG — 1M context, OpenAI-compatible)
-# mistralai>=0.1           # Mistral (FALLBACK) — uses REST API directly, no SDK needed
+# === AI & LLM Providers (5 providers, lightweight SDKs) ===
+groq>=0.9                  # Groq 70B (PRIMARY DEEP) — ~5MB
+cerebras-cloud-sdk>=1.0    # Cerebras 8B/70B (PRIMARY FAST) — ~3MB
+openai>=1.0                # OpenRouter (PRIMARY LONG) — ~10MB
 
-# === HTTP & Scraping ===
-curl_cffi>=0.7
-requests>=2.31
-aiohttp>=3.9
-httpx>=0.27                # Async HTTP client with connection pooling
-beautifulsoup4>=4.12
-lxml>=5.0
+# === HTTP & Scraping (CORE — all essential) ===
+curl_cffi>=0.7             # Chrome TLS fingerprint — ~15MB
+requests>=2.31             # Standard HTTP — ~1MB
+aiohttp>=3.9               # Async web server — ~10MB
+httpx>=0.27                # Async HTTP client — ~5MB
+beautifulsoup4>=4.12       # HTML parsing — ~1MB
+lxml>=5.0                  # XML/HTML parser — ~15MB
 
-# === Browser Automation ===
-# playwright>=1.44          # Heavy - lazy install on Render
-# playwright-stealth>=1.0   # Heavy - lazy install on Render
+# === Telegram (CORE — essential for bot) ===
+python-telegram-bot>=21.0,<23.0  # Bot framework — ~20MB
+telethon>=1.36             # MTProto listener — ~15MB
 
-# === Telegram ===
-python-telegram-bot>=21.0,<23.0
-telethon>=1.36             # A-16: MTProto real-time group listener
+# === Search (lightweight) ===
+duckduckgo-search>=4.0     # DDG search — ~2MB
+ddgs>=6.0                  # DDG search alt — ~1MB
+feedparser>=6.0            # RSS parsing — ~1MB
 
-# === Twitter/X ===
-tweepy>=4.14
-
-# === Search ===
-duckduckgo-search>=4.0
-ddgs>=6.0
-feedparser>=6.0
-
-# === NLP & ML ===
-rapidfuzz>=3.0
-scikit-learn>=1.4
-numpy>=1.26
-nltk>=3.8
-
-# === PRISM v0.1: Local Embeddings (PPO V11 + Dedup Layer 4) ===
-sentence-transformers>=2.0 # all-MiniLM-L6-v2 (384-dim, ~80MB)
-torch>=2.0                 # Required by sentence-transformers (CPU only)
-
-# === PRISM v0.1: Email Outreach ===
-sib-api-v3-sdk>=7.0        # Brevo (Sendinblue) email API (300/day free)
-
-# === PRISM v0.1: Email Verification ===
-# pyhunter>=1.7            # Hunter.io (25 searches/month) — optional
-
-# === PRISM v0.1: CV Generation ===
-weasyprint>=60.0           # HTML-to-PDF CV rendering
+# === NLP (lightweight only — NO torch/sklearn) ===
+rapidfuzz>=3.0             # Fuzzy matching — ~5MB
+numpy>=1.26                # Array ops — ~30MB (needed by other deps)
+nltk>=3.8                  # Tokenization — ~10MB
 
 # === Scheduling ===
-APScheduler>=3.10
+APScheduler>=3.10          # Job scheduler — ~2MB
 
-# === Proxy & Anonymity ===
-stem>=1.8
+# === Resilience ===
+tenacity>=8.2              # Retry with backoff — ~1MB
+tldextract>=5.0            # Domain extraction — ~2MB
 
-# === Resilience & Self-Healing ===
-tenacity>=8.2              # Retry with exponential backoff + jitter
-tldextract>=5.0            # Robust domain extraction
-
-# === Data & Export ===
-openpyxl>=3.1
-
-# === Persistent Cloud Database (Supabase) ===
-supabase>=2.0
-postgrest>=0.16
+# === Persistent Cloud Database ===
+supabase>=2.0              # Supabase client — ~15MB
+postgrest>=0.16            # PostgREST — ~3MB
 
 # === Utilities ===
-python-dotenv>=1.0
-loguru>=0.7
+python-dotenv>=1.0         # Env var loading — ~1MB
+loguru>=0.7                # Structured logging — ~2MB
