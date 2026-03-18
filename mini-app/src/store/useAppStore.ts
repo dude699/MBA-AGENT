@@ -407,13 +407,23 @@ export const useAppStore = create<AppState>()(
         }));
       },
 
-      // ===== UI ACTIONS =====
+      // ===== UI ACTIONS (with mutual exclusion for panels) =====
       setLoading: (loading) => set({ isLoading: loading }),
-      setFilterOpen: (open) => set({ isFilterOpen: open }),
-      setSortOpen: (open) => set({ isSortOpen: open }),
-      setBatchPanelOpen: (open) => set({ isBatchPanelOpen: open }),
-      setLLMPanelOpen: (open) => set({ isLLMPanelOpen: open }),
-      setDetailOpen: (id) => set({ isDetailOpen: id }),
+      setFilterOpen: (open) => set(open ? {
+        isFilterOpen: true, isSortOpen: false, isBatchPanelOpen: false, isLLMPanelOpen: false, isDetailOpen: null,
+      } : { isFilterOpen: false }),
+      setSortOpen: (open) => set(open ? {
+        isSortOpen: true, isFilterOpen: false, isBatchPanelOpen: false, isLLMPanelOpen: false, isDetailOpen: null,
+      } : { isSortOpen: false }),
+      setBatchPanelOpen: (open) => set(open ? {
+        isBatchPanelOpen: true, isFilterOpen: false, isSortOpen: false, isLLMPanelOpen: false, isDetailOpen: null,
+      } : { isBatchPanelOpen: false }),
+      setLLMPanelOpen: (open) => set(open ? {
+        isLLMPanelOpen: true, isFilterOpen: false, isSortOpen: false, isBatchPanelOpen: false, isDetailOpen: null,
+      } : { isLLMPanelOpen: false }),
+      setDetailOpen: (id) => set(id ? {
+        isDetailOpen: id, isFilterOpen: false, isSortOpen: false, isBatchPanelOpen: false, isLLMPanelOpen: false,
+      } : { isDetailOpen: null }),
       setPage: (page) => set({ page }),
       setHasMore: (hasMore) => set({ hasMore }),
       setTotalCount: (count) => set({ totalCount: count }),

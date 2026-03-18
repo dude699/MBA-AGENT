@@ -102,7 +102,7 @@ VERSION = "0.1.0-prism"
 RENDER_OVERLAP_GRACE_SEC = int(os.getenv('RENDER_OVERLAP_GRACE_SEC', '20'))
 WATCHDOG_INTERVAL_SEC = 120
 STARTUP_TIMEOUT_SEC = 120
-GC_INTERVAL_SEC = 300
+GC_INTERVAL_SEC = 120
 
 BANNER = """
 +============================================================+
@@ -709,14 +709,33 @@ class Application:
                 logger.error(f"[WATCHDOG] Error: {e}")
 
     async def _gc_loop(self):
+        """Aggressive GC loop for 512MB Render constraint."""
         while not self._shutdown_event.is_set():
             try:
                 await asyncio.sleep(GC_INTERVAL_SEC)
                 if self._shutdown_event.is_set():
                     break
+                # Full generational GC
+                gc.collect(generation=2)
                 collected = gc.collect()
-                if collected > 100:
-                    logger.debug(f"[GC] Collected {collected} objects")
+                # Check memory pressure
+                try:
+                    import resource
+                    mem_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024
+                    if mem_mb > 400:
+                        logger.warning(f"[GC] Memory pressure: {mem_mb}MB/512MB — forcing deep GC")
+                        gc.collect(generation=2)
+                        gc.collect()
+                        # Clear module caches
+                        try:
+                            import linecache
+                            linecache.clearcache()
+                        except Exception:
+                            pass
+                    elif collected > 50:
+                        logger.debug(f"[GC] Collected {collected} objects, mem={mem_mb}MB")
+                except Exception:
+                    pass
             except asyncio.CancelledError:
                 break
             except Exception:
@@ -817,22 +836,15 @@ class Application:
             logger.info(f"[Phase 8.5/11] A-16 Telethon: skipped ({e})")
 
         # ============================================================
-        # PRISM v0.1: Phase 9 — Embedding Engine Warmup
+        # PRISM v0.1: Phase 9 — Embedding Engine (Lightweight)
         # ============================================================
-        logger.info("[Phase 9/11] PRISM embedding engine warmup...")
+        logger.info("[Phase 9/11] PRISM embedding engine init...")
         try:
             from core.embedding_engine import get_embedding_engine
             embed_engine = get_embedding_engine()
             embed_health = embed_engine.get_health()
-            lazy = embed_health.get('lazy_load', True)
-            if lazy:
-                self._status.mark_ok('embeddings', 'lazy-load enabled (will load on first use)')
-                logger.info("[Phase 9/11] Embedding engine: lazy-load (will load on first PPO V11 call)")
-            else:
-                # Force load now
-                embed_engine._ensure_loaded()
-                self._status.mark_ok('embeddings', f'loaded: {embed_health["model_name"]}')
-                logger.info(f"[Phase 9/11] Embedding engine: loaded ({embed_health['model_name']})")
+            self._status.mark_ok('embeddings', f'ready: {embed_health["model_name"]} (~5MB RAM)')
+            logger.info(f"[Phase 9/11] Embedding engine: {embed_health['model_name']} (lightweight, ~5MB)")
         except Exception as e:
             self._status.mark_degraded('embeddings', str(e))
             logger.info(f"[Phase 9/11] Embedding engine: skipped ({e})")

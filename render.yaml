@@ -8,7 +8,7 @@ services:
     # STRATEGY: Skip tsc (it only type-checks with noEmit:true) and run vite build directly.
     #   tsc fails on Render due to NODE_ENV=production skipping @types/* devDeps.
     #   Vite uses esbuild for transpilation, not tsc, so skipping tsc is safe.
-    buildCommand: "pip install -r requirements.txt && python -c \"import nltk; nltk.download('punkt_tab')\" && cd mini-app && npm install --include=dev --no-audit --no-fund && ./node_modules/.bin/vite build && ls -la dist/ && cd .."
+    buildCommand: "pip install --no-cache-dir -r requirements.txt && python -c \"import nltk; nltk.download('punkt_tab', quiet=True)\" && cd mini-app && npm install --include=dev --no-audit --no-fund && ./node_modules/.bin/vite build && ls -la dist/ && cd .."
     # start.sh ensures mini-app is built even if buildCommand wasn't synced from render.yaml
     startCommand: bash start.sh
     healthCheckPath: /health

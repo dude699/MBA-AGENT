@@ -117,13 +117,39 @@ export function useBatchApply() {
       return;
     }
 
-    // Check credentials
-    const cred = credentials.find((c) => c.source === lockedSource);
-    if (!cred || !cred.isValid) {
-      toast.error(`Please add ${lockedSource} credentials first`);
+    // Check if this source requires credentials
+    const credReq = (await import('@/utils/constants')).CREDENTIAL_REQUIREMENTS;
+    const needsCreds = credReq.some((c: any) => c.source === lockedSource);
+    
+    if (needsCreds) {
+      // Check credentials for sources that need them
+      const cred = credentials.find((c) => c.source === lockedSource);
+      if (!cred || !cred.isValid) {
+        toast.error(`Please add ${lockedSource} credentials first`);
+        return;
+      }
+    }
+
+    // For direct-apply sources (no credential requirements),
+    // open each job URL in a new tab
+    if (!needsCreds) {
+      const { internships: storeInternships } = useAppStore.getState();
+      const ids = Array.from(selectedIds);
+      let openedCount = 0;
+      for (const id of ids) {
+        const item = storeInternships.find((i) => i.id === id);
+        if (item?.sourceUrl) {
+          window.open(item.sourceUrl, '_blank');
+          markApplied(id, 'applied');
+          openedCount++;
+        }
+      }
+      completeBatch();
+      toast.success(`Opened ${openedCount} application pages`);
       return;
     }
 
+    const cred = credentials.find((c) => c.source === lockedSource)!;
     startBatch();
     hapticFeedback('medium');
 
@@ -132,7 +158,7 @@ export function useBatchApply() {
     let failCount = 0;
 
     for (let i = 0; i < ids.length; i++) {
-      if (batch.status === 'paused') break;
+      if (useAppStore.getState().batch.status === 'paused') break;
 
       setBatchState({ currentIndex: i, status: 'running' });
 
