@@ -29,8 +29,8 @@ const AI_PROFILES = [
     color: '#7c3aed',
     gradient: 'linear-gradient(135deg, #7c3aed 0%, #a855f7 50%, #c084fc 100%)',
     glowColor: 'rgba(124,58,237,0.15)',
-    description: 'Your personal AI career strategist — scans all 20 PRISM agents, the live job database, your CV, and market signals to deliver precise, actionable career intelligence.',
-    tagline: 'PRISM Multi-Agent Intelligence',
+    description: 'Your personal AI strategist powered by 20 autonomous PRISM agents. Analyzes live job data, your CV, ghost detection signals, and Blue Ocean opportunities in real-time to deliver razor-sharp career intelligence.',
+    tagline: 'Multi-Agent Career Intelligence',
     capabilities: [
       'Cross-agent job matching (A-03/A-04/A-08 data)',
       'Ghost detection insights (A-05)',
@@ -58,8 +58,8 @@ You provide strategic career advice backed by real data from the system. Be spec
     color: '#0891b2',
     gradient: 'linear-gradient(135deg, #0891b2 0%, #22d3ee 50%, #67e8f9 100%)',
     glowColor: 'rgba(8,145,178,0.15)',
-    description: 'Harvard Business School format expert. Analyzes your CV against ATS requirements, JD keywords, and STAR methodology. Generates tailored cover letters, LinkedIn content, and SOPs.',
-    tagline: 'HBS/ISB/IIM Format Expert',
+    description: 'Harvard/ISB/IIM resume format specialist. Rewrites your CV bullets with STAR methodology, injects ATS keywords from live job descriptions, and crafts killer cover letters that get interviews.',
+    tagline: 'STAR Format & ATS Optimization',
     capabilities: [
       'STAR-format bullet point rewriting',
       'ATS keyword injection from live JDs',
@@ -93,8 +93,8 @@ When the user asks about their CV:
     color: '#059669',
     gradient: 'linear-gradient(135deg, #059669 0%, #34d399 50%, #6ee7b7 100%)',
     glowColor: 'rgba(5,150,105,0.15)',
-    description: 'Reverse-engineers ATS algorithms used by Greenhouse, Lever, and Workday. Scores your CV against specific JDs with keyword gap analysis and section-by-section optimization.',
-    tagline: 'Reverse-Engineer ATS Algorithms',
+    description: 'Reverse-engineers Greenhouse, Lever, and Workday ATS algorithms. Scores your CV out of 100, maps keyword gaps against live JDs, and gives section-by-section rewrites to beat automated filters.',
+    tagline: 'Beat Automated Screening',
     capabilities: [
       'ATS score out of 100 (6 sub-scores)',
       'Keyword gap heat map vs top JDs',
@@ -125,8 +125,8 @@ When analyzing a CV:
     color: '#dc2626',
     gradient: 'linear-gradient(135deg, #dc2626 0%, #f87171 50%, #fca5a5 100%)',
     glowColor: 'rgba(220,38,38,0.15)',
-    description: 'India-specific MBA career strategist. Knows AMU/IIM/ISB placement patterns, sector momentum, stipend benchmarks, PPO conversion strategies, and real-time hiring trends from PRISM data.',
-    tagline: 'India MBA Placement Specialist',
+    description: 'India MBA placement specialist with AMU/IIM/ISB benchmarks, sector momentum data, stipend intelligence by company tier, and week-by-week PPO conversion strategies backed by PRISM real-time data.',
+    tagline: 'Placement & PPO Intelligence',
     capabilities: [
       'AMU/IIM/ISB placement pattern analysis',
       'Sector momentum tracking (PRISM A-01 data)',
@@ -274,10 +274,11 @@ function ThinkingIndicator({ profileColor, profileName }: { profileColor: string
   const [thinkingPhase, setThinkingPhase] = useState(0);
 
   const phases = [
-    'Connecting to PRISM agents',
-    'Scanning job database',
-    'Analyzing your profile',
-    'Generating intelligence',
+    'Connecting to PRISM intelligence',
+    'Scanning live job database',
+    'Cross-referencing your profile',
+    'Running multi-agent analysis',
+    'Synthesizing recommendations',
   ];
 
   useEffect(() => {
@@ -488,6 +489,11 @@ export default function LLMPanel() {
             height: '92vh',
             maxHeight: '92vh',
             boxShadow: '0 -8px 48px rgba(0,0,0,0.12), 0 -2px 8px rgba(0,0,0,0.06)',
+            /* Prevent visual viewport resize from breaking layout on mobile */
+            position: 'fixed',
+            bottom: 0,
+            left: 0,
+            right: 0,
           }}
           onClick={(e) => e.stopPropagation()}
         >
@@ -728,12 +734,14 @@ export default function LLMPanel() {
             <div ref={messagesEndRef} />
           </div>
 
-          {/* Input Area */}
+          {/* Input Area — Fixed at bottom, works with mobile keyboards */}
           <div
             className="flex-shrink-0 px-4 py-3 bg-white"
             style={{
               borderTop: '1px solid rgba(229,231,235,0.5)',
               paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))',
+              /* GPU accelerate to prevent keyboard flicker */
+              transform: 'translateZ(0)',
             }}
           >
             {/* Active Profile Indicator */}

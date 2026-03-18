@@ -192,7 +192,7 @@ export async function fetchAnalytics(): Promise<APIResponse<AnalyticsData>> {
   }
 }
 
-export async function applyToInternship(id: string, _credentials: Record<string, string>): Promise<APIResponse<{ status: ApplicationStatus }>> {
+export async function applyToInternship(id: string, _credentials: Record<string, string>): Promise<APIResponse<{ status: ApplicationStatus; apply_result?: any }>> {
   try {
     const resp = await fetch(getApiUrl(`/apply/${id}`), {
       method: 'POST',
@@ -207,7 +207,10 @@ export async function applyToInternship(id: string, _credentials: Record<string,
     const data = await resp.json();
     return {
       success: data.success,
-      data: { status: data.success ? 'applied' : 'not_applied' },
+      data: {
+        status: data.success ? 'applied' : 'not_applied',
+        apply_result: data.data?.apply_result,
+      },
       error: data.error,
       timestamp: data.timestamp || new Date().toISOString(),
     };
@@ -217,6 +220,47 @@ export async function applyToInternship(id: string, _credentials: Record<string,
       success: false,
       data: { status: 'not_applied' },
       error: 'Failed to connect to server. Try using /apply in the Telegram bot.',
+      timestamp: new Date().toISOString(),
+    };
+  }
+}
+
+export async function batchApplyToInternships(
+  listingIds: string[],
+  credentials: Record<string, string>,
+  source: string
+): Promise<APIResponse<{
+  results: Array<{ id: number; success: boolean; method: string; source_url: string; error: string }>;
+  summary: { total: number; success: number; failed: number };
+}>> {
+  try {
+    const resp = await fetch(getApiUrl('/batch-apply'), {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({
+        listing_ids: listingIds.map(id => parseInt(id, 10)),
+        credentials,
+        source,
+      }),
+    });
+
+    if (!resp.ok) {
+      throw new Error(`API error: ${resp.status}`);
+    }
+
+    const data = await resp.json();
+    return {
+      success: data.success,
+      data: data.data,
+      error: data.error,
+      timestamp: data.timestamp || new Date().toISOString(),
+    };
+  } catch (error) {
+    console.warn('[API] batchApplyToInternships failed:', error);
+    return {
+      success: false,
+      data: { results: [], summary: { total: 0, success: 0, failed: 0 } },
+      error: 'Failed to connect to batch-apply server.',
       timestamp: new Date().toISOString(),
     };
   }

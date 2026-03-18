@@ -2310,19 +2310,23 @@ class TelegramReporter:
     # Map of runnable agent names to their runner info
     _RUN_AGENTS = {
         'pipeline': {
-            'desc': 'Full pipeline: scrape → dedup → ghost → enrich → PPO → brief',
-            'steps': ['scrape', 'dedup', 'ghost', 'enrich', 'ppo', 'brief'],
+            'desc': 'FULL pipeline: ALL portals scrape → ATS → dedup → ghost → enrich → PPO → brief',
+            'steps': ['full_scrape', 'ats_crawl', 'dedup', 'ghost', 'enrich', 'ppo', 'brief'],
         },
         'all': {
-            'desc': 'ALL PORTALS + ATS + Full processing pipeline (irrespective of schedule)',
-            'steps': ['scrape', 'afternoon', 'ats_crawl', 'dark', 'intent', 'dedup', 'ghost', 'enrich', 'ppo', 'brief'],
+            'desc': 'EVERYTHING: ALL portals + ATS + dark channels + intent + full processing',
+            'steps': ['full_scrape', 'ats_crawl', 'dark', 'intent', 'dedup', 'ghost', 'enrich', 'ppo', 'brief'],
         },
         'scrape': {
             'desc': 'A-03: Internshala full scrape (10 categories)',
             'agent': 'A-03',
         },
         'afternoon': {
-            'desc': 'A-03: Naukri + IIMjobs afternoon scrape',
+            'desc': 'A-03: LinkedIn + Career Pages + Indeed + Wellfound + Ashby + SmartRecruiters',
+            'agent': 'A-03',
+        },
+        'full_scrape': {
+            'desc': 'A-03: ALL PORTALS deep crawl (Internshala + Naukri + IIMjobs + LinkedIn + Indeed + Wellfound + Ashby + SmartRecruiters + Career Pages + Instahyre)',
             'agent': 'A-03',
         },
         'dedup': {
@@ -2531,10 +2535,11 @@ class TelegramReporter:
         total_start = time.time()
 
         # PRISM v0.1: Mark manual pipeline run for schedule conflict avoidance
+        # This will PAUSE all scheduled scrapes until this pipeline completes + cooldown
         try:
             from core.weekly_scheduler import get_weekly_scheduler
             scheduler = get_weekly_scheduler()
-            scheduler.mark_manual_pipeline_run()
+            scheduler.mark_manual_pipeline_run(running=True)
         except Exception:
             pass  # Scheduler may not be initialized yet
 
@@ -2543,6 +2548,7 @@ class TelegramReporter:
             "🚀 <b>FULL PIPELINE STARTING</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             f"Steps: {' → '.join(steps)}\n\n"
+            "⏸ All scheduled scrapes are <b>PAUSED</b> until this completes.\n"
             "You'll get a progress update after each step."
         )
 
@@ -2592,6 +2598,14 @@ class TelegramReporter:
                 logger.error(f"[{AGENT_ID}] Pipeline step '{step}' failed: {e}")
                 # Continue with next step — partial processing is better than none
 
+        # Mark manual pipeline as COMPLETED — scheduled scrapes will resume after cooldown
+        try:
+            from core.weekly_scheduler import get_weekly_scheduler
+            scheduler = get_weekly_scheduler()
+            scheduler.mark_manual_pipeline_run(running=False)
+        except Exception:
+            pass
+
         # Final summary
         total_duration = time.time() - total_start
         lines = [
@@ -2606,6 +2620,8 @@ class TelegramReporter:
             lines.append(f"\n⚠️ {len(failed)} step(s) failed: {', '.join(failed)}")
         else:
             lines.append(f"\n🎉 All {len(steps)} steps completed!")
+
+        lines.append(f"\n▶️ Scheduled scrapes will resume after cooldown period.")
 
         # PRISM v0.1: Add real DB stats to pipeline completion report
         try:
@@ -2645,6 +2661,15 @@ class TelegramReporter:
             # run_morning_scrape is SYNC — run in executor to not block
             return await loop.run_in_executor(
                 None, get_primary_scraper().run_morning_scrape
+            )
+
+        elif agent_name == 'full_scrape':
+            from agents.a03_primary_scraper import get_primary_scraper
+            scraper = get_primary_scraper()
+            # Clear active_portals so ALL portals are scraped (no filtering)
+            scraper.set_active_portals(None)
+            return await loop.run_in_executor(
+                None, scraper.run_full_scrape
             )
 
         elif agent_name == 'afternoon':
