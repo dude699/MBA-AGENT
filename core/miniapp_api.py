@@ -324,9 +324,11 @@ async def handle_batch_apply(request: web.Request) -> web.Response:
         "source": "internshala"
     }
 
-    Batch apply to multiple listings. For credential-based sources,
-    delegates to A-13 with cover letter generation and anti-ban measures.
-    For direct sources, returns source URLs for manual opening.
+    Batch apply to multiple listings.
+    - For ALL sources: records the application outcome in the database
+    - For auto-apply-supported sources (internshala, naukri, greenhouse, lever):
+      attempts real submission via A-13 Auto-Apply Orchestrator
+    - Returns source_url for manual fallback when auto-apply fails/unavailable
     """
     try:
         from core.database import get_db, Outcome
@@ -343,6 +345,9 @@ async def handle_batch_apply(request: web.Request) -> web.Response:
         # Cap at 10 per batch for safety
         listing_ids = listing_ids[:10]
 
+        # Sources that support auto-apply via A-13
+        AUTO_APPLY_SOURCES = ('internshala', 'naukri', 'greenhouse', 'lever')
+
         results = []
         success_count = 0
         fail_count = 0
@@ -351,13 +356,13 @@ async def handle_batch_apply(request: web.Request) -> web.Response:
             try:
                 lid = int(lid_raw)
             except (ValueError, TypeError):
-                results.append({'id': lid_raw, 'success': False, 'error': 'Invalid ID'})
+                results.append({'id': lid_raw, 'success': False, 'method': 'error', 'source_url': '', 'external_id': '', 'error': 'Invalid ID'})
                 fail_count += 1
                 continue
 
             listing = db.get_clean_listing_by_id(lid)
             if not listing:
-                results.append({'id': lid, 'success': False, 'error': 'Not found'})
+                results.append({'id': lid, 'success': False, 'method': 'error', 'source_url': '', 'external_id': '', 'error': 'Not found'})
                 fail_count += 1
                 continue
 
@@ -368,8 +373,8 @@ async def handle_batch_apply(request: web.Request) -> web.Response:
             apply_error = ''
             external_id = ''
 
-            # Attempt A-13 auto-apply for credential-based sources
-            if credentials and lst_source in ('internshala', 'naukri', 'greenhouse', 'lever'):
+            # Attempt A-13 auto-apply for supported sources WITH credentials
+            if credentials and lst_source in AUTO_APPLY_SOURCES:
                 try:
                     from agents.a13_auto_apply import get_auto_applier
                     applier = get_auto_applier()
@@ -379,12 +384,13 @@ async def handle_batch_apply(request: web.Request) -> web.Response:
                         external_id = attempt.external_app_id or ''
                     else:
                         apply_method = 'auto_apply_failed'
-                        apply_error = attempt.error if attempt else 'Failed'
+                        apply_error = attempt.error if attempt else 'Auto-apply not available'
                 except Exception as e:
                     apply_method = 'auto_apply_error'
-                    apply_error = str(e)[:100]
+                    apply_error = str(e)[:200]
+                    logger.warning(f"[{MODULE_ID}] A-13 batch auto-apply failed for {lid} ({lst_source}): {e}")
 
-            # Record outcome regardless
+            # Record outcome in database regardless of auto-apply result
             try:
                 outcome = Outcome(
                     listing_id=lid,
@@ -394,8 +400,8 @@ async def handle_batch_apply(request: web.Request) -> web.Response:
                 )
                 db.insert_outcome(outcome)
                 db.update_clean_listing_scores(lid, status='applied')
-            except Exception:
-                pass
+            except Exception as db_err:
+                logger.warning(f"[{MODULE_ID}] Failed to record outcome for {lid}: {db_err}")
 
             is_success = apply_method in ('auto_applied', 'direct')
             if is_success:

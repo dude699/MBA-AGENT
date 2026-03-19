@@ -1870,10 +1870,39 @@ class WeeklyAgentScheduler:
             from core.stealth_engine import get_stealth_client
             client = get_stealth_client()
             result = client.proxy_pool.health_check_all()
+            alive = result.get('alive', 0)
+            dead = result.get('dead', 0)
             logger.info(
                 f"[WEEKLY-SCHEDULER-v7] Proxy health: "
-                f"{result.get('alive', 0)} alive, {result.get('dead', 0)} dead"
+                f"{alive} alive, {dead} dead"
             )
+
+            # If too many proxies are dead, refresh the proxy list
+            total = alive + dead
+            if total > 0 and dead / total > 0.7:
+                logger.info(
+                    f"[WEEKLY-SCHEDULER-v7] >70% proxies dead ({dead}/{total}), "
+                    f"refreshing proxy list..."
+                )
+                try:
+                    # Clear dead proxies and reload
+                    pool = client.proxy_pool
+                    with pool._lock:
+                        # Remove dead proxies
+                        alive_proxies = [
+                            p for p in pool._free_proxies
+                            if pool._proxy_health.get(p, {}).get('alive', False)
+                        ]
+                        pool._free_proxies = alive_proxies
+                    # Reload fresh proxies
+                    pool._load_free_proxies()
+                    logger.info(
+                        f"[WEEKLY-SCHEDULER-v7] Proxy list refreshed: "
+                        f"{len(pool._free_proxies)} proxies in pool"
+                    )
+                except Exception as e:
+                    logger.warning(f"[WEEKLY-SCHEDULER-v7] Proxy refresh error: {e}")
+
         except Exception as e:
             logger.debug(f"[WEEKLY-SCHEDULER-v7] Proxy health error: {e}")
 

@@ -48,6 +48,9 @@ export default function App() {
     filters, sort, selectBySource, deselectAll,
   } = useAppStore();
 
+  // Extra bottom padding when floating apply button is visible
+  const hasSelection = selectedIds.size > 0;
+
   const { loadMore, isLoading: queryLoading, isFetchingNextPage, refetch } = useInternships();
   const filteredInternships = useFilteredInternships();
 
@@ -231,7 +234,7 @@ export default function App() {
                   </div>
 
                   {/* Listings */}
-                  <div className="px-4 space-y-3">
+                  <div className="px-4 space-y-3" style={{ paddingBottom: hasSelection ? '80px' : '16px' }}>
                     {queryLoading && !isFetchingNextPage ? (
                       <ListSkeleton count={5} />
                     ) : filteredInternships.length === 0 ? (
@@ -291,7 +294,7 @@ export default function App() {
                     </button>
                   </div>
 
-                  <div className="space-y-3">
+                  <div className="space-y-3" style={{ paddingBottom: hasSelection ? '80px' : '16px' }}>
                     {sbLoading && sbJobs.length === 0 ? (
                       <ListSkeleton count={5} />
                     ) : sbJobs.length === 0 ? (

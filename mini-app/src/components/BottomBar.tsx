@@ -20,7 +20,7 @@ export default function BottomBar({ activeTab, onTabChange }: BottomBarProps) {
 
   return (
     <>
-      {/* Floating Apply Button (when items selected) */}
+      {/* Floating Apply Button (when items selected) — FIXED position, never scrolls */}
       <AnimatePresence>
         {hasSelection && (
           <motion.div
@@ -28,8 +28,17 @@ export default function BottomBar({ activeTab, onTabChange }: BottomBarProps) {
             animate={{ y: 0, opacity: 1, scale: 1 }}
             exit={{ y: 100, opacity: 0, scale: 0.9 }}
             transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-            className="fixed left-4 right-4 z-[41]"
-            style={{ bottom: 'calc(76px + env(safe-area-inset-bottom, 0px))' }}
+            className="fixed left-4 right-4 z-[45]"
+            style={{
+              bottom: 'calc(72px + env(safe-area-inset-bottom, 0px))',
+              /* Prevent any scroll-based repositioning */
+              transform: 'translateZ(0)',
+              willChange: 'transform, opacity',
+              /* Ensure button stays put during scroll momentum */
+              WebkitTransform: 'translateZ(0)',
+              backfaceVisibility: 'hidden',
+              WebkitBackfaceVisibility: 'hidden',
+            }}
           >
             <motion.button
               onClick={() => { setBatchPanelOpen(true); hapticFeedback('medium'); }}
@@ -40,10 +49,9 @@ export default function BottomBar({ activeTab, onTabChange }: BottomBarProps) {
                 boxShadow: '0 8px 32px rgba(0,0,0,0.25), 0 2px 8px rgba(0,0,0,0.15)',
               }}
               whileTap={{ scale: 0.97 }}
-              whileHover={{ y: -1 }}
             >
               <Zap className="w-4.5 h-4.5" />
-              Auto-Apply to {selectedIds.size} Internship{selectedIds.size > 1 ? 's' : ''}
+              Apply to {selectedIds.size} Internship{selectedIds.size > 1 ? 's' : ''}
               <motion.span
                 className="ml-1 px-2 py-0.5 rounded-full text-[10px] font-bold"
                 style={{ background: 'rgba(255,255,255,0.15)' }}

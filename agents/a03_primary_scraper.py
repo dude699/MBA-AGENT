@@ -139,8 +139,10 @@ NAUKRI_API_HEADERS = {
 }
 
 # PRISM v0.1: Naukri MBA search queries for API v2
+# Expanded for better coverage
 NAUKRI_MBA_QUERIES = [
     {"keyword": "MBA intern", "experience": "0"},
+    {"keyword": "MBA internship", "experience": "0"},
     {"keyword": "management trainee intern", "experience": "0"},
     {"keyword": "summer internship MBA", "experience": "0"},
     {"keyword": "marketing intern MBA", "experience": "0"},
@@ -156,6 +158,14 @@ NAUKRI_MBA_QUERIES = [
     {"keyword": "brand management intern", "experience": "0"},
     {"keyword": "corporate finance intern", "experience": "0"},
     {"keyword": "supply chain intern MBA", "experience": "0"},
+    {"keyword": "business analyst intern", "experience": "0"},
+    {"keyword": "management consulting intern", "experience": "0"},
+    {"keyword": "private equity intern", "experience": "0"},
+    {"keyword": "venture capital intern", "experience": "0"},
+    {"keyword": "business development intern", "experience": "0"},
+    {"keyword": "sales intern MBA", "experience": "0"},
+    {"keyword": "digital marketing intern", "experience": "0"},
+    {"keyword": "market research intern", "experience": "0"},
 ]
 
 # IIMjobs configuration
@@ -175,7 +185,7 @@ LINKEDIN_DORK = 'site:linkedin.com/jobs/view "{query}" india intern'
 # PRISM v0.1: Rate limits per portal
 PORTAL_RATE_LIMITS = {
     "internshala": {"rpm": 50, "pages_per_session": 10, "delay_range": (5, 15)},
-    "naukri":      {"rpm": 30, "pages_per_session": 8,  "delay_range": (10, 20)},
+    "naukri":      {"rpm": 40, "pages_per_session": 12, "delay_range": (8, 18)},
     "iimjobs":     {"rpm": 40, "pages_per_session": 5,  "delay_range": (6, 12)},
     "linkedin":    {"rpm": 5,  "pages_per_session": 3,  "delay_range": (15, 30)},
     "indeed":      {"rpm": 20, "pages_per_session": 10, "delay_range": (3, 8)},
@@ -937,16 +947,17 @@ class NaukriScraper:
 
     def scrape_mba_internships(self, max_pages: int = 5) -> List[RawListing]:
         """
-        PRISM v0.1: Scrape MBA internships from Naukri.
+        PRISM v0.1.1: Scrape MBA internships from Naukri.
 
-        Strategy: API v2 (PRIMARY) → DDG dorks (FALLBACK)
+        Strategy: API v2 (PRIMARY) → API v3 (SECONDARY) → DDG dorks (FALLBACK)
+        Enhanced: More queries, higher limits, dual-API approach.
         """
         self.batch_id = generate_batch_id("naukri")
         self._request_count = 0
         all_listings = []
 
         logger.info(f"[{AGENT_ID}] Starting Naukri PRISM scrape "
-                     f"(batch: {self.batch_id}, strategy: api_v2_primary)")
+                     f"(batch: {self.batch_id}, strategy: api_v2_v3_primary)")
 
         # ── PRIMARY: Naukri API v2 ──
         api_listings = self._scrape_api_v2(max_pages=max_pages)
@@ -955,13 +966,20 @@ class NaukriScraper:
         if api_listings:
             logger.info(f"[{AGENT_ID}] Naukri API v2 yielded {len(api_listings)} listings")
         else:
-            logger.warning(f"[{AGENT_ID}] Naukri API v2 yielded 0 — falling back to DDG dorks")
+            logger.warning(f"[{AGENT_ID}] Naukri API v2 yielded 0 — trying API v3")
             self._api_available = False
+
+        # ── SECONDARY: Try API v3 if v2 failed or yielded few results ──
+        if len(api_listings) < 20:
+            v3_listings = self._scrape_api_v3(max_pages=max_pages)
+            all_listings.extend(v3_listings)
+            if v3_listings:
+                logger.info(f"[{AGENT_ID}] Naukri API v3 yielded {len(v3_listings)} listings")
 
         # ── FALLBACK: DDG Dorks ──
         # Always run DDG to catch listings not in API results
         # (broader coverage), but limit queries if API worked
-        max_dorks = 5 if api_listings else 14
+        max_dorks = 5 if (len(api_listings) >= 20) else 14
         ddg_listings = self._scrape_ddg_dorks(max_dorks=max_dorks)
         all_listings.extend(ddg_listings)
 
@@ -982,17 +1000,19 @@ class NaukriScraper:
             logger.info(
                 f"[{AGENT_ID}] Naukri complete: "
                 f"{len(unique)} unique, {inserted} new "
-                f"(API: {len(api_listings)}, DDG: {len(ddg_listings)})"
+                f"(API v2: {len(api_listings)}, DDG: {len(ddg_listings)})"
             )
 
         return unique
 
     def _scrape_api_v2(self, max_pages: int = 5) -> List[RawListing]:
         """
-        PRISM v0.1 PRIMARY: Naukri Direct API v2 search.
+        PRISM v0.1.1 PRIMARY: Naukri Direct API v2 search.
 
         GET https://www.naukri.com/jobapi/v2/search
         Required headers: appid=109, systemid=Naukri, gid, XHR
+
+        Enhanced: Try multiple jobAge values, increase query coverage.
         """
         listings = []
         seen_urls: Set[str] = set()
@@ -1002,7 +1022,7 @@ class NaukriScraper:
         random.shuffle(queries)
 
         queries_used = 0
-        max_queries = min(len(queries), 10)
+        max_queries = min(len(queries), 15)  # Was 10 - increased coverage
 
         for query_info in queries:
             if queries_used >= max_queries:
@@ -1021,7 +1041,7 @@ class NaukriScraper:
                         'pageNo': str(page),
                         'experience': query_info.get("experience", "0"),
                         'sort': 'r',  # Relevance
-                        'jobAge': '7',  # Last 7 days
+                        'jobAge': '15',  # Was 7 — expanded to 15 days for more listings
                         'seoKey': '',
                         'src': 'jobsearchDesk',
                     }
@@ -1044,7 +1064,7 @@ class NaukriScraper:
 
                     if status in (403, 406, 429):
                         logger.warning(f"[{AGENT_ID}] Naukri API v2 returned {status} "
-                                       f"— API blocked, switching to DDG fallback")
+                                       f"— API blocked, switching to fallback")
                         return listings  # Return whatever we have
 
                     if status != 200:
@@ -1084,6 +1104,91 @@ class NaukriScraper:
             queries_used += 1
             # Inter-query delay
             time.sleep(random.uniform(5, 10))
+
+        return listings
+
+    def _scrape_api_v3(self, max_pages: int = 3) -> List[RawListing]:
+        """
+        PRISM v0.1.1 SECONDARY: Naukri API v3 search.
+
+        GET https://www.naukri.com/jobapi/v3/search
+        Similar to v2 but with slightly different params and response format.
+        Used as secondary source when v2 yields few results.
+        """
+        listings = []
+        seen_urls: Set[str] = set()
+
+        # Use a subset of queries for v3
+        queries = NAUKRI_MBA_QUERIES.copy()
+        random.shuffle(queries)
+        max_queries = min(len(queries), 8)
+
+        for idx, query_info in enumerate(queries[:max_queries]):
+            for page in range(1, max_pages + 1):
+                try:
+                    params = {
+                        'noOfResults': '20',
+                        'urlType': 'search_by_keyword',
+                        'searchType': 'adv',
+                        'keyword': query_info["keyword"],
+                        'pageNo': str(page),
+                        'experience': query_info.get("experience", "0"),
+                        'sort': 'f',  # Freshness sort for v3
+                        'jobAge': '30',  # Wider window for v3
+                        'src': 'jobsearchDesk',
+                        'latLong': '',
+                    }
+                    url = f"{NAUKRI_API_V3_URL}?{urlencode(params)}"
+
+                    headers = NAUKRI_API_HEADERS.copy()
+                    headers['User-Agent'] = random.choice(DESKTOP_USER_AGENTS)
+
+                    response = self.stealth.get(
+                        url, site='naukri', headers=headers, auto_delay=True
+                    )
+                    self._request_count += 1
+
+                    if not response:
+                        break
+
+                    status = response.get('status_code', 0)
+                    if status in (403, 406, 429):
+                        logger.warning(f"[{AGENT_ID}] Naukri API v3 blocked ({status})")
+                        return listings
+                    if status != 200:
+                        break
+
+                    data = response.get('json', {})
+                    if isinstance(data, str):
+                        try:
+                            data = json.loads(data)
+                        except json.JSONDecodeError:
+                            break
+
+                    # v3 can have different response structures
+                    job_details = (data.get('jobDetails', []) or
+                                   data.get('jobs', []) or
+                                   data.get('data', {}).get('jobs', []))
+                    if not job_details:
+                        break
+
+                    for job in job_details:
+                        try:
+                            listing = self._parse_api_v2_job(job)  # Same format
+                            if listing and listing.url and listing.url not in seen_urls:
+                                seen_urls.add(listing.url)
+                                listings.append(listing)
+                        except Exception:
+                            continue
+
+                    _portal_delay("naukri")
+
+                except Exception as e:
+                    logger.debug(f"[{AGENT_ID}] Naukri API v3 error: {e}")
+                    break
+
+            # Inter-query delay
+            time.sleep(random.uniform(4, 8))
 
         return listings
 
