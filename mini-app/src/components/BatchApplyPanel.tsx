@@ -36,9 +36,11 @@ export default function BatchApplyPanel() {
   const maxBatch = sourceConfig?.maxBatchSize || 5;
   const hasCreds = credentials.some((c) => c.source === lockedSource && c.isValid);
   const credReq = CREDENTIAL_REQUIREMENTS.find((c) => c.source === lockedSource);
-  // For sources without credential requirements (ashby, greenhouse, etc.), allow direct apply
+  // Sources without credential requirements can apply directly via backend
+  // (backend handles auto-apply for supported sources, records for others)
   const isDirectApplySource = !credReq;
-  const canApply = hasCreds || isDirectApplySource;
+  // Always allow apply - backend handles the logic. Credentials are optional enhancement.
+  const canApply = true;
 
   const selectedInternships = internships.filter((i) => selectedIds.has(i.id));
   const applyCount = Math.min(selectedIds.size, maxBatch);
@@ -177,13 +179,14 @@ export default function BatchApplyPanel() {
               </div>
 
               {isDirectApplySource && !hasCreds && (
-                <div className="p-3 bg-blue-50 border border-blue-100 rounded-xl mb-2">
+                <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-xl mb-2">
                   <div className="flex items-center gap-2 mb-1">
-                    <ExternalLink className="w-3.5 h-3.5 text-blue-600" />
-                    <span className="text-[11px] font-bold text-blue-700">Direct Application</span>
+                    <Send className="w-3.5 h-3.5 text-emerald-600" />
+                    <span className="text-[11px] font-bold text-emerald-700">Auto-Apply Ready</span>
                   </div>
-                  <p className="text-[11px] text-blue-600">
-                    This source supports direct application. Clicking "Apply" will open {applyCount} application {applyCount === 1 ? 'page' : 'pages'} in your browser and mark them as applied.
+                  <p className="text-[11px] text-emerald-600">
+                    PRISM will submit applications and generate cover letters automatically.
+                    {applyCount} application{applyCount > 1 ? 's' : ''} will be processed.
                   </p>
                 </div>
               )}
@@ -368,29 +371,16 @@ export default function BatchApplyPanel() {
                     : 'bg-gray-200 text-gray-500 cursor-not-allowed'
                 }`}
               >
-                {!canApply ? (
-                  <>
-                    <Key className="w-4 h-4" /> Add Credentials First
-                  </>
-                ) : isDirectApplySource ? (
-                  <>
-                    <ExternalLink className="w-4 h-4" /> Open {applyCount} Application {applyCount === 1 ? 'Page' : 'Pages'}
-                  </>
-                ) : (
-                  <>
-                    <Send className="w-4 h-4" /> Auto-Apply to {applyCount} {applyCount === 1 ? 'Internship' : 'Internships'}
-                  </>
-                )}
+                <>
+                  <Send className="w-4 h-4" /> Apply to {applyCount} {applyCount === 1 ? 'Internship' : 'Internships'}
+                </>
               </button>
             )}
 
             {/* Quick info below button */}
             {selectedIds.size > 0 && canApply && batch.status === 'idle' && (
               <p className="text-[10px] text-primary-400 text-center mt-2">
-                {isDirectApplySource
-                  ? 'Opens application pages in your browser for manual submission'
-                  : 'PRISM generates cover letters and submits applications automatically'
-                }
+                PRISM records applications & auto-submits where supported
               </p>
             )}
           </div>

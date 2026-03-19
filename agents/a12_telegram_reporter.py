@@ -850,23 +850,50 @@ class TelegramReporter:
         """
         Build a fresh TGApplication with all handlers registered.
         Extracted to avoid duplication in retry loop.
+
+        PRISM v0.1.1: Enhanced HTTP resilience:
+        - Increased read timeouts to prevent httpx.ReadError
+        - Custom HTTPXRequest with connection pool tuning
+        - Higher poll interval to reduce connection pressure
         """
         from telegram.ext import (
             Application as TGApplication,
             CommandHandler,
         )
+        from telegram.request import HTTPXRequest
+
+        # Custom HTTPX request with robust connection pool settings
+        # This fixes the recurring httpx.ReadError by:
+        # 1. Larger connection pool (handles concurrent sends during polling)
+        # 2. Higher timeouts (Render's free tier has network jitter)
+        # 3. Proper keep-alive settings
+        custom_request = HTTPXRequest(
+            connection_pool_size=16,
+            connect_timeout=30.0,
+            read_timeout=60.0,       # Was 30 - too low for Render
+            write_timeout=30.0,
+            pool_timeout=30.0,       # Was 15 - too low under load
+        )
+
+        # Separate request instance for get_updates (long-polling)
+        # Needs even higher read timeout since it waits for updates
+        get_updates_request = HTTPXRequest(
+            connection_pool_size=4,
+            connect_timeout=30.0,
+            read_timeout=90.0,       # Was 45 - needs to be high for long-polling
+            write_timeout=30.0,
+            pool_timeout=30.0,
+        )
 
         app = (
             TGApplication.builder()
             .token(token)
-            .connect_timeout(30)
-            .read_timeout(30)
-            .write_timeout(30)
-            .pool_timeout(15)
-            .get_updates_connect_timeout(20)
-            .get_updates_read_timeout(45)
-            .get_updates_write_timeout(20)
-            .get_updates_pool_timeout(15)
+            .request(custom_request)
+            .get_updates_request(get_updates_request)
+            .get_updates_connect_timeout(30)
+            .get_updates_read_timeout(90)
+            .get_updates_write_timeout(30)
+            .get_updates_pool_timeout(30)
             .build()
         )
 
@@ -1070,7 +1097,11 @@ class TelegramReporter:
                 await self._app.updater.start_polling(
                     drop_pending_updates=True,
                     allowed_updates=["message", "callback_query"],
-                    poll_interval=1.0,
+                    poll_interval=2.0,       # Was 1.0 - reduced to lower connection pressure
+                    read_timeout=90,         # Match our custom HTTPXRequest
+                    write_timeout=30,
+                    connect_timeout=30,
+                    pool_timeout=30,
                 )
                 self._running = True
                 logger.info(

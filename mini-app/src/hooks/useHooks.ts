@@ -95,6 +95,10 @@ export function useAnalytics() {
 }
 
 // ===== BATCH APPLY =====
+// v3.0: ALL sources go through backend batch-apply API for real application.
+// The backend handles auto-apply via A-13 for supported sources (internshala,
+// naukri, greenhouse, lever) and marks as applied for tracking.
+// NO MORE window.open() as primary action — that was the entire bug.
 export function useBatchApply() {
   const {
     batch, selectedIds, lockedSource, credentials,
@@ -112,97 +116,83 @@ export function useBatchApply() {
       return;
     }
 
-    // Check if this source requires credentials
+    // Check if this source has credential requirements
     const credReq = (await import('@/utils/constants')).CREDENTIAL_REQUIREMENTS;
     const needsCreds = credReq.some((c: any) => c.source === lockedSource);
-    
-    if (needsCreds) {
-      // Check credentials for sources that need them
-      const cred = credentials.find((c) => c.source === lockedSource);
-      if (!cred || !cred.isValid) {
-        toast.error(`Please add ${lockedSource} credentials first`);
-        return;
-      }
+
+    // Get credentials if they exist (optional for some sources)
+    const cred = credentials.find((c) => c.source === lockedSource);
+
+    if (needsCreds && (!cred || !cred.isValid)) {
+      toast.error(`Please add ${lockedSource} credentials first`);
+      return;
     }
 
     const { internships: storeInternships } = useAppStore.getState();
     const ids = Array.from(selectedIds);
 
-    // For direct-apply sources (no credential requirements),
-    // open each job URL in a new tab AND mark as applied via API
-    if (!needsCreds) {
-      startBatch();
-      hapticFeedback('medium');
-      let openedCount = 0;
-      
-      for (let i = 0; i < ids.length; i++) {
-        if (useAppStore.getState().batch.status === 'paused') break;
-        setBatchState({ currentIndex: i, status: 'running' });
-        
-        const item = storeInternships.find((int) => int.id === ids[i]);
-        if (item?.sourceUrl) {
-          window.open(item.sourceUrl, '_blank');
-          openedCount++;
-        }
-        
-        // Mark applied in backend
-        try {
-          await applyToInternship(ids[i], {});
-        } catch {}
-        
-        markApplied(ids[i], 'applied');
-        setBatchState({
-          processedIds: [...useAppStore.getState().batch.processedIds, ids[i]],
-          successCount: openedCount,
-        });
-        
-        // Small delay between opens to avoid popup blockers
-        if (i < ids.length - 1) {
-          await new Promise((r) => setTimeout(r, 800));
-        }
-      }
-      
-      completeBatch();
-      hapticFeedback('heavy');
-      toast.success(`Opened ${openedCount} application pages`);
-      return;
-    }
-
-    // For credential-based sources, use batch-apply API
-    const cred = credentials.find((c) => c.source === lockedSource)!;
     startBatch();
     hapticFeedback('medium');
 
     try {
-      // Call the batch-apply API endpoint
+      // ALL sources now go through the batch-apply API.
+      // The backend will:
+      //   1. For credential sources (internshala, naukri, greenhouse, lever):
+      //      attempt real auto-apply via A-13
+      //   2. For all sources: record the application in the database
+      //   3. Return results with source_url ONLY as fallback info
       const batchResult = await batchApplyToInternships(
         ids,
-        cred.credentials,
+        cred?.credentials || {},
         lockedSource
       );
 
       if (batchResult.success && batchResult.data) {
-        const { results, summary } = batchResult.data;
+        const { results } = batchResult.data;
         let successCount = 0;
         let failCount = 0;
         const processedIds: string[] = [];
         const failedIds: string[] = [];
         const errors: Array<{ internshipId: string; error: string; timestamp: string; retryable: boolean }> = [];
+        // Track which ones need manual fallback
+        const manualFallbackUrls: string[] = [];
 
-        for (const result of results) {
+        for (let i = 0; i < results.length; i++) {
+          const result = results[i];
           const id = String(result.id);
-          setBatchState({ currentIndex: processedIds.length + failedIds.length, status: 'running' });
+          setBatchState({ currentIndex: i, status: 'running' });
 
-          if (result.success) {
+          if (result.success && result.method === 'auto_applied') {
+            // Truly auto-applied by backend A-13
             markApplied(id, 'applied');
             successCount++;
             processedIds.push(id);
-
-            // For auto_apply_failed, still open the URL as fallback
-            if (result.method === 'auto_apply_failed' && result.source_url) {
-              window.open(result.source_url, '_blank');
+          } else if (result.success && result.method === 'direct') {
+            // Backend recorded it, but needs manual submission
+            // Collect URL for a single batch-open at the end
+            markApplied(id, 'applied');
+            successCount++;
+            processedIds.push(id);
+            if (result.source_url) {
+              manualFallbackUrls.push(result.source_url);
+            }
+          } else if (result.method === 'auto_apply_failed' || result.method === 'auto_apply_error') {
+            // Auto-apply was attempted but failed
+            failCount++;
+            failedIds.push(id);
+            errors.push({
+              internshipId: id,
+              error: result.error || 'Auto-apply failed',
+              timestamp: new Date().toISOString(),
+              retryable: true,
+            });
+            // Still mark as applied since we recorded it
+            markApplied(id, 'applied');
+            if (result.source_url) {
+              manualFallbackUrls.push(result.source_url);
             }
           } else {
+            // Complete failure
             failCount++;
             failedIds.push(id);
             errors.push({
@@ -211,12 +201,11 @@ export function useBatchApply() {
               timestamp: new Date().toISOString(),
               retryable: true,
             });
+          }
 
-            // Open the source URL as fallback for failed auto-apply
-            if (result.source_url) {
-              window.open(result.source_url, '_blank');
-              markApplied(id, 'applied'); // Still mark since we opened the page
-            }
+          // Small delay between UI updates for visual progress
+          if (i < results.length - 1) {
+            await new Promise((r) => setTimeout(r, 200));
           }
         }
 
@@ -230,50 +219,51 @@ export function useBatchApply() {
 
         completeBatch();
         hapticFeedback('heavy');
-        
-        if (successCount > 0 && failCount === 0) {
-          toast.success(`${successCount} applications submitted successfully!`);
-        } else if (successCount > 0 && failCount > 0) {
-          toast.success(`${successCount} applied, ${failCount} opened for manual apply`);
-        } else {
-          toast.error(`Auto-apply failed. ${failCount} pages opened for manual application.`);
-        }
-      } else {
-        // API call failed entirely — fallback to opening URLs
-        let openedCount = 0;
-        for (const id of ids) {
-          const item = storeInternships.find((int) => int.id === id);
-          if (item?.sourceUrl) {
-            window.open(item.sourceUrl, '_blank');
-            markApplied(id, 'applied');
-            openedCount++;
+
+        // Open fallback URLs in a controlled way (max 5 at once to avoid popup blocker)
+        if (manualFallbackUrls.length > 0) {
+          const maxOpen = Math.min(manualFallbackUrls.length, 5);
+          for (let i = 0; i < maxOpen; i++) {
+            window.open(manualFallbackUrls[i], '_blank');
+            if (i < maxOpen - 1) {
+              await new Promise((r) => setTimeout(r, 500));
+            }
           }
         }
+
+        // Show appropriate toast
+        const autoApplied = results.filter(r => r.method === 'auto_applied').length;
+        const directRecorded = results.filter(r => r.method === 'direct').length;
+
+        if (autoApplied > 0 && failCount === 0) {
+          toast.success(`${autoApplied} applications auto-submitted!${directRecorded > 0 ? ` ${directRecorded} opened for manual submission.` : ''}`);
+        } else if (autoApplied > 0) {
+          toast.success(`${autoApplied} auto-submitted, ${failCount} need manual apply`);
+        } else if (directRecorded > 0 && manualFallbackUrls.length > 0) {
+          toast.success(`${directRecorded} applications recorded. ${Math.min(manualFallbackUrls.length, 5)} pages opened for submission.`);
+        } else if (directRecorded > 0) {
+          toast.success(`${directRecorded} applications recorded successfully.`);
+        } else {
+          toast.error(`Applications need manual submission. ${manualFallbackUrls.length} pages opened.`);
+        }
+      } else {
+        // API call failed entirely
         completeBatch();
         hapticFeedback('medium');
-        toast.error(`Server error. Opened ${openedCount} pages for manual apply.`);
+        toast.error('Server error. Please try again or apply manually.');
       }
     } catch (err: any) {
-      // Network error — fallback to opening URLs
-      let openedCount = 0;
-      for (const id of ids) {
-        const item = storeInternships.find((int) => int.id === id);
-        if (item?.sourceUrl) {
-          window.open(item.sourceUrl, '_blank');
-          markApplied(id, 'applied');
-          openedCount++;
-        }
-      }
+      // Network error
       completeBatch();
       hapticFeedback('medium');
-      toast.error(`Connection error. Opened ${openedCount} pages for manual apply.`);
+      toast.error('Connection error. Please check your internet and try again.');
     }
   }, [selectedIds, lockedSource, credentials, batch]);
 
   return {
     executeBatch,
     isRunning: batch.status === 'running',
-    progress: batch.totalCount > 0 ? (batch.currentIndex / batch.totalCount) * 100 : 0,
+    progress: batch.totalCount > 0 ? ((batch.currentIndex + 1) / batch.totalCount) * 100 : 0,
   };
 }
 
