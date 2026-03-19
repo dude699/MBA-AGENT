@@ -162,9 +162,6 @@ NAUKRI_MBA_QUERIES = [
     {"keyword": "management consulting intern", "experience": "0"},
     {"keyword": "private equity intern", "experience": "0"},
     {"keyword": "venture capital intern", "experience": "0"},
-    {"keyword": "business development intern", "experience": "0"},
-    {"keyword": "sales intern MBA", "experience": "0"},
-    {"keyword": "digital marketing intern", "experience": "0"},
     {"keyword": "market research intern", "experience": "0"},
 ]
 
