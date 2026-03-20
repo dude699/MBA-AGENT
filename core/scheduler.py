@@ -667,9 +667,9 @@ class AgentScheduler:
 
     async def _sync_to_supabase(self, trigger: str = ""):
         """
-        After pipeline processing, sync clean_listings to Supabase latest_jobs AND all_jobs.
-        This is the bridge between local SQLite and persistent Supabase storage.
-        We sync to BOTH tables so all_jobs always has data (not just after morning merge).
+        After pipeline processing, sync clean_listings to Supabase.
+        v0.2: Passes ALL fields (skills, requirements, perks, applicants,
+        posted_date, deadline, openings) — no field stripping.
         """
         try:
             from core.supabase_client import is_operational
@@ -686,27 +686,70 @@ class AgentScheduler:
                 logger.debug(f"[SCHEDULER] Supabase sync: no recent listings to sync")
                 return
 
-            # Convert SQLite rows to dicts for Supabase
+            # Convert SQLite rows to dicts for Supabase — PRESERVE ALL FIELDS
             jobs = []
             for row in recent:
+                # Extract skills from description if not already set
+                skills = []
+                raw_skills = row.get("skills") or row.get("tags_and_skills", "")
+                if raw_skills:
+                    if isinstance(raw_skills, list):
+                        skills = raw_skills
+                    elif isinstance(raw_skills, str):
+                        skills = [s.strip() for s in raw_skills.split(",") if s.strip()]
+
+                # Compute real posted date from posted_days_ago
+                posted_date = ""
+                posted_days_ago = row.get("posted_days_ago", 0)
+                if posted_days_ago and int(posted_days_ago) > 0:
+                    try:
+                        ref_str = row.get("created_at") or row.get("scraped_at", "")
+                        if ref_str:
+                            from datetime import datetime as _dt
+                            ref_dt = _dt.fromisoformat(str(ref_str).replace('Z', '+00:00'))
+                        else:
+                            ref_dt = datetime.now(IST)
+                        real_posted = ref_dt - timedelta(days=int(posted_days_ago))
+                        posted_date = real_posted.isoformat()
+                    except Exception:
+                        pass
+                if not posted_date:
+                    posted_date = row.get("created_at") or row.get("scraped_at") or ""
+
                 jobs.append({
                     "title": row.get("title", ""),
                     "company": row.get("company", ""),
                     "location": row.get("location", ""),
+                    "location_type": "remote" if row.get("is_wfh") else "onsite",
                     "source": row.get("source", ""),
-                    "source_url": row.get("url", ""),
+                    "source_url": row.get("url", row.get("source_url", "")),
                     "category": row.get("category", ""),
+                    "sector": row.get("sector", ""),
                     "stipend": int(row.get("stipend_monthly", 0) or 0),
+                    "stipend_currency": "INR",
+                    "stipend_type": "monthly" if int(row.get("stipend_monthly", 0) or 0) > 0 else "unpaid",
                     "duration": int(row.get("duration_months", 0) or 0),
+                    "duration_unit": "months",
                     "applicants": int(row.get("applicants", 0) or 0),
+                    "openings": int(row.get("openings", 1) or 1),
+                    "skills": skills,
                     "description": row.get("description_text", ""),
+                    "responsibilities": row.get("responsibilities", []) or [],
+                    "requirements": row.get("requirements", []) or [],
+                    "perks": row.get("perks", []) or [],
+                    "tags": row.get("tags", []) or [],
+                    "posted_date": posted_date,
+                    "deadline": row.get("deadline", "") or "",
+                    "start_date": row.get("start_date", "") or "",
                     "ppo_score": float(row.get("ppo_score", 0) or 0),
                     "ghost_score": float(row.get("ghost_score", 0) or 0),
                     "match_score": float(row.get("ppo_score", 50) or 50),
                     "is_expired": row.get("status", "") == "expired",
-                    "location_type": "remote" if row.get("is_wfh") else "onsite",
-                    "sector": row.get("sector", ""),
+                    "is_premium": row.get("is_blue_ocean", False),
                     "content_hash": row.get("content_hash", ""),
+                    "created_at": row.get("created_at", ""),
+                    "scraped_at": row.get("scraped_at", ""),
+                    "posted_days_ago": row.get("posted_days_ago", 0),
                 })
 
             batch_id = f"sync_{trigger}_{datetime.now(IST).strftime('%Y%m%d_%H%M')}"
@@ -744,38 +787,39 @@ class AgentScheduler:
     async def _supabase_morning_merge(self):
         """
         Merge latest_jobs -> all_jobs at morning time.
-        Called ONCE per day before the morning scrape.
+        v0.2: Uses smart_expire instead of aggressive cleanup.
+        merge_latest_to_all() no longer deletes from latest_jobs.
         """
         try:
-            from core.supabase_db import async_merge_latest_to_all, async_cleanup_expired_jobs
+            from core.supabase_db import async_merge_latest_to_all, async_smart_expire_jobs
             from core.supabase_client import is_operational
 
             if not is_operational():
                 logger.info("[SCHEDULER] Supabase not operational, skipping merge")
                 return
 
-            logger.info("[SCHEDULER] Running Supabase morning merge (latest -> all)...")
+            logger.info("[SCHEDULER] Running Supabase morning merge (latest -> all, data-safe)...")
             merged, total = await async_merge_latest_to_all()
-            logger.info(f"[SCHEDULER] Supabase merge: {merged} new merged from {total} latest_jobs")
+            logger.info(f"[SCHEDULER] Supabase merge: {merged} new merged from {total} latest_jobs (latest preserved)")
 
-            deleted = await async_cleanup_expired_jobs(days=7)
-            if deleted > 0:
-                logger.info(f"[SCHEDULER] Supabase cleanup: {deleted} expired jobs removed")
+            # Smart expire: soft-delete expired, protect applied
+            stats = await async_smart_expire_jobs()
+            logger.info(f"[SCHEDULER] Supabase smart expire: {stats}")
 
         except Exception as e:
             logger.error(f"[SCHEDULER] Supabase morning merge error: {e}")
 
     async def _supabase_cleanup(self):
-        """Daily cleanup of expired jobs in Supabase."""
+        """Daily cleanup of expired jobs in Supabase — uses smart expire."""
         try:
-            from core.supabase_db import async_cleanup_expired_jobs
+            from core.supabase_db import async_smart_expire_jobs
             from core.supabase_client import is_operational
 
             if not is_operational():
                 return
 
-            deleted = await async_cleanup_expired_jobs(days=7)
-            logger.info(f"[SCHEDULER] Supabase daily cleanup: {deleted} expired jobs removed")
+            stats = await async_smart_expire_jobs()
+            logger.info(f"[SCHEDULER] Supabase daily smart expire: {stats}")
         except Exception as e:
             logger.error(f"[SCHEDULER] Supabase cleanup error: {e}")
 

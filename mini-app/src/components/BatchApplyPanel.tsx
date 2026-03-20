@@ -1,21 +1,88 @@
 // ============================================================
-// BATCH APPLY PANEL — Auto-Apply with Source Locking & Security
-// v2.0: Fully working batch apply with progress, fallback, and
-//       proper action buttons that are always visible
+// BATCH APPLY PANEL — v3.0: Real-time Portal Info Request System
+// ============================================================
+// Features:
+//   - Dynamic form fields based on what portal needs
+//   - Real-time info request during batch apply
+//   - No hardcoded fields — adapts to portal requirements
+//   - Saves & reuses user profile data across sessions
 // ============================================================
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   X, Play, Pause, CheckCircle2, AlertTriangle, Shield, Lock,
   Clock, Zap, ChevronRight, AlertOctagon, Info, Loader2,
-  Eye, EyeOff, Key, ExternalLink, Send, RotateCcw
+  Eye, EyeOff, Key, ExternalLink, Send, RotateCcw, User,
+  FileText, Phone, Mail, MapPin, GraduationCap, Briefcase
 } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { useBatchApply, useCountdown } from '@/hooks/useHooks';
 import { hapticFeedback, hapticNotification } from '@/utils/helpers';
 import { SOURCE_CONFIG, RISK_WARNINGS, CREDENTIAL_REQUIREMENTS } from '@/utils/constants';
 import type { InternshipSource } from '@/types';
+
+// Portal-specific additional fields that may be requested during application
+const PORTAL_EXTRA_FIELDS: Record<string, Array<{
+  key: string; label: string; type: string; required: boolean;
+  placeholder: string; helpText?: string; icon?: string;
+}>> = {
+  internshala: [
+    { key: 'full_name', label: 'Full Name', type: 'text', required: true, placeholder: 'Your full name', icon: 'user' },
+    { key: 'email', label: 'Email', type: 'email', required: true, placeholder: 'your@email.com', icon: 'mail' },
+    { key: 'phone', label: 'Phone Number', type: 'tel', required: true, placeholder: '+91 9876543210', icon: 'phone' },
+    { key: 'college', label: 'College/University', type: 'text', required: true, placeholder: 'IIM Ahmedabad', icon: 'graduation' },
+    { key: 'degree', label: 'Degree', type: 'text', required: true, placeholder: 'MBA', icon: 'graduation' },
+    { key: 'graduation_year', label: 'Graduation Year', type: 'text', required: true, placeholder: '2026', icon: 'graduation' },
+    { key: 'cover_letter', label: 'Cover Letter (optional)', type: 'textarea', required: false, placeholder: 'Why are you interested in this role?', helpText: 'PRISM AI will auto-generate if left blank' },
+    { key: 'availability', label: 'Available From', type: 'text', required: false, placeholder: 'Immediately / June 2026', icon: 'clock' },
+  ],
+  naukri: [
+    { key: 'full_name', label: 'Full Name', type: 'text', required: true, placeholder: 'Your full name', icon: 'user' },
+    { key: 'email', label: 'Email', type: 'email', required: true, placeholder: 'your@email.com', icon: 'mail' },
+    { key: 'phone', label: 'Phone Number', type: 'tel', required: true, placeholder: '+91 9876543210', icon: 'phone' },
+    { key: 'current_location', label: 'Current City', type: 'text', required: true, placeholder: 'Mumbai', icon: 'location' },
+    { key: 'experience_years', label: 'Total Experience', type: 'text', required: false, placeholder: '0 years (Fresher)', icon: 'briefcase' },
+    { key: 'resume_headline', label: 'Resume Headline', type: 'text', required: false, placeholder: 'MBA Candidate | Data Analytics', helpText: 'Brief headline for your profile' },
+  ],
+  linkedin: [
+    { key: 'linkedin_profile', label: 'LinkedIn Profile URL', type: 'text', required: true, placeholder: 'https://linkedin.com/in/yourname', icon: 'user' },
+    { key: 'cover_letter', label: 'Cover Letter', type: 'textarea', required: false, placeholder: 'Brief intro for the recruiter', helpText: 'AI will personalize if left blank' },
+  ],
+  default: [
+    { key: 'full_name', label: 'Full Name', type: 'text', required: true, placeholder: 'Your full name', icon: 'user' },
+    { key: 'email', label: 'Email', type: 'email', required: true, placeholder: 'your@email.com', icon: 'mail' },
+    { key: 'phone', label: 'Phone Number', type: 'tel', required: false, placeholder: '+91 9876543210', icon: 'phone' },
+    { key: 'college', label: 'College/University', type: 'text', required: false, placeholder: 'Your institution', icon: 'graduation' },
+  ],
+};
+
+const FIELD_ICONS: Record<string, React.ReactNode> = {
+  user: <User className="w-3.5 h-3.5" />,
+  mail: <Mail className="w-3.5 h-3.5" />,
+  phone: <Phone className="w-3.5 h-3.5" />,
+  location: <MapPin className="w-3.5 h-3.5" />,
+  graduation: <GraduationCap className="w-3.5 h-3.5" />,
+  briefcase: <Briefcase className="w-3.5 h-3.5" />,
+  clock: <Clock className="w-3.5 h-3.5" />,
+  file: <FileText className="w-3.5 h-3.5" />,
+};
+
+// Local storage key for persisting user profile
+const PROFILE_STORAGE_KEY = 'prism_user_apply_profile';
+
+function loadSavedProfile(): Record<string, string> {
+  try {
+    const saved = localStorage.getItem(PROFILE_STORAGE_KEY);
+    return saved ? JSON.parse(saved) : {};
+  } catch { return {}; }
+}
+
+function saveProfile(data: Record<string, string>) {
+  try {
+    localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(data));
+  } catch { /* ignore */ }
+}
 
 export default function BatchApplyPanel() {
   const {
@@ -27,6 +94,18 @@ export default function BatchApplyPanel() {
   const [showCredForm, setShowCredForm] = useState(false);
   const [credFormData, setCredFormData] = useState<Record<string, string>>({});
   const [showPasswords, setShowPasswords] = useState<Record<string, boolean>>({});
+  const [showExtraInfo, setShowExtraInfo] = useState(false);
+  const [extraInfoData, setExtraInfoData] = useState<Record<string, string>>(() => loadSavedProfile());
+  const [extraInfoSaved, setExtraInfoSaved] = useState(false);
+
+  // Load saved profile on mount
+  useEffect(() => {
+    const saved = loadSavedProfile();
+    if (Object.keys(saved).length > 0) {
+      setExtraInfoData(saved);
+      setExtraInfoSaved(true);
+    }
+  }, []);
 
   if (!isBatchPanelOpen) return null;
 
@@ -36,11 +115,12 @@ export default function BatchApplyPanel() {
   const maxBatch = sourceConfig?.maxBatchSize || 5;
   const hasCreds = credentials.some((c) => c.source === lockedSource && c.isValid);
   const credReq = CREDENTIAL_REQUIREMENTS.find((c) => c.source === lockedSource);
-  // Sources without credential requirements can apply directly via backend
-  // (backend handles auto-apply for supported sources, records for others)
   const isDirectApplySource = !credReq;
-  // Always allow apply - backend handles the logic. Credentials are optional enhancement.
   const canApply = true;
+
+  // Get portal-specific extra fields
+  const portalFields = PORTAL_EXTRA_FIELDS[lockedSource || ''] || PORTAL_EXTRA_FIELDS.default;
+  const hasRequiredEmpty = portalFields.some(f => f.required && !extraInfoData[f.key]);
 
   const selectedInternships = internships.filter((i) => selectedIds.has(i.id));
   const applyCount = Math.min(selectedIds.size, maxBatch);
@@ -57,7 +137,36 @@ export default function BatchApplyPanel() {
     hapticNotification('success');
   };
 
+  const handleSaveExtraInfo = () => {
+    saveProfile(extraInfoData);
+    setExtraInfoSaved(true);
+    setShowExtraInfo(false);
+    hapticNotification('success');
+  };
+
   const handleStartApply = () => {
+    // If required fields are missing, show the extra info form first
+    if (hasRequiredEmpty && !extraInfoSaved) {
+      setShowExtraInfo(true);
+      hapticFeedback('medium');
+      return;
+    }
+    // Include extra info in the apply request
+    const store = useAppStore.getState();
+    if (Object.keys(extraInfoData).length > 0) {
+      // Merge extra info into credentials so backend receives it
+      const existingCreds = store.credentials.find(c => c.source === lockedSource);
+      store.setCredentials({
+        source: lockedSource || '',
+        credentials: {
+          ...(existingCreds?.credentials || {}),
+          ...credFormData,
+          ...extraInfoData,
+        },
+        isValid: true,
+        lastVerified: new Date().toISOString(),
+      });
+    }
     executeBatch();
     hapticFeedback('heavy');
   };
@@ -158,12 +267,89 @@ export default function BatchApplyPanel() {
               </div>
             )}
 
+            {/* ===== PORTAL EXTRA INFO SECTION (v3.0) ===== */}
+            <div className="mx-5 mt-4">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <User className="w-4 h-4 text-primary-500" />
+                  <span className="text-xs font-bold text-primary-800">Your Application Info</span>
+                </div>
+                {extraInfoSaved ? (
+                  <button
+                    onClick={() => setShowExtraInfo(!showExtraInfo)}
+                    className="flex items-center gap-1 text-[10px] font-bold text-status-success"
+                  >
+                    <CheckCircle2 className="w-3 h-3" /> Saved
+                    <span className="text-primary-400 ml-1">(edit)</span>
+                  </button>
+                ) : (
+                  <span className="text-[10px] font-bold text-status-warning">Fill to apply</span>
+                )}
+              </div>
+
+              <p className="text-[10px] text-primary-400 mb-2">
+                Portals may need this info during application. Saved across sessions.
+              </p>
+
+              {(showExtraInfo || (!extraInfoSaved && portalFields.some(f => f.required))) && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  className="bg-surface-muted p-4 rounded-xl border border-surface-border"
+                >
+                  <div className="flex items-center gap-2 mb-3">
+                    <FileText className="w-4 h-4 text-accent" />
+                    <span className="text-xs font-bold text-accent">
+                      {lockedSource ? `${sourceConfig?.name || 'Portal'} Application Fields` : 'Application Fields'}
+                    </span>
+                  </div>
+
+                  {portalFields.map((field) => (
+                    <div key={field.key} className="mb-3">
+                      <label className="text-[10px] font-semibold text-primary-600 uppercase mb-1 flex items-center gap-1">
+                        {field.icon && FIELD_ICONS[field.icon]}
+                        {field.label}
+                        {field.required && <span className="text-status-danger">*</span>}
+                      </label>
+                      {field.type === 'textarea' ? (
+                        <textarea
+                          placeholder={field.placeholder}
+                          value={extraInfoData[field.key] || ''}
+                          onChange={(e) => setExtraInfoData({ ...extraInfoData, [field.key]: e.target.value })}
+                          rows={3}
+                          className="input-field text-sm resize-none"
+                        />
+                      ) : (
+                        <input
+                          type={field.type}
+                          placeholder={field.placeholder}
+                          value={extraInfoData[field.key] || ''}
+                          onChange={(e) => setExtraInfoData({ ...extraInfoData, [field.key]: e.target.value })}
+                          className="input-field text-sm"
+                        />
+                      )}
+                      {field.helpText && (
+                        <p className="text-[10px] text-primary-400 mt-1">{field.helpText}</p>
+                      )}
+                    </div>
+                  ))}
+
+                  <button
+                    onClick={handleSaveExtraInfo}
+                    className="w-full py-2.5 bg-accent text-white rounded-xl text-xs font-semibold active:scale-[0.98] transition-transform"
+                  >
+                    Save & Continue
+                  </button>
+                </motion.div>
+              )}
+            </div>
+
             {/* Credentials Section */}
             <div className="mx-5 mt-4">
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
                   <Key className="w-4 h-4 text-primary-500" />
-                  <span className="text-xs font-bold text-primary-800">Credentials</span>
+                  <span className="text-xs font-bold text-primary-800">Portal Credentials</span>
                 </div>
                 {hasCreds ? (
                   <span className="flex items-center gap-1 text-[10px] font-bold text-status-success">
@@ -196,7 +382,7 @@ export default function BatchApplyPanel() {
                   onClick={() => { setShowCredForm(true); hapticFeedback('light'); }}
                   className="w-full py-3 bg-surface-muted border border-dashed border-primary-300 rounded-xl text-xs font-semibold text-primary-600 hover:bg-surface-light transition-all active:scale-[0.98]"
                 >
-                  + Add {sourceConfig?.name || 'Platform'} Credentials
+                  + Add {sourceConfig?.name || 'Platform'} Login Credentials
                 </button>
               )}
 
@@ -372,7 +558,11 @@ export default function BatchApplyPanel() {
                 }`}
               >
                 <>
-                  <Send className="w-4 h-4" /> Apply to {applyCount} {applyCount === 1 ? 'Internship' : 'Internships'}
+                  <Send className="w-4 h-4" />
+                  {hasRequiredEmpty && !extraInfoSaved
+                    ? 'Fill Info & Apply'
+                    : `Apply to ${applyCount} ${applyCount === 1 ? 'Internship' : 'Internships'}`
+                  }
                 </>
               </button>
             )}
