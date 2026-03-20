@@ -486,21 +486,22 @@ export default function SettingsPage() {
       {/* App Info */}
       <div className="text-center pb-8">
         <p className="text-[10px] text-primary-400 font-medium tracking-wide">
-          InternHub Pro v4.0.0
+          PRISM v0.1 — InternHub Pro
         </p>
         <p className="text-[10px] text-primary-300">
-          Operation First Mover - Production Build
+          Precision Recruitment Intelligence & Scoring Machine
         </p>
       </div>
     </div>
   );
 }
 
-// ===== REAL SYSTEM STATUS (pings backend) =====
+// ===== PRISM SYSTEM STATUS (real-time intelligence matrix) =====
 function RealSystemStatus() {
   const [health, setHealth] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [lastChecked, setLastChecked] = useState('');
+  const [showAgents, setShowAgents] = useState(false);
 
   const checkHealth = useCallback(async () => {
     setLoading(true);
@@ -517,95 +518,261 @@ function RealSystemStatus() {
 
   useEffect(() => {
     checkHealth();
+    // Auto-refresh every 60s
+    const interval = setInterval(checkHealth, 60000);
+    return () => clearInterval(interval);
   }, []);
 
   const sbConnected = health?.supabase?.connected || false;
   const sbLatency = health?.supabase?.latency_ms;
   const sbError = health?.supabase?.error;
   const sbStats = health?.supabase_stats || {};
+  const sysMetrics = health?.system_metrics || {};
+  const agents = health?.agents || {};
+  const aiProviders = health?.ai_providers || {};
+  const agentCount = Object.keys(agents).length;
+  const runningAgents = Object.values(agents).filter((a: any) => a.status === 'running').length;
+  const errorAgents = Object.values(agents).filter((a: any) => a.status === 'error').length;
+
+  const statusEmojis: Record<string, string> = {
+    idle: '🟡', running: '🟢', error: '🔴', completed: '✅', disabled: '⛔',
+  };
 
   return (
-    <div className="p-4 rounded-2xl" style={{ background: '#f8f9fa', border: '1px solid #e5e7eb' }}>
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <Activity className="w-4 h-4 text-primary-500" />
-          <h3 className="text-xs font-bold text-primary-800">Live System Status</h3>
+    <div className="space-y-3">
+      {/* Main System Card */}
+      <motion.div 
+        className="p-4 rounded-2xl"
+        style={{ background: '#f8f9fa', border: '1px solid #e5e7eb' }}
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3 }}
+      >
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <Activity className="w-4 h-4 text-primary-500" />
+            <h3 className="text-xs font-bold text-primary-800">PRISM System Intelligence</h3>
+            {health?.backend && (
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-micro-pulse" 
+                style={{ boxShadow: '0 0 4px rgba(16,185,129,0.5)' }} />
+            )}
+          </div>
+          <button
+            onClick={() => { checkHealth(); hapticFeedback('light'); }}
+            disabled={loading}
+            className="flex items-center gap-1 text-[10px] font-semibold text-primary-500 hover:text-primary-700"
+          >
+            <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
+            {loading ? 'Scanning...' : 'Refresh'}
+          </button>
         </div>
-        <button
-          onClick={() => { checkHealth(); hapticFeedback('light'); }}
-          disabled={loading}
-          className="flex items-center gap-1 text-[10px] font-semibold text-primary-500 hover:text-primary-700"
-        >
-          <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
-          {loading ? 'Checking...' : 'Refresh'}
-        </button>
-      </div>
 
-      <div className="space-y-1.5">
-        <StatusRow icon={<Wifi className="w-3 h-3" />} label="Backend API" 
-          status={health?.backend ? 'Connected' : 'Offline'} 
-          ok={!!health?.backend}
-          iconColor={health?.backend ? 'text-emerald-500' : 'text-red-500'} />
-        <StatusRow icon={<Database className="w-3 h-3" />} label="Supabase DB" 
-          status={sbConnected ? `Active${sbLatency ? ` (${sbLatency}ms)` : ''}` : (sbError || 'Disconnected')} 
-          ok={sbConnected}
-          iconColor={sbConnected ? 'text-blue-500' : 'text-red-500'} />
-        <StatusRow icon={<Database className="w-3 h-3" />} label="SQLite DB" 
-          status={health?.database ? 'Active' : 'Unavailable'} 
-          ok={!!health?.database}
-          iconColor={health?.database ? 'text-teal-500' : 'text-red-500'} />
-        <StatusRow icon={<Cpu className="w-3 h-3" />} label="AI Engine (Groq)" 
-          status={health?.ai ? 'Ready' : 'Unavailable'} 
-          ok={!!health?.ai}
-          iconColor={health?.ai ? 'text-purple-500' : 'text-red-500'} />
-        <StatusRow icon={<Lock className="w-3 h-3" />} label="Encryption" 
-          status="AES-256 (client-side)" 
-          ok={true}
-          iconColor="text-amber-500" />
-      </div>
-
-      {/* Supabase stats if available */}
-      {sbConnected && Object.keys(sbStats).length > 0 && (
-        <div className="mt-3 pt-2 border-t border-primary-200/40">
-          <p className="text-[10px] font-bold text-primary-500 mb-1.5">Database Stats</p>
-          <div className="grid grid-cols-3 gap-2">
-            {sbStats.latest_jobs_count !== undefined && (
-              <div className="text-center p-1.5 bg-white rounded-lg">
-                <p className="text-sm font-bold text-primary-900">{sbStats.latest_jobs_count}</p>
-                <p className="text-[9px] text-primary-400">Latest</p>
+        {/* System Metrics Bar */}
+        {sysMetrics.memory_mb && (
+          <div className="flex items-center gap-3 mb-3 p-2 rounded-xl bg-white">
+            <div className="flex-1">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[9px] font-bold text-primary-400">MEMORY</span>
+                <span className="text-[10px] font-bold text-primary-700">{sysMetrics.memory_mb}MB</span>
               </div>
-            )}
-            {sbStats.all_jobs_count !== undefined && (
-              <div className="text-center p-1.5 bg-white rounded-lg">
-                <p className="text-sm font-bold text-primary-900">{sbStats.all_jobs_count}</p>
-                <p className="text-[9px] text-primary-400">All Jobs</p>
+              <div className="w-full h-1.5 bg-primary-100 rounded-full overflow-hidden">
+                <motion.div 
+                  className="h-full rounded-full"
+                  style={{ 
+                    background: sysMetrics.memory_pct > 80 ? '#ef4444' : sysMetrics.memory_pct > 60 ? '#f59e0b' : '#10b981',
+                    width: `${Math.min(sysMetrics.memory_pct, 100)}%`,
+                  }}
+                  initial={{ width: 0 }}
+                  animate={{ width: `${Math.min(sysMetrics.memory_pct, 100)}%` }}
+                  transition={{ duration: 1, ease: [0.22, 1, 0.36, 1] }}
+                />
               </div>
-            )}
-            {sbStats.all_jobs_applied !== undefined && (
-              <div className="text-center p-1.5 bg-white rounded-lg">
-                <p className="text-sm font-bold text-emerald-600">{sbStats.all_jobs_applied}</p>
-                <p className="text-[9px] text-primary-400">Applied</p>
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[9px] font-bold text-primary-400">CPU</span>
+                <span className="text-[10px] font-bold text-primary-700">{sysMetrics.cpu_pct}%</span>
+              </div>
+              <div className="w-full h-1.5 bg-primary-100 rounded-full overflow-hidden">
+                <motion.div 
+                  className="h-full rounded-full"
+                  style={{ 
+                    background: sysMetrics.cpu_pct > 80 ? '#ef4444' : sysMetrics.cpu_pct > 50 ? '#f59e0b' : '#10b981',
+                    width: `${Math.min(sysMetrics.cpu_pct, 100)}%`,
+                  }}
+                  initial={{ width: 0 }}
+                  animate={{ width: `${Math.min(sysMetrics.cpu_pct, 100)}%` }}
+                  transition={{ duration: 1, ease: [0.22, 1, 0.36, 1], delay: 0.1 }}
+                />
+              </div>
+            </div>
+            {health?.uptime_str && (
+              <div className="text-center px-2">
+                <span className="text-[9px] font-bold text-primary-400 block">UPTIME</span>
+                <span className="text-[10px] font-bold text-primary-700">{health.uptime_str}</span>
               </div>
             )}
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Show errors clearly */}
-      {health && !sbConnected && sbError && (
-        <div className="mt-2 p-2 rounded-lg" style={{ background: '#fef2f2', border: '1px solid #fecaca' }}>
-          <div className="flex items-start gap-1.5">
-            <AlertCircle className="w-3 h-3 text-red-500 mt-0.5 flex-shrink-0" />
-            <div>
-              <p className="text-[10px] font-semibold text-red-700">Supabase Connection Issue</p>
-              <p className="text-[9px] text-red-500 mt-0.5">{sbError}</p>
+        {/* Core Services Grid */}
+        <div className="space-y-1.5">
+          <StatusRow icon={<Wifi className="w-3 h-3" />} label="Backend API" 
+            status={health?.backend ? 'Connected' : 'Offline'} 
+            ok={!!health?.backend}
+            iconColor={health?.backend ? 'text-emerald-500' : 'text-red-500'} />
+          <StatusRow icon={<Database className="w-3 h-3" />} label="Supabase DB" 
+            status={sbConnected ? `Active${sbLatency ? ` (${sbLatency}ms)` : ''}` : (sbError || 'Disconnected')} 
+            ok={sbConnected}
+            iconColor={sbConnected ? 'text-blue-500' : 'text-red-500'} />
+          <StatusRow icon={<Database className="w-3 h-3" />} label="SQLite DB" 
+            status={health?.database ? 'Active' : 'Unavailable'} 
+            ok={!!health?.database}
+            iconColor={health?.database ? 'text-teal-500' : 'text-red-500'} />
+          <StatusRow icon={<Cpu className="w-3 h-3" />} label="AI Engine (5-Provider)" 
+            status={health?.ai ? 'Ready' : 'Unavailable'} 
+            ok={!!health?.ai}
+            iconColor={health?.ai ? 'text-purple-500' : 'text-red-500'} />
+          <StatusRow icon={<Lock className="w-3 h-3" />} label="Encryption" 
+            status="AES-256 (client-side)" 
+            ok={true}
+            iconColor="text-amber-500" />
+        </div>
+
+        {/* AI Providers */}
+        {Object.keys(aiProviders).length > 0 && (
+          <div className="mt-3 pt-2 border-t border-primary-200/40">
+            <p className="text-[10px] font-bold text-primary-500 mb-1.5">AI Providers</p>
+            <div className="flex flex-wrap gap-1.5">
+              {Object.entries(aiProviders).map(([name, info]: [string, any]) => (
+                <span key={name} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[9px] font-bold"
+                  style={{
+                    background: info?.configured ? '#ecfdf5' : '#f3f4f6',
+                    color: info?.configured ? '#059669' : '#9ca3af',
+                    border: `1px solid ${info?.configured ? '#a7f3d0' : '#e5e7eb'}`,
+                  }}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${info?.configured ? 'bg-emerald-400' : 'bg-gray-300'}`} />
+                  {name}
+                  {info?.calls_today > 0 && <span className="opacity-60">({info.calls_today})</span>}
+                </span>
+              ))}
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {lastChecked && (
-        <p className="text-[9px] text-primary-300 mt-2 text-right">Last checked: {lastChecked}</p>
+        {/* Supabase stats */}
+        {sbConnected && Object.keys(sbStats).length > 0 && (
+          <div className="mt-3 pt-2 border-t border-primary-200/40">
+            <p className="text-[10px] font-bold text-primary-500 mb-1.5">Cloud Database</p>
+            <div className="grid grid-cols-3 gap-2">
+              {sbStats.latest_jobs_count !== undefined && (
+                <div className="text-center p-1.5 bg-white rounded-lg">
+                  <p className="text-sm font-bold text-primary-900">{sbStats.latest_jobs_count}</p>
+                  <p className="text-[9px] text-primary-400">Latest</p>
+                </div>
+              )}
+              {sbStats.all_jobs_count !== undefined && (
+                <div className="text-center p-1.5 bg-white rounded-lg">
+                  <p className="text-sm font-bold text-primary-900">{sbStats.all_jobs_count}</p>
+                  <p className="text-[9px] text-primary-400">All Jobs</p>
+                </div>
+              )}
+              {sbStats.all_jobs_applied !== undefined && (
+                <div className="text-center p-1.5 bg-white rounded-lg">
+                  <p className="text-sm font-bold text-emerald-600">{sbStats.all_jobs_applied}</p>
+                  <p className="text-[9px] text-primary-400">Applied</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Error display */}
+        {health && !sbConnected && sbError && (
+          <div className="mt-2 p-2 rounded-lg" style={{ background: '#fef2f2', border: '1px solid #fecaca' }}>
+            <div className="flex items-start gap-1.5">
+              <AlertCircle className="w-3 h-3 text-red-500 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="text-[10px] font-semibold text-red-700">Supabase Connection Issue</p>
+                <p className="text-[9px] text-red-500 mt-0.5">{sbError}</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {lastChecked && (
+          <p className="text-[9px] text-primary-300 mt-2 text-right">Auto-refresh: 60s · Last: {lastChecked}</p>
+        )}
+      </motion.div>
+
+      {/* Agent Health Matrix — Expandable */}
+      {agentCount > 0 && (
+        <motion.div
+          className="rounded-2xl overflow-hidden"
+          style={{ background: '#f8f9fa', border: '1px solid #e5e7eb' }}
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.1 }}
+        >
+          <button
+            onClick={() => { setShowAgents(!showAgents); hapticFeedback('light'); }}
+            className="w-full p-4 flex items-center justify-between"
+          >
+            <div className="flex items-center gap-2">
+              <Zap className="w-4 h-4 text-primary-500" />
+              <h3 className="text-xs font-bold text-primary-800">Agent Health Matrix</h3>
+              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-white text-primary-500 border border-primary-200/60">
+                {agentCount} agents
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              {runningAgents > 0 && (
+                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-emerald-50 text-emerald-600">
+                  {runningAgents} active
+                </span>
+              )}
+              {errorAgents > 0 && (
+                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-red-50 text-red-600">
+                  {errorAgents} errors
+                </span>
+              )}
+              <ChevronDown className={`w-4 h-4 text-primary-400 transition-transform duration-200 ${showAgents ? 'rotate-180' : ''}`} />
+            </div>
+          </button>
+
+          <AnimatePresence>
+            {showAgents && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+                className="overflow-hidden"
+              >
+                <div className="px-4 pb-4 space-y-1">
+                  {Object.entries(agents).sort().map(([aid, info]: [string, any], idx) => (
+                    <motion.div
+                      key={aid}
+                      initial={{ opacity: 0, x: -10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: idx * 0.03, duration: 0.25 }}
+                      className="flex items-center gap-2 py-1.5 px-2 rounded-lg hover:bg-white transition-colors"
+                    >
+                      <span className="text-[10px]">{statusEmojis[info.status] || '❓'}</span>
+                      <span className="text-[10px] font-bold text-primary-700 w-8">{aid}</span>
+                      <span className="text-[10px] text-primary-500 flex-1 truncate">{info.name}</span>
+                      <span className="text-[9px] text-primary-400 font-medium">{info.total_runs}r</span>
+                      <span className="text-[9px] text-primary-400 font-medium">{info.total_items}i</span>
+                      {info.errors > 0 && (
+                        <span className="text-[9px] font-bold text-red-500">⚠{info.errors}</span>
+                      )}
+                    </motion.div>
+                  ))}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </motion.div>
       )}
     </div>
   );

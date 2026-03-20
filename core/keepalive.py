@@ -359,7 +359,8 @@ class WebServer:
 
         return web.Response(
             text=(
-                f"Operation First Mover v5.1 -- ALIVE\n"
+                f"PRISM v0.1 — Precision Recruitment Intelligence & Scoring Machine\n"
+                f"Status: ALIVE\n"
                 f"Uptime: {self.health.uptime_str}\n"
                 f"Pings: {self.health.ping_count}\n"
                 f"Memory: {self.health.memory_mb}MB ({self.health.memory_pressure})\n"

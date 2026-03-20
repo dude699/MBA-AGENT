@@ -1698,26 +1698,105 @@ def _read_user_profile(telegram_id: str) -> dict:
 async def handle_system_health(request: web.Request) -> web.Response:
     """
     GET /api/system/health
-    Real system health check — actually pings Supabase, checks AI, checks DB.
-    Returns actual connection status, not hardcoded values.
+    PRISM v0.1 — Comprehensive real-time system health matrix.
+    Returns actual connection status, agent heartbeats, system metrics,
+    and AI provider status — all without any AI token spend.
     """
+    import psutil
+    import os
+
     result = {
         "backend": True,
         "supabase": {"connected": False, "error": "Not checked"},
         "ai": False,
         "database": False,
-        "version": "v4.0.0",
+        "version": "PRISM v0.1",
         "supabase_stats": {},
+        "system_metrics": {},
+        "agents": {},
+        "ai_providers": {},
+        "uptime": 0,
     }
 
-    # Check SQLite database
+    # System metrics — zero-cost, pure computation
+    try:
+        proc = psutil.Process(os.getpid())
+        mem_info = proc.memory_info()
+        result["system_metrics"] = {
+            "memory_mb": round(mem_info.rss / 1024 / 1024, 1),
+            "memory_pct": round(proc.memory_percent(), 1),
+            "cpu_pct": round(psutil.cpu_percent(interval=0.1), 1),
+            "threads": proc.num_threads(),
+            "open_files": len(proc.open_files()) if hasattr(proc, 'open_files') else 0,
+            "pid": os.getpid(),
+        }
+    except Exception as e:
+        result["system_metrics"] = {"error": str(e)[:100]}
+
+    # Uptime
+    try:
+        from core.keepalive import get_health_tracker
+        ht = get_health_tracker()
+        result["uptime"] = round(ht.uptime_seconds, 0)
+        result["uptime_str"] = ht.uptime_str
+    except Exception:
+        pass
+
+    # Check SQLite database + get counts
     try:
         from core.database import get_db
         db = get_db()
         if db:
             result["database"] = True
-    except Exception as e:
+            try:
+                stats = db.get_stats() if hasattr(db, 'get_stats') else {}
+                result["db_stats"] = stats
+            except Exception:
+                pass
+    except Exception:
         result["database"] = False
+
+    # Agent heartbeats — from DB, no AI spend
+    try:
+        from core.database import get_db
+        db = get_db()
+        if db:
+            heartbeats = db.get_all_heartbeats()
+            agents_summary = {}
+            for h in heartbeats:
+                aid = h.get('agent_id', '?')
+                agents_summary[aid] = {
+                    "name": h.get('agent_name', '?'),
+                    "status": h.get('status', 'idle'),
+                    "total_runs": h.get('total_runs', 0),
+                    "total_items": h.get('total_items', 0),
+                    "errors": h.get('errors_last_run', 0),
+                    "last_run": str(h.get('last_run', 'Never'))[:19],
+                }
+            result["agents"] = agents_summary
+    except Exception:
+        pass
+
+    # AI provider status — check configured, no API calls
+    try:
+        from core.ai_router import get_router
+        router = get_router()
+        if router:
+            result["ai"] = True
+            # Expose provider health without making any API calls
+            providers_status = {}
+            for provider_name in ['groq', 'cerebras', 'openrouter', 'groq_compound', 'mistral']:
+                try:
+                    prov = getattr(router, f'_{provider_name}_configured', False)
+                    providers_status[provider_name] = {
+                        "configured": bool(prov),
+                        "calls_today": router._provider_call_counts.get(provider_name, 0) if hasattr(router, '_provider_call_counts') else 0,
+                    }
+                except Exception:
+                    providers_status[provider_name] = {"configured": False}
+            result["ai_providers"] = providers_status
+    except Exception:
+        result["ai"] = False
 
     # Check Supabase with real ping
     try:
@@ -1725,7 +1804,6 @@ async def handle_system_health(request: web.Request) -> web.Response:
         if is_supabase_configured():
             hc = sb_health_check()
             result["supabase"] = hc
-            # Also get stats
             try:
                 from core.supabase_db import SupabaseJobDB
                 stats = SupabaseJobDB.get_stats()
@@ -1736,15 +1814,6 @@ async def handle_system_health(request: web.Request) -> web.Response:
             result["supabase"] = {"connected": False, "error": "Not configured - check SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY env vars"}
     except Exception as e:
         result["supabase"] = {"connected": False, "error": str(e)[:200]}
-
-    # Check AI router
-    try:
-        from core.ai_router import get_router
-        router = get_router()
-        if router:
-            result["ai"] = True
-    except Exception:
-        result["ai"] = False
 
     return _json_response({
         "success": True,

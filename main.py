@@ -762,8 +762,12 @@ class Application:
 
         # Phase 1.6: Build mini-app if dist/ doesn't exist yet
         # (routes already registered — handlers check dist/ dynamically)
+        # CRITICAL FIX: Run in background thread so we don't block the event
+        # loop — otherwise aiohttp can't respond to Render health probes and
+        # Render logs "No open HTTP ports detected on 0.0.0.0" for minutes.
         logger.info("[Phase 1.6/11] Checking mini-app build status...")
-        miniapp_built = build_miniapp_if_needed()
+        loop = asyncio.get_event_loop()
+        miniapp_built = await loop.run_in_executor(None, build_miniapp_if_needed)
         if miniapp_built:
             try:
                 from core.miniapp_api import invalidate_dist_cache

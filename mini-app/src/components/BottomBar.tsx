@@ -42,9 +42,9 @@ export default function BottomBar({ activeTab, onTabChange }: BottomBarProps) {
           >
             <motion.button
               onClick={() => { setBatchPanelOpen(true); hapticFeedback('medium'); }}
-              className="w-full py-3.5 rounded-2xl font-bold text-sm flex items-center justify-center gap-2.5"
+              className="w-full py-3.5 rounded-2xl font-bold text-sm flex items-center justify-center gap-2.5 shine-sweep"
               style={{
-                background: '#0a0a0a',
+                background: 'linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 100%)',
                 color: '#ffffff',
                 boxShadow: '0 8px 32px rgba(0,0,0,0.25), 0 2px 8px rgba(0,0,0,0.15)',
               }}
@@ -163,17 +163,17 @@ function NavItem({
       >
         {label}
       </span>
-      {/* Active indicator — animated underline with glow */}
+      {/* Active indicator — animated pill with glow */}
       {active && (
         <motion.div
           layoutId="bottomBarActiveIndicator"
           className="absolute -top-0.5 rounded-full"
           style={{
-            width: 24,
+            width: 20,
             height: 3,
-            background: '#0a0a0a',
+            background: 'linear-gradient(90deg, #0a0a0a, #374151)',
             borderRadius: '0 0 4px 4px',
-            boxShadow: '0 2px 8px rgba(10,10,10,0.15)',
+            boxShadow: '0 2px 8px rgba(10,10,10,0.2)',
           }}
           transition={{ type: 'spring', stiffness: 500, damping: 30 }}
         />
