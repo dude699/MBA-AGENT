@@ -1702,7 +1702,6 @@ async def handle_system_health(request: web.Request) -> web.Response:
     Returns actual connection status, agent heartbeats, system metrics,
     and AI provider status — all without any AI token spend.
     """
-    import psutil
     import os
 
     result = {
@@ -1720,6 +1719,7 @@ async def handle_system_health(request: web.Request) -> web.Response:
 
     # System metrics — zero-cost, pure computation
     try:
+        import psutil
         proc = psutil.Process(os.getpid())
         mem_info = proc.memory_info()
         result["system_metrics"] = {
@@ -1730,6 +1730,19 @@ async def handle_system_health(request: web.Request) -> web.Response:
             "open_files": len(proc.open_files()) if hasattr(proc, 'open_files') else 0,
             "pid": os.getpid(),
         }
+    except ImportError:
+        # psutil not installed — provide basic metrics from /proc if available
+        result["system_metrics"] = {"pid": os.getpid(), "note": "psutil not installed, limited metrics"}
+        try:
+            with open(f'/proc/{os.getpid()}/status', 'r') as f:
+                for line in f:
+                    if line.startswith('VmRSS:'):
+                        rss_kb = int(line.split()[1])
+                        result["system_metrics"]["memory_mb"] = round(rss_kb / 1024, 1)
+                    elif line.startswith('Threads:'):
+                        result["system_metrics"]["threads"] = int(line.split()[1])
+        except Exception:
+            pass
     except Exception as e:
         result["system_metrics"] = {"error": str(e)[:100]}
 

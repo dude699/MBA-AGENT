@@ -64,3 +64,4 @@ postgrest>=0.16            # PostgREST — ~3MB
 # === Utilities ===
 python-dotenv>=1.0         # Env var loading — ~1MB
 loguru>=0.7                # Structured logging — ~2MB
+psutil>=5.9                # System metrics (CPU/memory) — ~3MB
