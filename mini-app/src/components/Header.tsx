@@ -72,7 +72,7 @@ export default function Header() {
                 InternHub Pro
               </h1>
               <div className="flex items-center gap-1.5">
-                <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" style={{ boxShadow: '0 0 6px rgba(52,211,153,0.5)' }} />
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-micro-pulse" style={{ boxShadow: '0 0 6px rgba(52,211,153,0.5)' }} />
                 <p className="text-[10px] font-medium tracking-wide" style={{ color: 'rgba(255,255,255,0.45)' }}>
                   {totalCount > 0 ? `${totalCount.toLocaleString()} Opportunities` : 'PRISM Intelligence Active'}
                 </p>

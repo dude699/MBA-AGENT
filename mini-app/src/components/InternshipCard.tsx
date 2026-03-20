@@ -49,22 +49,22 @@ const InternshipCard = memo(function InternshipCard({ internship, index }: Props
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 16 }}
+      initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{
-        duration: 0.4,
-        delay: Math.min(index * 0.04, 0.3),
+        duration: 0.45,
+        delay: Math.min(index * 0.05, 0.35),
         ease: [0.22, 1, 0.36, 1],
       }}
-      className={`internship-card ${isSelected ? 'selected' : ''} ${internship.alreadyApplied ? 'opacity-55' : ''}`}
+      className={`internship-card touch-ripple ${isSelected ? 'selected' : ''} ${internship.alreadyApplied ? 'opacity-55' : ''}`}
       style={{
-        willChange: 'transform',
+        willChange: 'transform, opacity',
       }}
     >
-      {/* Blue Ocean Badge */}
+      {/* Blue Ocean Badge — animated float */}
       {isBlueOcean && !internship.isPremium && (
         <div
-          className="absolute -top-1.5 right-4 text-[9px] font-bold px-2.5 py-0.5 uppercase tracking-wider rounded-b-md flex items-center gap-1"
+          className="absolute -top-1.5 right-4 text-[9px] font-bold px-2.5 py-0.5 uppercase tracking-wider rounded-b-md flex items-center gap-1 animate-gentle-float"
           style={{
             background: 'linear-gradient(135deg, #059669, #10b981)',
             color: '#ffffff',
@@ -76,9 +76,9 @@ const InternshipCard = memo(function InternshipCard({ internship, index }: Props
         </div>
       )}
 
-      {/* Premium Badge */}
+      {/* Premium Badge — with shine sweep */}
       {internship.isPremium && (
-        <div className="absolute -top-1.5 right-4 premium-tag">
+        <div className="absolute -top-1.5 right-4 premium-tag shine-sweep">
           Premium
         </div>
       )}
@@ -242,18 +242,22 @@ const InternshipCard = memo(function InternshipCard({ internship, index }: Props
         {/* Bottom Stats Row */}
         <div className="flex items-center justify-between pt-2.5" style={{ borderTop: '1px solid rgba(229,231,235,0.5)' }}>
           <div className="flex items-center gap-3">
-            {/* Match Score — with color-coded ring */}
+            {/* Match Score — animated ring with glow */}
             <div className="flex items-center gap-1.5">
-              <div
-                className="w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold"
+              <motion.div
+                initial={{ scale: 0, rotate: -180 }}
+                animate={{ scale: 1, rotate: 0 }}
+                transition={{ delay: Math.min(index * 0.05, 0.35) + 0.3, type: 'spring', stiffness: 300, damping: 20 }}
+                className="w-7 h-7 rounded-full flex items-center justify-center text-[9px] font-bold"
                 style={{
-                  background: getMatchScoreColor(internship.matchScore) + '12',
+                  background: getMatchScoreColor(internship.matchScore) + '15',
                   color: getMatchScoreColor(internship.matchScore),
-                  border: `1.5px solid ${getMatchScoreColor(internship.matchScore)}30`,
+                  border: `1.5px solid ${getMatchScoreColor(internship.matchScore)}35`,
+                  boxShadow: internship.matchScore >= 80 ? `0 0 8px ${getMatchScoreColor(internship.matchScore)}20` : 'none',
                 }}
               >
                 {internship.matchScore}
-              </div>
+              </motion.div>
               <span className="text-[10px] font-medium text-primary-400">Match</span>
             </div>
 

@@ -187,27 +187,32 @@ def command_error_boundary(func):
 # ============================================================
 
 class ReportFormatter:
-    """Formats data for Telegram HTML display with rich, professional formatting."""
+    """Formats data for Telegram HTML display with ultra-premium PRISM formatting."""
 
-    # Source emoji mapping
+    # Source emoji mapping — premium icons
     SOURCE_EMOJI = {
-        'internshala': '🟢', 'naukri': '🔵', 'linkedin': '🟤',
-        'greenhouse': '🌿', 'lever': '⚙️', 'indeed': '🟠',
-        'iimjobs': '🟡', 'wellfound': '🔶', 'dark_channel': '🌑',
-        'glassdoor': '🟩', 'workday': '🔷', 'smartrecruiters': '💼',
-        'ashby': '🔘', 'twitter_x': '🐦', 'career_page': '🏢',
-        'instahyre': '💎', 'ats_crawler': '🤖',
+        'internshala': '\u2728', 'naukri': '\U0001f535', 'linkedin': '\U0001f4ce',
+        'greenhouse': '\U0001f33f', 'lever': '\u2699\ufe0f', 'indeed': '\U0001f7e0',
+        'iimjobs': '\U0001f4ab', 'wellfound': '\U0001f680', 'dark_channel': '\U0001f311',
+        'glassdoor': '\U0001f50d', 'workday': '\U0001f4a0', 'smartrecruiters': '\U0001f4bc',
+        'ashby': '\u26ab', 'twitter_x': '\U0001d54f', 'career_page': '\U0001f3e2',
+        'instahyre': '\U0001f48e', 'ats_crawler': '\U0001f916',
     }
 
-    # Tier label mapping
+    # Tier label mapping — with premium icons
     TIER_LABELS = {
-        1: 'T1 Elite', 2: 'T2 MNC', 3: 'T3 Unicorn',
-        4: 'T4 Startup', 5: 'T5 Niche',
+        1: '\U0001f451 T1 Elite', 2: '\U0001f30d T2 MNC', 3: '\U0001f984 T3 Unicorn',
+        4: '\U0001f680 T4 Startup', 5: '\U0001f3af T5 Niche',
     }
+
+    # Separator styles
+    HEAVY_SEP = '\u2501' * 28
+    LIGHT_SEP = '\u2500' * 28
+    DOTS_SEP = '\u00b7 ' * 14
 
     @classmethod
     def _format_listing_line(cls, i: int, l: Dict, detailed: bool = False) -> str:
-        """Format a single listing line with all professional details."""
+        """Format a single listing card with premium PRISM styling."""
         title = l.get('title', 'Unknown')
         company = l.get('company', 'Unknown')
         ppo = l.get('ppo_score', 0) or 0
@@ -224,66 +229,76 @@ class ReportFormatter:
         tier = l.get('tier')
         category = l.get('category', '') or ''
 
-        # Tags
+        # Premium tags with refined emojis
         tags = []
-        if is_ppo: tags.append('🎯PPO')
-        if is_wfh: tags.append('🏠WFH')
-        if is_bo: tags.append('🌊Blue Ocean')
-        tag_str = ' '.join(tags) if tags else ''
+        if is_ppo: tags.append('\U0001f3af PPO')
+        if is_wfh: tags.append('\U0001f3e0 Remote')
+        if is_bo: tags.append('\U0001f30a Blue Ocean')
+        tag_str = ' \u2022 '.join(tags) if tags else ''
 
-        # Source emoji
-        src_emoji = cls.SOURCE_EMOJI.get(source, '📡')
-
-        # Tier label
+        src_emoji = cls.SOURCE_EMOJI.get(source, '\U0001f4e1')
         tier_label = cls.TIER_LABELS.get(tier, '') if tier else ''
 
-        # Stipend formatting
+        # Stipend — elegant formatting
         if stipend >= 100000:
-            stipend_str = f"₹{stipend/100000:.1f}L/mo"
+            stipend_str = f"\u20b9{stipend/100000:.1f}L/mo"
         elif stipend > 0:
-            stipend_str = f"₹{stipend:,.0f}/mo"
+            stipend_str = f"\u20b9{stipend:,.0f}/mo"
         else:
-            stipend_str = "Unpaid/TBD"
+            stipend_str = "Negotiable"
 
-        # Build professional card
-        line = f"{'━' * 28}\n"
-        line += f"<b>{i}. {title}</b>\n"
-        line += f"   🏢 {company}"
+        # PPO score tier indicator
+        if ppo >= 80:
+            ppo_icon = '\U0001f525'  # fire
+        elif ppo >= 60:
+            ppo_icon = '\u2b50'  # star
+        elif ppo >= 40:
+            ppo_icon = '\U0001f7e2'  # green circle
+        else:
+            ppo_icon = '\u26aa'  # white circle
+
+        # Competition indicator
+        if applicants > 500:
+            comp_str = f"\U0001f534 {applicants}"
+        elif applicants > 200:
+            comp_str = f"\U0001f7e1 {applicants}"
+        elif applicants > 0:
+            comp_str = f"\U0001f7e2 {applicants}"
+        else:
+            comp_str = '\u2014'
+
+        # Build premium card
+        line = f"{cls.LIGHT_SEP}\n"
+        line += f"<b>{i}.</b> <b>{title}</b>\n"
+        line += f"    \U0001f3e2 {company}"
         if tier_label:
-            line += f" <i>[{tier_label}]</i>"
+            line += f"  <i>{tier_label}</i>"
         line += "\n"
 
-        # Row 2: Location + Duration + Stipend
-        row2 = []
+        # Details row — clean grid
+        details = []
         if location:
-            row2.append(f"📍{location[:25]}")
+            details.append(f"\U0001f4cd {location[:22]}")
         if duration > 0:
-            row2.append(f"⏱{duration}mo")
-        row2.append(f"💰{stipend_str}")
-        line += f"   {' │ '.join(row2)}\n"
+            details.append(f"\u23f1 {duration}mo")
+        details.append(f"\U0001f4b0 {stipend_str}")
+        line += f"    {' \u2502 '.join(details)}\n"
 
-        # Row 3: Applicants + PPO Score + Source
-        row3 = []
-        if applicants > 0:
-            if applicants > 500:
-                row3.append(f"👥{applicants}⚠️")
-            else:
-                row3.append(f"👥{applicants}")
-        row3.append(f"📊PPO:{ppo:.0f}")
-        row3.append(f"{src_emoji}{source}")
+        # Metrics row
+        metrics = [f"{ppo_icon} PPO:{ppo:.0f}", f"\U0001f465 {comp_str}"]
+        metrics.append(f"{src_emoji} {source}")
         if category:
-            row3.append(f"📂{category}")
-        line += f"   {' │ '.join(row3)}\n"
+            metrics.append(f"\U0001f4c2 {category}")
+        line += f"    {' \u2502 '.join(metrics)}\n"
 
-        # Row 4: Tags (if any)
         if tag_str:
-            line += f"   {tag_str}\n"
+            line += f"    {tag_str}\n"
 
-        # Row 5: Action buttons
+        # Action row
         if url:
-            line += f"   🔗 <a href=\"{url}\">APPLY NOW</a> │ /package {lid}\n"
+            line += f"    \U0001f517 <a href=\"{url}\">Apply Now</a>  \u2502  /package {lid}\n"
         else:
-            line += f"   /package {lid} │ /cover {lid}\n"
+            line += f"    /package {lid}  \u2502  /cover {lid}\n"
 
         return line
 
@@ -291,45 +306,45 @@ class ReportFormatter:
     def format_jobs_header(cls, total: int, page: int, total_pages: int,
                             sort_by: str, max_duration: int,
                             filters: Dict = None) -> str:
-        """Format the header for /jobs command output."""
+        """Format the header for /jobs command output — premium PRISM style."""
         sort_labels = {
-            'stipend': '💰 Stipend (High→Low)',
-            'ppo': '📊 PPO Score',
-            'date': '📅 Newest First',
-            'duration': '⏱ Duration (Short→Long)',
-            'applicants': '👥 Competition (Low→High)',
+            'stipend': '\U0001f4b0 Stipend (High\u2192Low)',
+            'ppo': '\U0001f525 PPO Score',
+            'date': '\U0001f4c5 Newest First',
+            'duration': '\u23f1 Duration (Short\u2192Long)',
+            'applicants': '\U0001f465 Competition (Low\u2192High)',
         }
         sort_label = sort_labels.get(sort_by, sort_by)
 
         lines = [
-            f"📋 <b>MANAGEMENT INTERNSHIPS</b>",
-            f"<i>{datetime.now(IST).strftime('%d %b %Y, %I:%M %p IST')}</i>",
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-            f"📊 <b>{total}</b> listings │ Page <b>{page}</b>/{total_pages}",
-            f"🔀 Sorted by: {sort_label}",
-            f"⏱ Duration: ≤ {max_duration} months",
+            f"\U0001f4cb <b>MANAGEMENT INTERNSHIPS</b>",
+            f"\U0001f553 <i>{datetime.now(IST).strftime('%d %b %Y, %I:%M %p IST')}</i>",
+            cls.HEAVY_SEP,
+            f"\U0001f4ca <b>{total}</b> listings  \u2502  Page <b>{page}</b>/{total_pages}",
+            f"\U0001f500 {sort_label}",
+            f"\u23f1 Duration: \u2264 {max_duration} months",
         ]
 
         if filters:
             filter_parts = []
             if filters.get('category'):
-                filter_parts.append(f"📂 {filters['category']}")
+                filter_parts.append(f"\U0001f4c2 {filters['category']}")
             if filters.get('source'):
-                filter_parts.append(f"📡 {filters['source']}")
+                filter_parts.append(f"\U0001f4e1 {filters['source']}")
             if filters.get('location'):
-                filter_parts.append(f"📍 {filters['location']}")
+                filter_parts.append(f"\U0001f4cd {filters['location']}")
             if filters.get('min_stipend'):
-                filter_parts.append(f"💰 ≥₹{filters['min_stipend']:,.0f}")
+                filter_parts.append(f"\U0001f4b0 \u2265\u20b9{filters['min_stipend']:,.0f}")
             if filter_parts:
-                lines.append(f"🔍 Filters: {' │ '.join(filter_parts)}")
+                lines.append(f"\U0001f50d Filters: {' \u2502 '.join(filter_parts)}")
 
-        lines.append(f"🚫 Sales/BD/Cold-Calling: <b>AUTO-EXCLUDED</b>")
+        lines.append(f"\U0001f6ab Sales/BD/Cold-Calling: <b>AUTO-EXCLUDED</b>")
         lines.append("")
         return '\n'.join(lines)
 
     @classmethod
     def morning_brief(cls, data: Dict) -> str:
-        """Format morning brief report with professional details."""
+        """Format morning brief report — ultra-premium PRISM style."""
         total_new = data.get('total_new', 0)
         total_active = data.get('total_active', 0)
         total_raw = data.get('total_raw', 0)
@@ -342,79 +357,81 @@ class ReportFormatter:
         urgent = data.get('urgent_deadlines', [])
 
         lines = [
-            f"🌅 <b>MORNING BRIEF — {datetime.now(IST).strftime('%d %b %Y, %I:%M %p IST')}</b>",
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+            f"\U0001f305 <b>PRISM MORNING BRIEF</b>",
+            f"\U0001f553 <i>{datetime.now(IST).strftime('%d %b %Y  \u2502  %I:%M %p IST')}</i>",
+            cls.HEAVY_SEP,
             f"",
-            f"📊 <b>Pipeline Summary</b>",
-            f"  New listings (24h): <b>{total_new}</b>",
-            f"  After ghost filter: <b>{after_ghost}</b>",
-            f"  Total active: <b>{total_active}</b>",
-            f"  Blue Ocean alerts: <b>{blue_ocean}</b> 🌊",
-            f"  Intent signals: <b>{signals}</b> 📡",
+            f"\U0001f4ca <b>Pipeline Intelligence</b>",
+            f"  \u2514 New (24h):       <b>{total_new}</b>",
+            f"  \u2514 Ghost-filtered:  <b>{after_ghost}</b>",
+            f"  \u2514 Active pool:     <b>{total_active}</b>",
+            f"  \u2514 \U0001f30a Blue Ocean:   <b>{blue_ocean}</b>",
+            f"  \u2514 \U0001f4e1 Signals:      <b>{signals}</b>",
         ]
 
-        # Show pipeline health diagnostics if there are unprocessed items
         if unprocessed_raw > 0:
-            lines.append(f"  ⚠️ Unprocessed raw: <b>{unprocessed_raw}</b> (run /run pipeline)")
+            lines.append(f"  \u26a0\ufe0f Unprocessed: <b>{unprocessed_raw}</b> \u2192 /run pipeline")
         if total_raw > 0 and total_active == 0:
-            lines.append(f"  📦 Raw scraped: <b>{total_raw}</b> (needs dedup processing)")
+            lines.append(f"  \U0001f4e6 Raw scraped: <b>{total_raw}</b> (pending dedup)")
 
-        # Source breakdown
         source_data = data.get('source_counts', {})
         if source_data:
             lines.append(f"")
-            lines.append(f"📡 <b>Sources</b>")
+            lines.append(f"\U0001f4e1 <b>Source Breakdown</b>")
             for src, cnt in sorted(source_data.items(), key=lambda x: -x[1]):
                 if cnt > 0:
-                    emoji = cls.SOURCE_EMOJI.get(src, '📡')
-                    lines.append(f"  {emoji} {src}: <b>{cnt}</b>")
+                    emoji = cls.SOURCE_EMOJI.get(src, '\U0001f4e1')
+                    bar = '\u2588' * min(cnt // 3, 10)
+                    lines.append(f"  {emoji} {src:<14} <b>{cnt:>3}</b> {bar}")
 
         lines.append(f"")
 
         if top_10:
-            lines.append(f"🏆 <b>TOP {len(top_10[:10])} BY PPO SCORE</b>")
+            lines.append(f"\U0001f3c6 <b>TOP {len(top_10[:10])} \u2014 HIGHEST PPO SCORES</b>")
             lines.append(f"")
             for i, listing in enumerate(top_10[:10], 1):
                 lines.append(cls._format_listing_line(i, listing))
         elif total_active == 0 and total_raw > 0:
             lines.append(
-                f"📭 {total_raw} raw listings scraped but not yet processed.\n"
-                f"Run /run pipeline to dedup, score, and rank them."
+                f"\U0001f4ed {total_raw} raw listings scraped but not yet processed.\n"
+                f"\U0001f449 Run /run pipeline to dedup, score, and rank them."
             )
         elif total_active == 0:
-            lines.append("📭 No listings yet. Run /run pipeline to start scraping.")
+            lines.append("\U0001f4ed No listings yet. Run /run pipeline to begin.")
         else:
-            lines.append(f"📭 No scored listings. {total_active} active listings need PPO scoring.")
+            lines.append(f"\U0001f4ed No scored listings. {total_active} active listings need PPO scoring.")
 
         if dark:
-            lines.append(f"🌑 <b>Dark Channel:</b> {len(dark)} new finds")
-
+            lines.append(f"\n\U0001f311 <b>Dark Channel:</b> {len(dark)} stealth finds")
         if urgent:
-            lines.append(f"⏰ <b>Urgent (closing soon):</b> {len(urgent)} listings")
+            lines.append(f"\u23f0 <b>Urgent Deadlines:</b> {len(urgent)} closing soon")
 
         lines.append(f"")
-        lines.append(f"💡 /jobs for filtered | /top 25 for more | /ocean for Blue Ocean")
+        lines.append(cls.LIGHT_SEP)
+        lines.append(f"\U0001f4a1 /jobs \u2022 /top 25 \u2022 /ocean \u2022 /stats")
         return '\n'.join(lines)
 
     @classmethod
     def evening_summary(cls, data: Dict) -> str:
-        """Format evening summary report."""
+        """Format evening summary report — premium PRISM style."""
         today_total = data.get('today_total', 0)
         afternoon_new = data.get('afternoon_new', 0)
         applied_today = data.get('applied_today', 0)
         dark_finds = data.get('dark_finds', 0)
 
         return (
-            f"🌆 <b>EVENING SUMMARY — {datetime.now(IST).strftime('%d %b %Y, %I:%M %p IST')}</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"\U0001f306 <b>PRISM EVENING SUMMARY</b>\n"
+            f"\U0001f553 <i>{datetime.now(IST).strftime('%d %b %Y  \u2502  %I:%M %p IST')}</i>\n"
+            f"{cls.HEAVY_SEP}\n"
             f"\n"
-            f"📊 <b>Today's Numbers</b>\n"
-            f"  Total clean listings: <b>{today_total}</b>\n"
-            f"  Afternoon new: <b>{afternoon_new}</b>\n"
-            f"  Applied today: <b>{applied_today}</b> 📝\n"
-            f"  Dark channel finds: <b>{dark_finds}</b>\n"
+            f"\U0001f4ca <b>Today's Intelligence</b>\n"
+            f"  \u2514 Clean listings:   <b>{today_total}</b>\n"
+            f"  \u2514 Afternoon new:    <b>{afternoon_new}</b>\n"
+            f"  \u2514 Applied today:    <b>{applied_today}</b> \u2705\n"
+            f"  \u2514 Dark channel:     <b>{dark_finds}</b> \U0001f311\n"
             f"\n"
-            f"💡 /stats for weekly funnel | /health for system status"
+            f"{cls.LIGHT_SEP}\n"
+            f"\U0001f4a1 /stats \u2022 /health \u2022 /top 20 \u2022 /ocean"
         )
 
     @classmethod
@@ -457,98 +474,124 @@ class ReportFormatter:
             jd_snippet = f"\n📝 <b>Description</b>\n<i>{clean_desc}...</i>\n"
 
         return (
-            f"📋 <b>LISTING #{lid} — FULL DETAILS</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"📋 <b>LISTING #{lid} — FULL DOSSIER</b>\n"
+            f"{cls.HEAVY_SEP}\n"
             f"\n"
             f"<b>{title}</b>\n"
-            f"🏢 {company} [{tier_label}]\n"
+            f"🏢 {company}  {tier_label}\n"
             f"📍 {location}\n"
-            f"🏭 Sector: {sector or 'N/A'} | Category: {category or 'N/A'}\n"
+            f"🏭 {sector or 'N/A'} │ 📂 {category or 'N/A'}\n"
             f"\n"
-            f"💰 Stipend: {'₹{:,.0f}/month'.format(stipend) if stipend > 0 else 'Not specified'}\n"
-            f"⏱ Duration: {f'{duration} months' if duration > 0 else 'Not specified'}\n"
-            f"👥 Applicants: {applicants if applicants > 0 else 'Not available'}\n"
+            f"━ <b>Key Details</b> ━\n"
+            f"  💰 Stipend:     {'₹{:,.0f}/month'.format(stipend) if stipend > 0 else 'Not specified'}\n"
+            f"  ⏱ Duration:    {f'{duration} months' if duration > 0 else 'Not specified'}\n"
+            f"  👥 Applicants:  {applicants if applicants > 0 else 'N/A'}\n"
             f"\n"
-            f"📊 <b>Scores</b>\n"
-            f"  PPO Score: <b>{ppo_score:.1f}</b>/100\n"
-            f"  Ghost Score: {ghost_score:.0f}/100\n"
+            f"━ <b>Intelligence Scores</b> ━\n"
+            f"  🔥 PPO Score:   <b>{ppo_score:.1f}</b>/100\n"
+            f"  👻 Ghost Risk:  {ghost_score:.0f}/100\n"
             f"\n"
-            f"🏷 <b>Tags</b>\n{tag_str}\n"
+            f"━ <b>Tags</b> ━\n{tag_str}\n"
             f"\n"
             f"📡 Source: {src_emoji} {source}\n"
-            f"🔗 {f'<a href=\"{url}\">Open Listing</a>' if url else 'No URL available'}\n"
+            f"🔗 {f'<a href=\"{url}\">Open Listing →</a>' if url else 'No URL available'}\n"
             f"{jd_snippet}"
             f"\n"
-            f"⚡ <b>Actions</b>\n"
+            f"━ <b>Quick Actions</b> ━\n"
             f"  /ats {lid} — ATS simulation\n"
-            f"  /cover {lid} — Generate cover letter\n"
+            f"  /cover {lid} — AI cover letter\n"
             f"  /package {lid} — Full application package\n"
             f"  /apply {lid} — Mark as applied"
         )
 
     @staticmethod
     def health_report(heartbeats: List[Dict]) -> str:
-        """Format agent health report."""
+        """Format agent health report — premium PRISM dashboard."""
+        import psutil
+        import os
+        # System metrics
+        try:
+            mem = psutil.Process(os.getpid()).memory_info()
+            mem_mb = mem.rss / 1024 / 1024
+            cpu = psutil.cpu_percent(interval=0.1)
+            sys_line = f"\n\U0001f5a5 <b>System</b>: {mem_mb:.0f}MB RAM  \u2502  CPU {cpu:.0f}%\n"
+        except Exception:
+            sys_line = "\n"
+
         lines = [
-            "💚 <b>Agent Health Dashboard</b>",
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-            "",
+            "\U0001f49a <b>PRISM AGENT HEALTH MATRIX</b>",
+            ReportFormatter.HEAVY_SEP,
+            sys_line,
         ]
 
         status_emojis = {
-            'idle': '😴', 'running': '🏃', 'error': '❌',
-            'completed': '✅', 'disabled': '⛔',
+            'idle': '\U0001f7e1', 'running': '\U0001f7e2', 'error': '\U0001f534',
+            'completed': '\u2705', 'disabled': '\u26d4',
         }
 
+        running_count = 0
+        error_count = 0
         for h in heartbeats:
             agent_id = h.get('agent_id', '?')
             name = h.get('agent_name', '?')
             status = h.get('status', 'idle')
-            emoji = status_emojis.get(status, '❓')
+            emoji = status_emojis.get(status, '\u2753')
             runs = h.get('total_runs', 0)
             items = h.get('total_items', 0)
             errors = h.get('errors_last_run', 0)
             last_run = h.get('last_run', 'Never')
 
+            if status == 'running': running_count += 1
+            if status == 'error': error_count += 1
+
+            err_flag = f" \u26a0\ufe0f{errors}" if errors > 0 else ""
             lines.append(
-                f"{emoji} <b>{agent_id}</b>: {name}\n"
-                f"   Runs: {runs} | Items: {items} | "
-                f"Errors: {errors}\n"
-                f"   Last: {str(last_run)[:19]}"
+                f"{emoji} <b>{agent_id}</b> {name}\n"
+                f"    \u21b3 {runs} runs  \u2502  {items} items{err_flag}  \u2502  {str(last_run)[:16]}"
             )
+
+        lines.append(f"\n{ReportFormatter.LIGHT_SEP}")
+        lines.append(f"\U0001f7e2 Active: {running_count}  \u2502  \U0001f534 Errors: {error_count}  \u2502  Total: {len(heartbeats)}")
 
         return '\n'.join(lines)
 
     @staticmethod
     def stats_report(stats: Dict) -> str:
-        """Format weekly stats report."""
+        """Format weekly stats report — premium PRISM analytics."""
         lines = [
-            "📈 <b>Weekly Statistics</b>",
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+            "\U0001f4c8 <b>PRISM WEEKLY ANALYTICS</b>",
+            ReportFormatter.HEAVY_SEP,
             "",
-            "<b>Application Funnel:</b>",
+            "\U0001f3af <b>Application Funnel</b>",
         ]
 
         funnel = stats.get('funnel', {})
+        funnel_icons = {
+            'applied': '\U0001f4dd', 'shortlisted': '\U0001f4cb', 'interview': '\U0001f399\ufe0f',
+            'rejected': '\u274c', 'offer': '\U0001f389', 'ppo': '\U0001f3c6',
+        }
+        total_funnel = sum(funnel.values()) if funnel else 1
         for status, count in funnel.items():
-            emoji = {
-                'applied': '📝', 'shortlisted': '📋', 'interview': '🎤',
-                'rejected': '❌', 'offer': '🎉', 'ppo': '🏆',
-            }.get(status, '•')
-            lines.append(f"  {emoji} {status.title()}: {count}")
+            emoji = funnel_icons.get(status, '\u2022')
+            pct = (count / total_funnel * 100) if total_funnel > 0 else 0
+            bar = '\u2588' * max(1, int(pct / 5))
+            lines.append(f"  {emoji} {status.title():<12} <b>{count:>3}</b>  {bar} {pct:.0f}%")
 
         by_source = stats.get('by_source', {})
         if by_source:
-            lines.append(f"\n<b>By Source:</b>")
+            lines.append(f"\n\U0001f4e1 <b>By Source</b>")
             for src, count in sorted(by_source.items(), key=lambda x: -x[1]):
-                lines.append(f"  {src}: {count}")
+                src_emoji = ReportFormatter.SOURCE_EMOJI.get(src, '\u2022')
+                lines.append(f"  {src_emoji} {src:<14} <b>{count}</b>")
 
         by_tier = stats.get('by_tier', {})
         if by_tier:
-            lines.append(f"\n<b>By Company Tier:</b>")
+            lines.append(f"\n\U0001f3e2 <b>By Company Tier</b>")
             for tier, count in sorted(by_tier.items()):
-                lines.append(f"  {tier}: {count}")
+                lines.append(f"  \u2502 {tier}: <b>{count}</b>")
 
+        lines.append(f"\n{ReportFormatter.LIGHT_SEP}")
+        lines.append(f"\U0001f4a1 /health \u2022 /quota \u2022 /schedule \u2022 /export")
         return '\n'.join(lines)
 
 
@@ -885,15 +928,16 @@ class TelegramReporter:
             pool_timeout=30.0,
         )
 
+        # CRITICAL FIX: When a custom get_updates_request is provided,
+        # individual get_updates_*_timeout params MUST NOT be set — they
+        # conflict and raise: "The parameter 'get_updates_connect_timeout'
+        # may only be set if no get_updates_request instance was set."
+        # All timeouts are already configured in the HTTPXRequest above.
         app = (
             TGApplication.builder()
             .token(token)
             .request(custom_request)
             .get_updates_request(get_updates_request)
-            .get_updates_connect_timeout(30)
-            .get_updates_read_timeout(90)
-            .get_updates_write_timeout(30)
-            .get_updates_pool_timeout(30)
             .build()
         )
 
@@ -1397,11 +1441,11 @@ class TelegramReporter:
         admin_section = ""
         if is_admin:
             admin_section = (
-                "\n\n🔐 <b>Admin Commands:</b>\n"
-                "/adduser — Add authorized user\n"
-                "/removeuser — Remove user\n"
-                "/listusers — List all users\n"
-                "/secstatus — Security dashboard"
+                "\n\n🔐 <b>Admin Commands</b>\n"
+                "  /adduser — Add authorized user\n"
+                "  /removeuser — Remove user\n"
+                "  /listusers — List all users\n"
+                "  /secstatus — Security dashboard"
             )
         
         # Get user's access code for mini-app
@@ -1412,32 +1456,32 @@ class TelegramReporter:
         mini_app_url = get_mini_app_url()
         if mini_app_url:
             miniapp_section = (
-                "\n\n📱 <b>InternHub Pro (Mini App):</b>\n"
-                "/miniapp — Open the Mini App\n"
+                "\n\n📱 <b>InternHub Pro Mini App</b>\n"
+                "  /miniapp — Launch the app\n"
             )
             if access_code:
                 miniapp_section += (
-                    f"🔑 Your access code: <code>{access_code}</code>\n"
+                    f"  🔑 Code: <code>{access_code}</code>\n"
                 )
         
         msg = (
-            "Operation First Mover v6.0\n"
-            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            "Your zero-cost MBA internship hunting agent.\n\n"
-            "12 AI agents working 24/7\n"
-            "1080+ Indian companies tracked\n"
-            "8+ job boards scraped (weekly smart schedule)\n"
-            "Total cost: INR 0.00/day\n"
-            "Security: Enabled\n\n"
-            "Start Here:\n"
-            "/jobs - Browse filtered internships (no sales!)\n"
-            "/morning - Full morning brief\n"
-            "/top 20 - Top 20 by PPO score\n\n"
-            "Run agents on demand:\n"
-            "/run pipeline - Full scrape+process+report\n"
-            "/run scrape - Just scrape now\n"
-            "/schedule - View weekly schedule\n\n"
-            f"Type /help for all commands.{miniapp_section}{admin_section}"
+            "⚡ <b>PRISM v0.1</b>\n"
+            "Precision Recruitment Intelligence & Scoring Machine\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "🧠 <b>20 AI agents</b> working 24/7\n"
+            "🏢 <b>1,081</b> Indian companies tracked\n"
+            "🌐 <b>8+ job boards</b> — weekly smart schedule\n"
+            "💰 Total daily cost: <b>₹0.00</b>\n"
+            "🛡 Security: <b>Enabled</b>\n\n"
+            "━ <b>Quick Start</b> ━\n"
+            "▸ /jobs — Browse filtered internships\n"
+            "▸ /morning — Full morning brief\n"
+            "▸ /top 20 — Top 20 by PPO score\n\n"
+            "━ <b>Run On Demand</b> ━\n"
+            "▸ /run pipeline — Full scrape→process→report\n"
+            "▸ /run scrape — Scrape all portals now\n"
+            "▸ /schedule — View weekly timeline\n\n"
+            f"Type /help for all 40+ commands.{miniapp_section}{admin_section}"
         )
         
         # Send with inline keyboard for Mini App if URL is configured
@@ -1491,61 +1535,61 @@ class TelegramReporter:
         is_admin = self.security.is_admin(telegram_id)
         
         msg = (
-            "Command Reference (40+ Commands)\n"
+            "📖 <b>PRISM Command Reference</b>  (40+)\n"
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "<b>Browse and Discover</b>\n"
-            "/jobs [sort] [page] - SMART filtered (no sales!)\n"
-            "  Sorts: stipend, ppo, date, duration, applicants\n"
-            "  Filters: /jobs marketing, /jobs mumbai, /jobs 10k\n"
-            "/loadall [page] [cat] [src] - Browse ALL listings\n"
-            "/browse [category] - Category browser\n"
-            "/filter - Available filters and counts\n"
-            "/sources - Source health dashboard\n"
-            "/top [N] - Top N by PPO score (default 10)\n"
-            "/ocean - Blue Ocean listings\n"
-            "/export [N] - Export to Excel\n\n"
-            "<b>Reports</b>\n"
-            "/morning - Full morning brief\n"
-            "/dark - Dark channel finds\n"
-            "/signals - Active intent signals\n"
-            "/stats - Weekly funnel stats\n\n"
-            "<b>Search</b>\n"
-            "/internshala [query] - Live search\n"
-            "/refresh - Force re-scrape all sources\n\n"
-            "<b>Application</b>\n"
-            "/package [id] - Full app package\n"
-            "/ats [id] - ATS keyword simulation\n"
-            "/cover [id] - AI cover letter\n"
-            "/network [company] - Alumni map\n"
-            "/apply [id] - Mark as applied\n"
-            "/outcome [id] [result] - Log result\n\n"
-            "<b>Auto-Apply (A-13)</b>\n"
-            "/queue [id] - Add to auto-apply queue\n"
-            "/queue top [N] - Queue top N listings\n"
-            "/autoapply [N] - Run auto-apply (max N)\n"
-            "/appstatus - Application history\n\n"
-            "<b>Company Intel</b>\n"
-            "/cirs [company] - CIRS breakdown\n"
-            "/research [company] - Full research\n\n"
-            "<b>Agent Control</b>\n"
-            "/run - Run agents NOW (see /run for options)\n"
-            "/schedule - Weekly schedule and next runs\n"
-            "/status - Running tasks\n"
-            "/cancel [task] - Cancel task\n\n"
-            "<b>System</b>\n"
-            "/health - Agent heartbeats\n"
-            "/quota - API usage\n"
-            "/cfstatus - Cloudflare relay status\n"
-            "/reprocess - Raw listing status/reset\n"
-            "/settings - Preferences\n\n"
-            "<b>Mini App</b>\n"
-            "/miniapp - Open InternHub Pro mini app\n"
-            "/webapp - Alias for /miniapp\n\n"
-            "<b>Supabase Cloud DB</b>\n"
-            "/dbstatus - Database status and stats\n"
-            "/latestjobs [page] - Latest scraping session jobs\n"
-            "/alljobs [page] - All jobs archive\n"
-            "/alljobs applied - Applied jobs only"
+            "🔍 <b>Browse & Discover</b>\n"
+            "  /jobs [sort] [page] — Smart filtered browse\n"
+            "    <i>Sorts: stipend, ppo, date, duration, applicants</i>\n"
+            "    <i>Filters: /jobs marketing, /jobs mumbai, /jobs 10k</i>\n"
+            "  /loadall [page] — Browse ALL listings\n"
+            "  /browse [category] — Category browser\n"
+            "  /filter — Available filters & counts\n"
+            "  /sources — Source health dashboard\n"
+            "  /top [N] — Top N by PPO score\n"
+            "  /ocean — 🌊 Blue Ocean opportunities\n"
+            "  /export [N] — Export to Excel\n\n"
+            "📊 <b>Reports & Insights</b>\n"
+            "  /morning — Full morning brief\n"
+            "  /dark — Dark channel stealth finds\n"
+            "  /signals — Active intent signals\n"
+            "  /stats — Weekly funnel analytics\n\n"
+            "🔎 <b>Search</b>\n"
+            "  /internshala [query] — Live Internshala search\n"
+            "  /refresh — Force re-scrape all sources\n\n"
+            "📝 <b>Application</b>\n"
+            "  /package [id] — Full application package\n"
+            "  /ats [id] — ATS keyword simulation\n"
+            "  /cover [id] — AI cover letter\n"
+            "  /network [co] — Alumni map + warm intros\n"
+            "  /apply [id] — Mark as applied\n"
+            "  /outcome [id] [result] — Log result\n\n"
+            "🤖 <b>Auto-Apply (A-13)</b>\n"
+            "  /queue [id] — Add to auto-apply queue\n"
+            "  /queue top [N] — Queue top N listings\n"
+            "  /autoapply [N] — Run auto-apply batch\n"
+            "  /appstatus — Application history\n\n"
+            "🏢 <b>Company Intel</b>\n"
+            "  /cirs [company] — CIRS score breakdown\n"
+            "  /research [company] — Full research dossier\n\n"
+            "⚙️ <b>Agent Control</b>\n"
+            "  /run — Run agents on demand\n"
+            "  /schedule — Weekly schedule & timings\n"
+            "  /status — Running background tasks\n"
+            "  /cancel [task] — Cancel a running task\n\n"
+            "🖥 <b>System</b>\n"
+            "  /health — Agent health matrix\n"
+            "  /quota — API usage & budget\n"
+            "  /cfstatus — Cloudflare relay status\n"
+            "  /reprocess — Raw listing diagnostics\n"
+            "  /settings — User preferences\n\n"
+            "📱 <b>Mini App</b>\n"
+            "  /miniapp — Open InternHub Pro\n"
+            "  /webapp — Alias for /miniapp\n\n"
+            "☁️ <b>Supabase Cloud DB</b>\n"
+            "  /dbstatus — Database status & stats\n"
+            "  /latestjobs [page] — Latest session jobs\n"
+            "  /alljobs [page] — All archived jobs\n"
+            "  /alljobs applied — Applied jobs only"
         )
         
         if is_admin:
@@ -1856,7 +1900,11 @@ class TelegramReporter:
             await update.message.reply_text(f"❌ Listing #{lid} not found")
             return
 
-        await update.message.reply_text(f"📦 Generating application package for #{lid}... (30-60s)")
+        await update.message.reply_text(
+            f"⚙️ <b>Crafting application package...</b>\n"
+            f"📄 #{lid} • {listing.get('title', '')}\n"
+            f"⏳ This takes 30-60s — our AI is analyzing the JD."
+        )
 
         profile = {
             'college': self.db.get_setting('college', 'a top MBA program'),
@@ -1869,10 +1917,12 @@ class TelegramReporter:
                 title = listing.get('title', '')
                 company = listing.get('company', '')
                 msg = (
-                    f"📦 <b>Application Package</b>\n"
-                    f"<b>{title}</b> @ {company}\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-                    f"{response.content[:3800]}"
+                    f"📦 <b>PRISM Application Package</b>\n"
+                    f"🏢 {company} • <b>{title}</b>\n"
+                    f"{ReportFormatter.HEAVY_SEP}\n\n"
+                    f"{response.content[:3800]}\n\n"
+                    f"{ReportFormatter.LIGHT_SEP}\n"
+                    f"💡 /ats {lid} • /cover {lid} • /apply {lid}"
                 )
                 await self._send_long_message(update, msg)
             else:
@@ -1888,7 +1938,10 @@ class TelegramReporter:
             await update.message.reply_text("Usage: /ats <listing_id>")
             return
 
-        await update.message.reply_text(f"🔬 Running ATS simulation for #{lid}...")
+        await update.message.reply_text(
+            f"🔬 <b>Running ATS Simulation...</b>\n"
+            f"📄 Listing #{lid} • Scanning keyword match"
+        )
 
         try:
             from agents.a10_ats_simulator import get_ats_simulator
@@ -1919,7 +1972,10 @@ class TelegramReporter:
             await update.message.reply_text(f"❌ Listing #{lid} not found")
             return
 
-        await update.message.reply_text(f"✍️ Generating cover letter for #{lid}...")
+        await update.message.reply_text(
+            f"✍️ <b>Generating AI Cover Letter...</b>\n"
+            f"📄 #{lid} • Tailoring for {listing.get('company', 'company')}"
+        )
 
         try:
             from agents.a13_auto_apply import get_auto_apply_orchestrator
@@ -1930,11 +1986,12 @@ class TelegramReporter:
                 company = listing.get('company', '')
                 title = listing.get('title', '')
                 msg = (
-                    f"✍️ <b>Cover Letter</b>\n"
-                    f"<b>{title}</b> @ {company}\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                    f"✍️ <b>PRISM Cover Letter</b>\n"
+                    f"🏢 {company} • <b>{title}</b>\n"
+                    f"{ReportFormatter.HEAVY_SEP}\n\n"
                     f"{cover_letter[:3800]}\n\n"
-                    f"💡 /queue {lid} to add to auto-apply queue"
+                    f"{ReportFormatter.LIGHT_SEP}\n"
+                    f"💡 /queue {lid} • /ats {lid} • /apply {lid}"
                 )
                 await self._send_long_message(update, msg)
             else:
