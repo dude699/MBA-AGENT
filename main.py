@@ -437,28 +437,23 @@ class Application:
             return
 
         # ── ONE-TIME DB RESET (env-var triggered) ────────────────
-        # Set FORCE_DB_RESET=true in Render env vars for a single wipe.
-        # After it runs, REMOVE the env var so the next deploy keeps data.
+        # SAFETY: Only wipe LOCAL SQLite on FORCE_DB_RESET.
+        # Supabase data is PROTECTED by clear_all_jobs() safety gate.
+        # To wipe Supabase too, use admin endpoint or Telegram /admin_reset.
         force_reset = os.getenv('FORCE_DB_RESET', '').lower() in ('true', '1', 'yes')
         if force_reset:
-            logger.warning("[Phase 3] *** FORCE_DB_RESET=true detected — wiping ALL listings ***")
+            logger.warning("[Phase 3] *** FORCE_DB_RESET=true detected ***")
+            logger.warning("[Phase 3] *** Only wiping LOCAL SQLite. Supabase data is SAFE. ***")
             try:
                 counts = db.delete_all_listings()
                 logger.warning(f"[Phase 3] SQLite wiped: {counts}")
             except Exception as e:
                 logger.error(f"[Phase 3] SQLite wipe failed: {e}")
 
-            try:
-                from core.supabase_client import is_operational as _sb_ok
-                if _sb_ok():
-                    from core.supabase_db import SupabaseJobDB
-                    sb_counts = SupabaseJobDB.clear_all_jobs()
-                    logger.warning(f"[Phase 3] Supabase wiped: {sb_counts}")
-            except Exception as e:
-                logger.error(f"[Phase 3] Supabase wipe failed: {e}")
-
-            logger.warning("[Phase 3] *** DB RESET COMPLETE — NOW REMOVE FORCE_DB_RESET env var ***")
-            logger.warning("[Phase 3] *** If you don't remove it, data will be wiped on EVERY deploy! ***")
+            # v0.2: DO NOT wipe Supabase on redeploy. Supabase is persistent storage.
+            # clear_all_jobs() has its own FORCE_DB_RESET safety gate now.
+            logger.warning("[Phase 3] *** SQLite RESET COMPLETE — Supabase data preserved ***")
+            logger.warning("[Phase 3] *** REMOVE FORCE_DB_RESET env var to prevent re-wipe ***")
         # ─────────────────────────────────────────────────────────
 
         try:

@@ -138,9 +138,10 @@ NAUKRI_API_HEADERS = {
     'Connection': 'keep-alive',
 }
 
-# PRISM v0.1: Naukri MBA search queries for API v2
-# Expanded for better coverage
+# PRISM v0.2: Naukri MBA search queries for API v2
+# EXPANDED for maximum yield — focused on MBA/Data/AI only
 NAUKRI_MBA_QUERIES = [
+    # Core MBA Internships
     {"keyword": "MBA intern", "experience": "0"},
     {"keyword": "MBA internship", "experience": "0"},
     {"keyword": "management trainee intern", "experience": "0"},
@@ -149,7 +150,6 @@ NAUKRI_MBA_QUERIES = [
     {"keyword": "finance intern MBA", "experience": "0"},
     {"keyword": "consulting intern", "experience": "0"},
     {"keyword": "strategy intern", "experience": "0"},
-    {"keyword": "data analyst intern", "experience": "0"},
     {"keyword": "operations intern MBA", "experience": "0"},
     {"keyword": "product management intern", "experience": "0"},
     {"keyword": "HR intern MBA", "experience": "0"},
@@ -163,6 +163,37 @@ NAUKRI_MBA_QUERIES = [
     {"keyword": "private equity intern", "experience": "0"},
     {"keyword": "venture capital intern", "experience": "0"},
     {"keyword": "market research intern", "experience": "0"},
+    # Data & Analytics
+    {"keyword": "data analyst intern", "experience": "0"},
+    {"keyword": "data science intern", "experience": "0"},
+    {"keyword": "business analytics intern", "experience": "0"},
+    {"keyword": "analytics intern", "experience": "0"},
+    {"keyword": "data engineering intern", "experience": "0"},
+    {"keyword": "business intelligence intern", "experience": "0"},
+    {"keyword": "quantitative analyst intern", "experience": "0"},
+    {"keyword": "research analyst intern", "experience": "0"},
+    {"keyword": "insights analyst intern", "experience": "0"},
+    {"keyword": "statistical analyst intern", "experience": "0"},
+    # AI/ML
+    {"keyword": "AI intern", "experience": "0"},
+    {"keyword": "machine learning intern", "experience": "0"},
+    {"keyword": "artificial intelligence intern", "experience": "0"},
+    {"keyword": "NLP intern", "experience": "0"},
+    {"keyword": "deep learning intern", "experience": "0"},
+    {"keyword": "generative AI intern", "experience": "0"},
+    # Broader MBA roles
+    {"keyword": "corporate strategy intern", "experience": "0"},
+    {"keyword": "pricing analyst intern", "experience": "0"},
+    {"keyword": "category management intern", "experience": "0"},
+    {"keyword": "revenue management intern", "experience": "0"},
+    {"keyword": "digital marketing intern MBA", "experience": "0"},
+    {"keyword": "growth intern", "experience": "0"},
+    {"keyword": "program management intern", "experience": "0"},
+    {"keyword": "project management intern", "experience": "0"},
+    {"keyword": "financial planning intern", "experience": "0"},
+    {"keyword": "risk analyst intern", "experience": "0"},
+    {"keyword": "compliance intern", "experience": "0"},
+    {"keyword": "audit intern", "experience": "0"},
 ]
 
 # IIMjobs configuration
@@ -392,6 +423,358 @@ def _portal_delay(portal: str):
 
 
 # ============================================================
+# AI RELEVANCE FILTER — v0.2 (MBA + Data/AI ONLY, no sales)
+# ============================================================
+
+# Positive signals: titles/descriptions that ARE relevant for MBA/Data/AI
+MBA_POSITIVE_KEYWORDS = [
+    # Core MBA
+    'mba', 'management trainee', 'business analyst', 'strategy',
+    'consulting', 'brand management', 'product management', 'product manager',
+    'corporate finance', 'investment banking', 'equity research', 'venture capital',
+    'private equity', 'market research', 'supply chain', 'operations management',
+    'financial analyst', 'business development', 'management consulting',
+    'marketing manager', 'marketing analyst', 'digital marketing', 'growth',
+    'revenue', 'pricing', 'category management', 'trade marketing',
+    'corporate strategy', 'business intelligence', 'project management',
+    'program management', 'general management', 'leadership', 'planning',
+    # Data & Analytics
+    'data analyst', 'data science', 'data scientist', 'data engineering',
+    'analytics', 'business analytics', 'quantitative', 'statistical',
+    'machine learning', 'deep learning', 'nlp', 'natural language',
+    'computer vision', 'predictive', 'forecasting', 'dashboarding',
+    'visualization', 'tableau', 'power bi', 'sql', 'python', 'r programming',
+    'big data', 'data warehouse', 'etl', 'data pipeline', 'bi analyst',
+    'research analyst', 'insights', 'modeling',
+    # AI/ML
+    'artificial intelligence', 'ai engineer', 'ml engineer', 'ai/ml',
+    'generative ai', 'llm', 'prompt engineering', 'ai research',
+    'neural network', 'tensorflow', 'pytorch', 'transformer',
+    # Finance
+    'finance', 'accounting', 'audit', 'risk', 'compliance',
+    'treasury', 'credit', 'underwriting', 'actuarial', 'wealth management',
+    'portfolio', 'fintech', 'financial planning', 'valuation', 'merger',
+    # HR & Ops (MBA relevant)
+    'hr analytics', 'people analytics', 'talent management',
+    'organizational development', 'compensation', 'hrbp',
+    'operations analyst', 'process improvement', 'lean', 'six sigma',
+]
+
+# Negative signals: titles/descriptions that are NOT relevant
+SALES_NEGATIVE_KEYWORDS = [
+    'door to door', 'door-to-door', 'field sales', 'telecaller', 'telecalling',
+    'tele caller', 'tele calling', 'cold calling', 'cold-calling',
+    'telesales', 'tele sales', 'direct sales', 'street marketing',
+    'pamphlet distribution', 'flyer distribution', 'canvassing',
+    'appointment setter', 'lead generation executive', 'bpo voice',
+    'outbound calling', 'inbound calling', 'call center', 'call centre',
+    'medical representative', 'pharma sales', 'insurance agent',
+    'real estate agent', 'property sales', 'territory sales',
+    'area sales', 'sales executive', 'sales officer', 'sales associate',
+    'retail sales', 'counter sales', 'shop assistant', 'store keeper',
+    'delivery boy', 'delivery agent', 'rider', 'driver',
+    'packing', 'warehouse helper', 'loading', 'manual labor',
+    'security guard', 'watchman', 'sweeper', 'cleaner',
+    'beautician', 'salon', 'tailoring', 'stitching',
+    'cook', 'chef assistant', 'waiter', 'housekeeping',
+]
+
+# Strong negative: if these appear in title (not just description), reject
+TITLE_BLOCKLIST = [
+    'telecaller', 'telecalling', 'cold calling', 'door to door',
+    'field sales executive', 'sales executive', 'tele sales',
+    'delivery boy', 'delivery agent', 'packing helper',
+    'security guard', 'watchman', 'beautician',
+    'medical representative', 'pharma rep', 'insurance advisor',
+    'real estate', 'property advisor',
+]
+
+
+def is_mba_relevant(title: str, company: str = "", description: str = "",
+                    category: str = "") -> Tuple[bool, str]:
+    """
+    AI-style relevance filter for MBA/Data/AI jobs.
+    Returns (is_relevant, reason).
+    
+    Logic:
+      1. Title blocklist → instant reject
+      2. Positive keyword match in title → accept
+      3. Positive keyword match in description → accept (with lower confidence)
+      4. Negative keyword match in title → reject
+      5. Category-based filter
+      6. Default: accept (let AI enricher handle later)
+    """
+    title_lower = title.lower().strip()
+    desc_lower = (description or "").lower()
+    cat_lower = (category or "").lower()
+
+    # Step 1: Title blocklist — instant reject
+    for blocked in TITLE_BLOCKLIST:
+        if blocked in title_lower:
+            return False, f"blocked_title:{blocked}"
+
+    # Step 2: Strong negative in title
+    for neg in SALES_NEGATIVE_KEYWORDS:
+        if neg in title_lower:
+            return False, f"neg_title:{neg}"
+
+    # Step 3: Positive keyword in title — instant accept
+    for pos in MBA_POSITIVE_KEYWORDS:
+        if pos in title_lower:
+            return True, f"pos_title:{pos}"
+
+    # Step 4: Check description for strong signals
+    pos_desc_count = sum(1 for pos in MBA_POSITIVE_KEYWORDS if pos in desc_lower)
+    neg_desc_count = sum(1 for neg in SALES_NEGATIVE_KEYWORDS if neg in desc_lower)
+
+    if neg_desc_count >= 3 and pos_desc_count == 0:
+        return False, f"neg_desc:{neg_desc_count}_hits"
+
+    if pos_desc_count >= 2:
+        return True, f"pos_desc:{pos_desc_count}_hits"
+
+    # Step 5: Category filter — accept known MBA categories
+    mba_categories = [
+        'finance', 'marketing', 'operations', 'analytics', 'data_science',
+        'management', 'consulting', 'human_resources', 'product_management',
+        'business_development', 'strategy', 'general_management',
+    ]
+    if cat_lower in mba_categories:
+        return True, f"cat_match:{cat_lower}"
+
+    # Step 6: If "intern" in title and no negative signals, accept
+    if 'intern' in title_lower and neg_desc_count == 0:
+        return True, "intern_no_neg"
+
+    # Default: accept with low confidence (let dedup/enricher handle)
+    return True, "default_accept"
+
+
+def extract_skills_from_text(text: str) -> List[str]:
+    """Extract skills from description text using pattern matching."""
+    if not text:
+        return []
+
+    skills = set()
+    text_lower = text.lower()
+
+    # Common skill patterns
+    skill_patterns = [
+        'python', 'java', 'javascript', 'sql', 'excel', 'r programming',
+        'tableau', 'power bi', 'powerbi', 'sas', 'spss', 'stata',
+        'machine learning', 'deep learning', 'tensorflow', 'pytorch',
+        'nlp', 'computer vision', 'data analysis', 'data visualization',
+        'financial modeling', 'valuation', 'dcf', 'lbo',
+        'digital marketing', 'seo', 'sem', 'google analytics',
+        'social media marketing', 'content marketing', 'email marketing',
+        'market research', 'competitive analysis', 'swot',
+        'supply chain management', 'logistics', 'inventory management',
+        'project management', 'agile', 'scrum', 'jira',
+        'communication', 'presentation', 'leadership', 'teamwork',
+        'ms office', 'microsoft office', 'powerpoint', 'word',
+        'adobe', 'photoshop', 'canva', 'figma',
+        'salesforce', 'hubspot', 'crm', 'erp', 'sap',
+        'html', 'css', 'react', 'node', 'aws', 'azure', 'gcp',
+        'spark', 'hadoop', 'mongodb', 'postgresql', 'mysql',
+        'pandas', 'numpy', 'scikit-learn', 'keras',
+        'git', 'docker', 'kubernetes', 'linux',
+        'risk management', 'compliance', 'audit',
+        'strategic planning', 'business strategy',
+    ]
+
+    for skill in skill_patterns:
+        if skill in text_lower:
+            skills.add(skill.title())
+
+    # Extract from "Skills required:" or "Key Skills:" sections
+    skills_section = re.search(
+        r'(?:skills?\s*required|key\s*skills?|skill\s*set|requirements?)[\s:]+([^\n]+(?:\n(?![A-Z])[^\n]+)*)',
+        text, re.IGNORECASE
+    )
+    if skills_section:
+        raw = skills_section.group(1)
+        for s in re.split(r'[,;•·\-|\n]+', raw):
+            s = s.strip().strip('.')
+            if 2 < len(s) < 40:
+                skills.add(s.title())
+
+    return list(skills)[:15]  # Cap at 15 skills
+
+
+def extract_requirements_from_text(text: str) -> List[str]:
+    """Extract requirements from description text."""
+    if not text:
+        return []
+
+    requirements = []
+
+    # Look for requirements sections
+    req_section = re.search(
+        r'(?:requirements?|who\s+can\s+apply|eligibility|qualifications?)[\s:]+(.+?)(?:(?:responsibilities|about\s+|perks|benefits|skills|apply\s+now|how\s+to|stipend)|$)',
+        text, re.IGNORECASE | re.DOTALL
+    )
+    if req_section:
+        raw = req_section.group(1)
+        for line in re.split(r'[\n•·\-]+', raw):
+            line = line.strip().strip('.')
+            if 10 < len(line) < 200:
+                requirements.append(line)
+
+    return requirements[:10]
+
+
+def extract_responsibilities_from_text(text: str) -> List[str]:
+    """Extract responsibilities from description text."""
+    if not text:
+        return []
+
+    responsibilities = []
+
+    resp_section = re.search(
+        r'(?:responsibilities|what\s+you.?ll\s+do|job\s+description|role|key\s+deliverables|day\s+to\s+day)[\s:]+(.+?)(?:(?:requirements?|who\s+can\s+apply|eligibility|qualifications?|perks|benefits|skills|apply\s+now)|$)',
+        text, re.IGNORECASE | re.DOTALL
+    )
+    if resp_section:
+        raw = resp_section.group(1)
+        for line in re.split(r'[\n•·\-]+', raw):
+            line = line.strip().strip('.')
+            if 10 < len(line) < 200:
+                responsibilities.append(line)
+
+    return responsibilities[:10]
+
+
+def extract_perks_from_text(text: str) -> List[str]:
+    """Extract perks from description text."""
+    if not text:
+        return []
+
+    perks = []
+
+    perks_section = re.search(
+        r'(?:perks|benefits|what\s+we\s+offer|why\s+join|we\s+offer)[\s:]+(.+?)(?:(?:requirements?|responsibilities|how\s+to|apply\s+now)|$)',
+        text, re.IGNORECASE | re.DOTALL
+    )
+    if perks_section:
+        raw = perks_section.group(1)
+        for line in re.split(r'[\n•·,;]+', raw):
+            line = line.strip().strip('.')
+            if 3 < len(line) < 100:
+                perks.append(line)
+
+    # Also check for common perk keywords
+    perk_keywords = {
+        'certificate': 'Certificate', 'letter of recommendation': 'Letter of Recommendation',
+        'lor': 'Letter of Recommendation', 'flexible work': 'Flexible Work Hours',
+        'work from home': 'Work From Home', 'free meals': 'Free Meals',
+        'health insurance': 'Health Insurance', 'mentorship': 'Mentorship',
+        'pre-placement': 'PPO Opportunity', 'ppo': 'PPO Opportunity',
+        'travel allowance': 'Travel Allowance', 'accommodation': 'Accommodation',
+    }
+    text_lower = text.lower()
+    for kw, label in perk_keywords.items():
+        if kw in text_lower and label not in perks:
+            perks.append(label)
+
+    return perks[:10]
+
+
+def extract_deadline_from_text(text: str) -> str:
+    """Extract application deadline from text."""
+    if not text:
+        return ""
+
+    # Look for deadline/apply by patterns
+    deadline_match = re.search(
+        r'(?:deadline|apply\s+by|last\s+date|closing\s+date|applications?\s+close)[\s:]+(\d{1,2}[\s/\-]\w+[\s/\-]\d{2,4}|\w+\s+\d{1,2},?\s+\d{4})',
+        text, re.IGNORECASE
+    )
+    if deadline_match:
+        return deadline_match.group(1).strip()
+
+    # ISO format dates
+    iso_match = re.search(r'(?:deadline|apply\s+by|last\s+date)[\s:]+(\d{4}-\d{2}-\d{2})', text, re.IGNORECASE)
+    if iso_match:
+        return iso_match.group(1)
+
+    return ""
+
+
+def enrich_listing_from_description(listing) -> None:
+    """
+    Enrich a RawListing with extracted data from its description text.
+    Fills: skills, requirements, responsibilities, perks, deadline.
+    """
+    desc = listing.description_text or ""
+    if not desc:
+        return
+
+    if not listing.skills:
+        listing.skills = extract_skills_from_text(desc)
+
+    if not listing.requirements:
+        listing.requirements = extract_requirements_from_text(desc)
+
+    if not listing.responsibilities:
+        listing.responsibilities = extract_responsibilities_from_text(desc)
+
+    if not listing.perks:
+        listing.perks = extract_perks_from_text(desc)
+
+    if not listing.deadline:
+        listing.deadline = extract_deadline_from_text(desc)
+
+    # Build tags
+    if not listing.tags:
+        tags = []
+        if listing.category:
+            tags.append(listing.category)
+        if listing.is_ppo:
+            tags.append('PPO')
+        if listing.is_wfh:
+            tags.append('WFH')
+        if listing.sector:
+            tags.append(listing.sector)
+        listing.tags = tags
+
+
+# ============================================================
+# DIRECT SUPABASE SYNC FROM SCRAPER (v0.2)
+# ============================================================
+
+def sync_listings_to_supabase(listings: list, batch_id: str = "") -> int:
+    """
+    Directly sync scraped listings to Supabase with ALL fields.
+    Called after each portal scrape for immediate availability.
+    """
+    try:
+        from core.supabase_client import is_operational
+        if not is_operational():
+            return 0
+
+        from core.supabase_db import SupabaseJobDB
+
+        jobs = []
+        for listing in listings:
+            if hasattr(listing, 'to_supabase_dict'):
+                jobs.append(listing.to_supabase_dict())
+            elif isinstance(listing, dict):
+                jobs.append(listing)
+
+        if not jobs:
+            return 0
+
+        count = SupabaseJobDB.insert_latest_jobs(jobs, batch_id)
+        if count > 0:
+            logger.info(f"[{AGENT_ID}] Direct Supabase sync: {count}/{len(jobs)} jobs ({batch_id})")
+        return count
+
+    except Exception as e:
+        logger.debug(f"[{AGENT_ID}] Direct Supabase sync error: {e}")
+        return 0
+
+
+# ============================================================
 # INTERNSHALA SCRAPER — PRISM v0.1 (Mobile Ajax API)
 # ============================================================
 
@@ -617,7 +1000,7 @@ class InternshalaHarvester:
         return listings
 
     def _parse_mobile_api_item(self, item: Dict, category: str) -> Optional[RawListing]:
-        """Parse a single internship from the mobile API JSON response."""
+        """Parse a single internship from the mobile API JSON response — ENRICHED v0.2."""
         listing = RawListing()
         listing.source = "internshala"
         listing.category = category
@@ -670,22 +1053,77 @@ class InternshalaHarvester:
             listing.duration_months = int(duration)
             listing.duration = f"{int(duration)} months"
 
-        # Applicants
-        applicants = item.get('applications_count', item.get('no_of_applications', 0))
-        listing.applicants = int(applicants) if applicants else 0
+        # Applicants — try multiple field names
+        applicants = (item.get('applications_count') or item.get('no_of_applications')
+                      or item.get('total_applications') or item.get('applicants_count') or 0)
+        try:
+            listing.applicants = int(applicants) if applicants else 0
+        except (ValueError, TypeError):
+            listing.applicants = 0
+
+        # Openings
+        openings = item.get('no_of_openings', item.get('openings', 1))
+        try:
+            listing.openings = max(1, int(openings) if openings else 1)
+        except (ValueError, TypeError):
+            listing.openings = 1
 
         # PPO detection
         listing.is_ppo = item.get('is_ppo', False) or detect_ppo(
             f"{listing.title} {item.get('description', '')}"
         )
 
-        # Posted date
-        posted = item.get('posted_on', item.get('start_date', ''))
+        # Posted date — use real portal date
+        posted = item.get('posted_on', item.get('start_date', item.get('posted_by_label', '')))
         if posted:
-            listing.posted_days = parse_posted_days(posted)
+            listing.posted_days_ago = parse_posted_days(str(posted))
+            # Try to compute real date
+            if listing.posted_days_ago > 0:
+                real_date = datetime.now(IST) - timedelta(days=listing.posted_days_ago)
+                listing.posted_date = real_date.isoformat()
+
+        # Deadline / Apply by
+        deadline = item.get('deadline', item.get('expiry_date', item.get('apply_by', '')))
+        if deadline:
+            listing.deadline = str(deadline)
+
+        # Start date
+        start = item.get('start_date', item.get('internship_start_date', ''))
+        if start and not listing.posted_date:  # Don't overwrite posted_date
+            listing.start_date = str(start)
 
         # Description
         listing.description_text = item.get('description', item.get('about', ''))[:5000]
+
+        # Skills — extract from API fields
+        skills_data = item.get('skills', item.get('skill_names', item.get('preferred_skills', [])))
+        if isinstance(skills_data, list):
+            listing.skills = [s.get('name', s) if isinstance(s, dict) else str(s) for s in skills_data[:15]]
+        elif isinstance(skills_data, str) and skills_data:
+            listing.skills = [s.strip() for s in skills_data.split(',') if s.strip()]
+
+        # Perks
+        perks_data = item.get('perks', item.get('perk_names', []))
+        if isinstance(perks_data, list):
+            listing.perks = [p.get('name', p) if isinstance(p, dict) else str(p) for p in perks_data[:10]]
+        elif isinstance(perks_data, str) and perks_data:
+            listing.perks = [p.strip() for p in perks_data.split(',') if p.strip()]
+
+        # Company logo
+        logo = item.get('company_logo', item.get('logo', ''))
+        if logo:
+            listing.company_logo = logo if logo.startswith('http') else f"https://internshala.com/{logo}"
+
+        # v0.2: AI relevance filter
+        is_relevant, reason = is_mba_relevant(
+            listing.title, listing.company, listing.description_text, listing.category
+        )
+        if not is_relevant:
+            logger.debug(f"[{AGENT_ID}] Filtered: '{listing.title}' ({reason})")
+            return None
+
+        # v0.2: Enrich from description text
+        enrich_listing_from_description(listing)
 
         return listing if listing.title and listing.url else None
 
@@ -814,7 +1252,7 @@ class InternshalaHarvester:
         return listings
 
     def _parse_html_card(self, card, category: str) -> Optional[RawListing]:
-        """Parse an Internshala listing card HTML element."""
+        """Parse an Internshala listing card HTML element — ENRICHED v0.2."""
         listing = RawListing()
         listing.source = "internshala"
         listing.category = category
@@ -872,6 +1310,33 @@ class InternshalaHarvester:
         full_text = card.get_text(' ', strip=True)
         listing.is_ppo = detect_ppo(full_text)
         listing.is_wfh = detect_wfh(full_text)
+
+        # v0.2: Skills from HTML
+        skill_elems = card.select('.tags .badge, .skill_tag, [class*="skill"] span, .round_tabs')
+        if skill_elems:
+            listing.skills = [s.get_text(strip=True) for s in skill_elems[:15] if s.get_text(strip=True)]
+
+        # v0.2: Posted date from HTML
+        posted_elem = card.select_one('[class*="posted"], .status-success, .posted_message')
+        if posted_elem:
+            listing.posted_days_ago = parse_posted_days(posted_elem.get_text(strip=True))
+            if listing.posted_days_ago > 0:
+                real_date = datetime.now(IST) - timedelta(days=listing.posted_days_ago)
+                listing.posted_date = real_date.isoformat()
+
+        # v0.2: Openings from HTML
+        openings_elem = card.select_one('[class*="opening"]')
+        if openings_elem:
+            nums = re.findall(r'\d+', openings_elem.get_text(strip=True))
+            if nums:
+                listing.openings = int(nums[0])
+
+        # v0.2: AI relevance filter
+        is_relevant, reason = is_mba_relevant(
+            listing.title, listing.company, full_text, listing.category
+        )
+        if not is_relevant:
+            return None
 
         return listing if listing.title and listing.url else None
 
@@ -1190,7 +1655,7 @@ class NaukriScraper:
         return listings
 
     def _parse_api_v2_job(self, job: Dict) -> Optional[RawListing]:
-        """Parse a single job from Naukri API v2 response."""
+        """Parse a single job from Naukri API v2 response — ENRICHED v0.2."""
         listing = RawListing()
         listing.source = "naukri"
         listing.batch_id = self.batch_id
@@ -1239,20 +1704,57 @@ class NaukriScraper:
         snippet = job.get('jobDescription', job.get('snippet', ''))
         listing.description_text = snippet[:5000] if snippet else ''
 
-        # Tags
+        # v0.2: Skills — extract from tagsAndSkills AND separate skills field
         tags = job.get('tagsAndSkills', job.get('skills', ''))
-        if isinstance(tags, str):
+        if isinstance(tags, str) and tags:
+            listing.skills = [s.strip() for s in tags.split(',') if s.strip()]
             listing.description_text += f"\nSkills: {tags}"
+        elif isinstance(tags, list):
+            listing.skills = [str(s).strip() for s in tags if s]
+
+        # v0.2: Applicants
+        applicants = (job.get('applicationCount') or job.get('applications')
+                      or job.get('numberOfApplications') or 0)
+        try:
+            listing.applicants = int(applicants)
+        except (ValueError, TypeError):
+            listing.applicants = 0
+
+        # v0.2: Openings
+        openings = job.get('numberOfVacancies', job.get('vacancy', 1))
+        try:
+            listing.openings = max(1, int(openings) if openings else 1)
+        except (ValueError, TypeError):
+            listing.openings = 1
 
         # PPO / WFH detection
         full_text = f"{listing.title} {listing.description_text}"
         listing.is_ppo = detect_ppo(full_text)
         listing.is_wfh = detect_wfh(full_text) or job.get('isRemote', False)
 
-        # Posted date
+        # v0.2: Posted date — real portal date
         created_date = job.get('createdDate', job.get('footerPlaceholderLabel', ''))
         if created_date:
-            listing.posted_days = parse_posted_days(str(created_date))
+            listing.posted_days_ago = parse_posted_days(str(created_date))
+            if listing.posted_days_ago > 0:
+                real_date = datetime.now(IST) - timedelta(days=listing.posted_days_ago)
+                listing.posted_date = real_date.isoformat()
+
+        # v0.2: Company logo
+        logo = job.get('companyLogo', job.get('logoUrl', ''))
+        if logo:
+            listing.company_logo = logo
+
+        # v0.2: AI relevance filter
+        is_relevant, reason = is_mba_relevant(
+            listing.title, listing.company, listing.description_text, listing.category
+        )
+        if not is_relevant:
+            logger.debug(f"[{AGENT_ID}] Naukri filtered: '{listing.title}' ({reason})")
+            return None
+
+        # v0.2: Enrich from description
+        enrich_listing_from_description(listing)
 
         return listing if listing.title and listing.url else None
 
@@ -2638,6 +3140,20 @@ class PrimaryScraper:
         results['new'] = max(0, post_count - pre_count)
         results['duration_sec'] = round(time.time() - start_time, 1)
         results['portal_health'] = self.get_portal_health()
+
+        # v0.2: Direct Supabase sync for immediate availability
+        try:
+            recent = self.db.get_raw_listings_since(hours=1)
+            if recent:
+                supabase_jobs = []
+                for row in recent:
+                    listing = RawListing(**{k: v for k, v in row.items() if k in RawListing.__dataclass_fields__})
+                    enrich_listing_from_description(listing)
+                    supabase_jobs.append(listing)
+                synced = sync_listings_to_supabase(supabase_jobs, f"wave1_{datetime.now(IST).strftime('%Y%m%d_%H%M')}")
+                results['supabase_synced'] = synced
+        except Exception as e:
+            logger.debug(f"[{AGENT_ID}] Wave 1 Supabase sync error: {e}")
 
         self.db.update_agent_heartbeat(
             AGENT_ID, "completed",

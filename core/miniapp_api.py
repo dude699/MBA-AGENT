@@ -1146,10 +1146,8 @@ def _compute_posted_date(listing: Dict) -> str:
 
 
 def _transform_listing(listing: Dict, detailed: bool = False) -> Dict:
-    """Transform a database listing dict to frontend-friendly format."""
+    """Transform a database listing dict to frontend-friendly format. v0.2: enriched."""
     # Map company DB tiers (1-5) to frontend tier labels
-    # Tier 1 = Elite (81 companies), Tier 2 = Strong MNC (220), Tier 3 = Indian Unicorn (180)
-    # Tier 4 = Growing Startup (320), Tier 5 = Niche/Sector (280)
     tier_map = {1: 'tier1', 2: 'tier2', 3: 'tier3', 4: 'startup', 5: 'startup'}
     source_map = {
         'internshala': 'internshala', 'naukri': 'naukri', 'linkedin': 'linkedin',
@@ -1168,6 +1166,41 @@ def _transform_listing(listing: Dict, detailed: bool = False) -> Dict:
     tier = listing.get('tier')
     source = listing.get('source', '')
 
+    # v0.2: Extract skills from description if not provided
+    desc = listing.get('description_text', '') or ''
+    skills = listing.get('skills', []) or []
+    requirements = listing.get('requirements', []) or []
+    responsibilities = listing.get('responsibilities', []) or []
+    perks = listing.get('perks', []) or []
+
+    if not skills and desc:
+        try:
+            from agents.a03_primary_scraper import extract_skills_from_text
+            skills = extract_skills_from_text(desc)
+        except ImportError:
+            pass
+
+    if not requirements and desc:
+        try:
+            from agents.a03_primary_scraper import extract_requirements_from_text
+            requirements = extract_requirements_from_text(desc)
+        except ImportError:
+            pass
+
+    if not responsibilities and desc:
+        try:
+            from agents.a03_primary_scraper import extract_responsibilities_from_text
+            responsibilities = extract_responsibilities_from_text(desc)
+        except ImportError:
+            pass
+
+    if not perks and desc:
+        try:
+            from agents.a03_primary_scraper import extract_perks_from_text
+            perks = extract_perks_from_text(desc)
+        except ImportError:
+            pass
+
     item = {
         "id": str(lid),
         "title": listing.get('title', 'Unknown'),
@@ -1185,12 +1218,12 @@ def _transform_listing(listing: Dict, detailed: bool = False) -> Dict:
         "location": listing.get('location', '') or 'Not specified',
         "locationType": "remote" if listing.get('is_wfh') else "onsite",
         "category": listing.get('category', '') or 'general',
-        "skills": [],
-        "description": listing.get('description_text', '') or '',
-        "responsibilities": [],
-        "requirements": [],
-        "perks": [],
-        "openings": 1,
+        "skills": skills,
+        "description": desc,
+        "responsibilities": responsibilities,
+        "requirements": requirements,
+        "perks": perks,
+        "openings": listing.get('openings', 1) or 1,
         "applicants": applicants,
         "postedDate": _compute_posted_date(listing),
         "deadline": listing.get('deadline', ''),

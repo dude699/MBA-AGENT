@@ -187,6 +187,18 @@ class RawListing:
     description_text: str = ""
     scraped_at: Optional[str] = None
     batch_id: str = ""
+    # v0.2: Extended fields for Supabase (not stored in SQLite raw_listings)
+    skills: List[str] = field(default_factory=list)
+    requirements: List[str] = field(default_factory=list)
+    responsibilities: List[str] = field(default_factory=list)
+    perks: List[str] = field(default_factory=list)
+    tags: List[str] = field(default_factory=list)
+    openings: int = 1
+    deadline: str = ""
+    start_date: str = ""
+    posted_date: str = ""  # Real portal posting date (ISO format)
+    company_logo: str = ""
+    sector: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -195,6 +207,40 @@ class RawListing:
         """Generate a content hash for dedup purposes."""
         content = f"{self.title}|{self.company}|{self.url}".lower().strip()
         return hashlib.md5(content.encode()).hexdigest()
+
+    def to_supabase_dict(self) -> Dict[str, Any]:
+        """Convert to dict suitable for Supabase insertion with ALL fields."""
+        return {
+            "title": self.title,
+            "company": self.company,
+            "location": self.location,
+            "location_type": "remote" if self.is_wfh else "onsite",
+            "source": self.source,
+            "source_url": self.url,
+            "category": self.category,
+            "sector": self.sector,
+            "stipend": int(self.stipend_normalized),
+            "duration": self.duration_months,
+            "applicants": self.applicants,
+            "openings": self.openings,
+            "skills": self.skills,
+            "description": self.description_text,
+            "responsibilities": self.responsibilities,
+            "requirements": self.requirements,
+            "perks": self.perks,
+            "tags": self.tags,
+            "posted_date": self.posted_date,
+            "deadline": self.deadline,
+            "start_date": self.start_date,
+            "ppo_score": 0,
+            "ghost_score": 0,
+            "match_score": 50,
+            "is_expired": False,
+            "content_hash": self.content_hash(),
+            "batch_id": self.batch_id,
+            "company_logo": self.company_logo,
+            "posted_days_ago": self.posted_days_ago,
+        }
 
 
 @dataclass

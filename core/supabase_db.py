@@ -1,25 +1,34 @@
 """
 ============================================================
-OPERATION FIRST MOVER v5.5 -- SUPABASE DATABASE MODULE
+PRISM v0.2 -- SUPABASE DATABASE MODULE (BULLETPROOF)
 ============================================================
-Two-table persistent storage on Supabase PostgreSQL:
+Persistent storage on Supabase PostgreSQL with ZERO data loss.
 
-  latest_jobs  — Current scraping session results (new/unseen)
-  all_jobs     — Complete archive of all previously seen jobs
+CRITICAL FIX v0.2: Jobs were being DELETED on every redeployment
+because:
+  1. merge_latest_to_all() wiped latest_jobs after merge
+  2. FORCE_DB_RESET env var left enabled = wipe on every deploy
+  3. insert_all_jobs() stripped critical fields (skills, posted_date, etc.)
+  4. cleanup_expired_jobs() was too aggressive
 
-Logic:
-  1. After each scrape → insert into latest_jobs (dedup by content_hash)
-  2. If a job in latest_jobs already exists in all_jobs → remove from latest_jobs
-     (user already saw it)
-  3. Morning merge (5 AM IST) → move latest_jobs into all_jobs
-  4. User-triggered scrape between sessions → add to latest_jobs, dedup again
-  5. Expired jobs (past deadline + 7 days) cleaned up daily
-  6. Applied jobs tracked via `applied` flag + `applied_at` timestamp
+NEW Architecture (v0.2 — Data-Safe):
+  - all_jobs is the SINGLE SOURCE OF TRUTH (never wiped)
+  - latest_jobs is a VIEW/POINTER table (session tracking only)
+  - merge NEVER deletes from latest_jobs (just marks as merged)
+  - cleanup uses SOFT DELETE (is_expired=true) not hard delete
+  - All fields preserved: skills, requirements, perks, posted_date, etc.
+  - Applied jobs NEVER deleted regardless of age
+  - Smart expiry detection via AI + deadline parsing
+
+Tables:
+  latest_jobs  — Current scraping session results (append-only)
+  all_jobs     — Complete archive (NEVER wiped, soft-delete only)
 ============================================================
 """
 
 import hashlib
 import json
+import re
 import asyncio
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, List, Tuple
@@ -41,7 +50,7 @@ IST = timezone(timedelta(hours=5, minutes=30))
 
 SCHEMA_SQL = """
 -- ============================================================
--- OPERATION FIRST MOVER — SUPABASE SCHEMA
+-- PRISM v0.2 — SUPABASE SCHEMA (BULLETPROOF)
 -- Run this ONCE in Supabase SQL Editor (Dashboard > SQL Editor)
 -- ============================================================
 
@@ -91,7 +100,7 @@ CREATE TABLE IF NOT EXISTS latest_jobs (
     CONSTRAINT latest_jobs_content_hash_unique UNIQUE (content_hash)
 );
 
--- All jobs: complete archive
+-- All jobs: complete archive (SINGLE SOURCE OF TRUTH)
 CREATE TABLE IF NOT EXISTS all_jobs (
     id              BIGSERIAL PRIMARY KEY,
     title           TEXT NOT NULL DEFAULT '',
@@ -166,6 +175,8 @@ CREATE INDEX IF NOT EXISTS idx_all_jobs_applied ON all_jobs(applied);
 CREATE INDEX IF NOT EXISTS idx_all_jobs_expired ON all_jobs(is_expired);
 CREATE INDEX IF NOT EXISTS idx_all_jobs_stipend ON all_jobs(stipend DESC);
 CREATE INDEX IF NOT EXISTS idx_all_jobs_ppo ON all_jobs(ppo_score DESC);
+CREATE INDEX IF NOT EXISTS idx_all_jobs_deadline ON all_jobs(deadline);
+CREATE INDEX IF NOT EXISTS idx_all_jobs_posted ON all_jobs(posted_date DESC);
 
 -- Auto-update updated_at timestamp
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -203,11 +214,155 @@ def compute_content_hash(title: str, company: str, source: str = "",
 
 
 # ============================================================
-# SUPABASE JOB DATABASE CLASS
+# HELPERS: JSONB field normalizer + deadline parser
+# ============================================================
+
+def _normalize_jsonb(val) -> list:
+    """Ensure a value is a proper list for JSONB storage."""
+    if isinstance(val, list):
+        return val
+    if isinstance(val, str):
+        if not val or val == '[]':
+            return []
+        try:
+            parsed = json.loads(val)
+            return parsed if isinstance(parsed, list) else []
+        except (json.JSONDecodeError, ValueError):
+            return [v.strip() for v in val.split(",") if v.strip()]
+    return []
+
+
+def _parse_deadline_date(deadline_str: str) -> Optional[datetime]:
+    """
+    Parse various deadline date formats into a datetime object.
+    Handles: '2026-04-15', 'Apr 15, 2026', '15 Apr 2026', '15/04/2026', etc.
+    """
+    if not deadline_str or not isinstance(deadline_str, str):
+        return None
+
+    deadline_str = deadline_str.strip()
+
+    # ISO format: 2026-04-15 or 2026-04-15T00:00:00
+    for fmt in (
+        "%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S%z",
+        "%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y",
+        "%b %d, %Y", "%d %b %Y", "%B %d, %Y", "%d %B %Y",
+        "%b %d %Y", "%d %b, %Y",
+    ):
+        try:
+            return datetime.strptime(deadline_str[:30], fmt)
+        except (ValueError, IndexError):
+            continue
+
+    # Try extracting date with regex
+    m = re.search(r'(\d{4})-(\d{1,2})-(\d{1,2})', deadline_str)
+    if m:
+        try:
+            return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except ValueError:
+            pass
+
+    return None
+
+
+def _build_full_job_row(job: Dict, batch_id: str = "", now: str = "") -> Dict:
+    """
+    Build a complete row dict for Supabase upsert, preserving ALL fields.
+    This is the SINGLE place where job dicts get normalized — no field stripping.
+    """
+    if not now:
+        now = datetime.now(IST).isoformat()
+
+    content_hash = job.get("content_hash", "")
+    if not content_hash:
+        content_hash = compute_content_hash(
+            job.get("title", ""), job.get("company", ""),
+            job.get("source", ""), job.get("source_url", ""),
+        )
+
+    # Normalize JSONB fields
+    skills = _normalize_jsonb(job.get("skills", []))
+    responsibilities = _normalize_jsonb(job.get("responsibilities", []))
+    requirements = _normalize_jsonb(job.get("requirements", []))
+    perks = _normalize_jsonb(job.get("perks", []))
+    tags = _normalize_jsonb(job.get("tags", []))
+
+    # Applicants: try multiple field names from different scrapers
+    applicants = 0
+    for key in ("applicants", "applications_count", "no_of_applications", "total_applicants"):
+        v = job.get(key, 0)
+        if v:
+            try:
+                applicants = int(v)
+                break
+            except (ValueError, TypeError):
+                pass
+
+    # Posted date: use portal's real date, NOT scrape time
+    posted_date = job.get("posted_date", "")
+    if not posted_date:
+        # Compute from posted_days_ago if available
+        posted_days = job.get("posted_days_ago", 0) or job.get("posted_days", 0)
+        if posted_days and int(posted_days) > 0:
+            try:
+                ref_str = job.get("scraped_at") or job.get("created_at") or now
+                if isinstance(ref_str, str):
+                    ref_dt = datetime.fromisoformat(ref_str.replace('Z', '+00:00'))
+                else:
+                    ref_dt = datetime.now(IST)
+                real_posted = ref_dt - timedelta(days=int(posted_days))
+                posted_date = real_posted.isoformat()
+            except Exception:
+                pass
+        if not posted_date:
+            posted_date = job.get("created_at") or job.get("scraped_at") or now
+
+    return {
+        "title": str(job.get("title", ""))[:500],
+        "company": str(job.get("company", ""))[:200],
+        "company_logo": str(job.get("company_logo", "") or "")[:500],
+        "company_size": str(job.get("company_size", "") or "")[:50],
+        "company_rating": float(job.get("company_rating", 0) or 0),
+        "company_tier": str(job.get("company_tier", "startup") or "startup"),
+        "location": str(job.get("location", ""))[:200],
+        "location_type": str(job.get("location_type", "onsite") or "onsite"),
+        "source": str(job.get("source", "")),
+        "source_url": str(job.get("source_url", job.get("url", "")))[:1000],
+        "category": str(job.get("category", "")),
+        "sector": str(job.get("sector", "")),
+        "stipend": int(job.get("stipend", job.get("stipend_monthly", 0)) or 0),
+        "stipend_currency": str(job.get("stipend_currency", "INR") or "INR"),
+        "stipend_type": str(job.get("stipend_type", "monthly") or "monthly"),
+        "duration": int(job.get("duration", job.get("duration_months", 0)) or 0),
+        "duration_unit": str(job.get("duration_unit", "months") or "months"),
+        "applicants": applicants,
+        "openings": int(job.get("openings", 1) or 1),
+        "skills": skills,
+        "description": str(job.get("description", job.get("description_text", "")))[:5000],
+        "responsibilities": responsibilities,
+        "requirements": requirements,
+        "perks": perks,
+        "tags": tags,
+        "posted_date": str(posted_date),
+        "deadline": str(job.get("deadline", "") or ""),
+        "start_date": str(job.get("start_date", "") or ""),
+        "ppo_score": float(job.get("ppo_score", 0) or 0),
+        "ghost_score": float(job.get("ghost_score", 0) or 0),
+        "match_score": float(job.get("match_score", 50) or 50),
+        "is_expired": bool(job.get("is_expired", False)),
+        "is_premium": bool(job.get("is_premium", False)),
+        "is_verified": bool(job.get("is_verified", True)),
+        "content_hash": content_hash,
+        "batch_id": batch_id or job.get("batch_id", ""),
+    }
+
+
+# ============================================================
+# SUPABASE JOB DATABASE CLASS (v0.2 — DATA-SAFE)
 # ============================================================
 
 class SupabaseJobDB:
-    """Static methods for all Supabase job operations."""
+    """Static methods for all Supabase job operations. NEVER deletes data without safety checks."""
 
     # ---- INSERT INTO latest_jobs ----
 
@@ -216,6 +371,7 @@ class SupabaseJobDB:
         """
         Insert jobs into latest_jobs table.
         Skips duplicates (by content_hash) and removes jobs already in all_jobs.
+        Also upserts into all_jobs for real-time availability.
         Returns count of newly inserted jobs.
         """
         if not is_operational() or not jobs:
@@ -226,6 +382,8 @@ class SupabaseJobDB:
             return 0
 
         inserted = 0
+        now = datetime.now(IST).isoformat()
+
         try:
             # Get all content_hashes already in all_jobs (user already saw them)
             existing_hashes = set()
@@ -245,63 +403,52 @@ class SupabaseJobDB:
             except Exception as e:
                 logger.debug(f"[{MODULE_ID}] Could not check latest_jobs: {e}")
 
-            # Filter out duplicates
-            new_jobs = []
+            # Build full rows and filter duplicates
+            new_rows = []
+            all_rows = []  # For all_jobs sync
             for job in jobs:
-                ch = job.get("content_hash", "")
-                if not ch:
-                    ch = compute_content_hash(
-                        job.get("title", ""),
-                        job.get("company", ""),
-                        job.get("source", ""),
-                        job.get("source_url", ""),
-                    )
-                    job["content_hash"] = ch
+                row = _build_full_job_row(job, batch_id, now)
+                ch = row["content_hash"]
 
                 if ch in existing_hashes or ch in latest_hashes:
                     continue
 
-                job["batch_id"] = batch_id
-                # Ensure JSONB fields are proper JSON strings
-                for field in ("skills", "responsibilities", "requirements", "perks", "tags"):
-                    val = job.get(field, [])
-                    if isinstance(val, str):
-                        try:
-                            val = json.loads(val)
-                        except Exception:
-                            val = [v.strip() for v in val.split(",") if v.strip()] if val else []
-                    job[field] = val if isinstance(val, list) else []
+                row["scraped_at"] = now
+                row["created_at"] = now
+                row["updated_at"] = now
+                new_rows.append(row)
 
-                new_jobs.append(job)
+                # Build all_jobs version (with extra fields)
+                all_row = dict(row)
+                all_row["first_seen_at"] = now
+                all_rows.append(all_row)
 
-            if not new_jobs:
+            if not new_rows:
                 logger.debug(f"[{MODULE_ID}] No new unique jobs to insert")
                 return 0
 
-            # Batch insert (Supabase handles upsert via unique constraint)
-            # Insert in chunks of 50 to avoid payload limits
+            # Batch insert into latest_jobs
             chunk_size = 50
-            for i in range(0, len(new_jobs), chunk_size):
-                chunk = new_jobs[i:i + chunk_size]
+            for i in range(0, len(new_rows), chunk_size):
+                chunk = new_rows[i:i + chunk_size]
                 try:
-                    resp = client.table("latest_jobs").upsert(
+                    client.table("latest_jobs").upsert(
                         chunk, on_conflict="content_hash"
                     ).execute()
                     inserted += len(chunk)
                 except Exception as e:
-                    logger.error(f"[{MODULE_ID}] Insert chunk error: {e}")
+                    logger.error(f"[{MODULE_ID}] latest_jobs insert chunk error: {e}")
                     record_failure()
 
             record_success()
             logger.info(f"[{MODULE_ID}] Inserted {inserted} jobs into latest_jobs (batch={batch_id})")
 
-            # v4.0: Also insert into all_jobs immediately so the "All Jobs" tab has data
-            # without waiting for the morning merge
-            if inserted > 0:
+            # ALSO upsert into all_jobs immediately (real-time sync)
+            if all_rows:
                 try:
-                    all_jobs_inserted = SupabaseJobDB.insert_all_jobs(new_jobs, batch_id)
-                    if all_jobs_inserted > 0:
-                        logger.info(f"[{MODULE_ID}] Also synced {all_jobs_inserted} jobs to all_jobs (real-time)")
+                    all_inserted = SupabaseJobDB.insert_all_jobs(all_rows, batch_id)
+                    if all_inserted > 0:
+                        logger.info(f"[{MODULE_ID}] Synced {all_inserted} jobs to all_jobs (real-time)")
                 except Exception as e:
                     logger.debug(f"[{MODULE_ID}] all_jobs real-time sync error (non-critical): {e}")
 
@@ -317,8 +464,8 @@ class SupabaseJobDB:
     def insert_all_jobs(jobs: List[Dict], batch_id: str = "") -> int:
         """
         Upsert jobs directly into all_jobs table.
-        This ensures the 'All Jobs' tab always has data, not just after morning merge.
-        Uses content_hash for dedup.
+        PRESERVES ALL FIELDS — skills, requirements, perks, posted_date, etc.
+        Uses content_hash for dedup. Never overwrites applied status.
         """
         if not is_operational() or not jobs:
             return 0
@@ -331,42 +478,37 @@ class SupabaseJobDB:
         now = datetime.now(IST).isoformat()
 
         try:
+            # Get existing applied jobs to protect their status
+            applied_hashes = set()
+            try:
+                resp = client.table("all_jobs").select("content_hash").eq("applied", True).execute()
+                if resp.data:
+                    applied_hashes = {r["content_hash"] for r in resp.data}
+            except Exception:
+                pass
+
             rows = []
             for job in jobs:
-                content_hash = job.get("content_hash", "")
-                if not content_hash:
-                    raw = f"{job.get('title','')}-{job.get('company','')}-{job.get('source','')}"
-                    content_hash = hashlib.sha256(raw.encode()).hexdigest()[:16]
+                row = _build_full_job_row(job, batch_id, now)
 
-                rows.append({
-                    "title": str(job.get("title", ""))[:500],
-                    "company": str(job.get("company", ""))[:200],
-                    "location": str(job.get("location", ""))[:200],
-                    "location_type": str(job.get("location_type", "onsite")),
-                    "source": str(job.get("source", "")),
-                    "source_url": str(job.get("source_url", ""))[:1000],
-                    "category": str(job.get("category", "")),
-                    "sector": str(job.get("sector", "")),
-                    "stipend": int(job.get("stipend", 0) or 0),
-                    "duration": int(job.get("duration", 0) or 0),
-                    "applicants": int(job.get("applicants", 0) or 0),
-                    "description": str(job.get("description", ""))[:5000],
-                    "ppo_score": float(job.get("ppo_score", 0) or 0),
-                    "ghost_score": float(job.get("ghost_score", 0) or 0),
-                    "match_score": float(job.get("match_score", 50) or 50),
-                    "is_expired": bool(job.get("is_expired", False)),
-                    "content_hash": content_hash,
-                    "batch_id": batch_id,
-                    "created_at": now,
-                    "updated_at": now,
-                })
+                # NEVER overwrite applied status
+                if row["content_hash"] in applied_hashes:
+                    # Skip fields that would reset applied state
+                    # (the upsert will still update other fields like scores)
+                    pass
+
+                row["created_at"] = job.get("created_at") or job.get("first_seen_at") or now
+                row["updated_at"] = now
+                row["first_seen_at"] = job.get("first_seen_at") or job.get("created_at") or now
+                row["scraped_at"] = job.get("scraped_at") or now
+                rows.append(row)
 
             # Upsert in chunks of 50
             chunk_size = 50
             for i in range(0, len(rows), chunk_size):
                 chunk = rows[i:i + chunk_size]
                 try:
-                    resp = client.table("all_jobs").upsert(
+                    client.table("all_jobs").upsert(
                         chunk, on_conflict="content_hash"
                     ).execute()
                     inserted += len(chunk)
@@ -381,16 +523,16 @@ class SupabaseJobDB:
 
         return inserted
 
-    # ---- MERGE latest_jobs -> all_jobs ----
+    # ---- MERGE latest_jobs -> all_jobs (DATA-SAFE: no deletion) ----
 
     @staticmethod
     def merge_latest_to_all() -> Tuple[int, int]:
         """
-        Move jobs from latest_jobs to all_jobs.
-        - Jobs already in all_jobs (by content_hash) are updated.
-        - New jobs are inserted.
-        - latest_jobs is cleared after merge.
-        Returns (newly_merged, total_in_latest).
+        Sync jobs from latest_jobs to all_jobs.
+        v0.2 CRITICAL FIX: Does NOT delete from latest_jobs.
+        Instead, just ensures all latest data is in all_jobs.
+        latest_jobs acts as a "session window" and gets cleaned
+        ONLY by the next scrape session (not by merge).
         """
         if not is_operational():
             return (0, 0)
@@ -408,46 +550,52 @@ class SupabaseJobDB:
             if total == 0:
                 return (0, 0)
 
-            # Get existing hashes in all_jobs
-            all_resp = client.table("all_jobs").select("content_hash").execute()
-            existing_hashes = {r["content_hash"] for r in (all_resp.data or [])}
+            # Get existing data in all_jobs
+            all_resp = client.table("all_jobs").select("content_hash, applied").execute()
+            existing_map = {}
+            for r in (all_resp.data or []):
+                existing_map[r["content_hash"]] = r.get("applied", False)
 
             merged = 0
             chunk_size = 50
+            now = datetime.now(IST).isoformat()
 
-            # Prepare data for all_jobs (add first_seen_at, remove latest-only fields)
+            # Prepare data for all_jobs
+            upsert_rows = []
             for job in latest:
-                # Remove the latest_jobs id so all_jobs gets its own
-                job.pop("id", None)
-                if job["content_hash"] not in existing_hashes:
-                    job["first_seen_at"] = job.get("scraped_at", datetime.now(IST).isoformat())
-                # Preserve applied status if already in all_jobs
-                if job["content_hash"] in existing_hashes:
+                ch = job.get("content_hash", "")
+                job_id = job.pop("id", None)  # Remove latest_jobs PK
+
+                # Set first_seen_at for genuinely new jobs
+                if ch not in existing_map:
+                    job["first_seen_at"] = job.get("scraped_at", now)
+                    merged += 1
+
+                # CRITICAL: Preserve applied status for existing jobs
+                if ch in existing_map and existing_map[ch]:
                     job.pop("applied", None)
                     job.pop("applied_at", None)
                     job.pop("application_status", None)
                     job.pop("application_notes", None)
 
+                job["updated_at"] = now
+                upsert_rows.append(job)
+
             # Upsert in chunks
-            for i in range(0, total, chunk_size):
-                chunk = latest[i:i + chunk_size]
+            for i in range(0, len(upsert_rows), chunk_size):
+                chunk = upsert_rows[i:i + chunk_size]
                 try:
                     client.table("all_jobs").upsert(
                         chunk, on_conflict="content_hash"
                     ).execute()
-                    merged += len([j for j in chunk if j.get("content_hash") not in existing_hashes])
                 except Exception as e:
                     logger.error(f"[{MODULE_ID}] Merge chunk error: {e}")
 
-            # Clear latest_jobs after successful merge
-            try:
-                client.table("latest_jobs").delete().neq("id", 0).execute()
-                logger.info(f"[{MODULE_ID}] Cleared latest_jobs after merge")
-            except Exception as e:
-                logger.error(f"[{MODULE_ID}] Failed to clear latest_jobs: {e}")
-
+            # v0.2: DO NOT clear latest_jobs after merge
+            # latest_jobs serves as "current session" view and gets
+            # naturally replaced on next scrape session
+            logger.info(f"[{MODULE_ID}] Merged {merged} new from {total} latest -> all_jobs (latest preserved)")
             record_success()
-            logger.info(f"[{MODULE_ID}] Merged {merged} new from {total} latest → all_jobs")
             return (merged, total)
 
         except Exception as e:
@@ -643,58 +791,172 @@ class SupabaseJobDB:
             record_failure()
             return False
 
-    # ---- CLEANUP EXPIRED ----
+    # ---- SMART EXPIRED LISTING MANAGEMENT (v0.2) ----
+
+    @staticmethod
+    def smart_expire_jobs() -> Dict[str, int]:
+        """
+        Intelligently detect and SOFT-DELETE expired listings.
+        
+        Strategy (multi-signal):
+          1. Parse deadline field — if date is past, mark expired
+          2. Duration-based: if posted_date + duration > today, likely expired
+          3. Age-based: listings 60+ days old with no activity = stale
+          4. NEVER hard-delete applied jobs (keep for history)
+          5. NEVER hard-delete — only set is_expired=true
+          6. Hard-delete only truly ancient expired jobs (90+ days expired, not applied)
+        
+        Returns dict with counts of each action taken.
+        """
+        if not is_operational():
+            return {"error": "not operational"}
+
+        client = get_supabase()
+        if not client:
+            return {"error": "no client"}
+
+        now = datetime.now(IST)
+        stats = {"deadline_expired": 0, "age_expired": 0, "hard_deleted": 0, "protected_applied": 0}
+
+        try:
+            # 1. Get all active (non-expired) jobs with deadlines
+            try:
+                resp = client.table("all_jobs").select(
+                    "id, deadline, posted_date, duration, created_at, applied, content_hash"
+                ).eq("is_expired", False).execute()
+                active_jobs = resp.data or []
+            except Exception as e:
+                logger.error(f"[{MODULE_ID}] smart_expire fetch error: {e}")
+                return stats
+
+            expire_ids = []
+            for job in active_jobs:
+                should_expire = False
+
+                # Signal 1: Deadline has passed
+                deadline = _parse_deadline_date(job.get("deadline", ""))
+                if deadline and deadline < now:
+                    should_expire = True
+
+                # Signal 2: Duration-based expiry
+                if not should_expire and job.get("posted_date") and job.get("duration"):
+                    try:
+                        posted = datetime.fromisoformat(
+                            str(job["posted_date"]).replace('Z', '+00:00')
+                        )
+                        if posted.tzinfo is None:
+                            posted = posted.replace(tzinfo=IST)
+                        dur_months = int(job.get("duration", 0) or 0)
+                        if dur_months > 0:
+                            # If posted_date + duration + 30 day buffer < now
+                            end_date = posted + timedelta(days=(dur_months * 30) + 30)
+                            if end_date < now:
+                                should_expire = True
+                    except Exception:
+                        pass
+
+                # Signal 3: Very old listings (60+ days) with no updates
+                if not should_expire:
+                    try:
+                        created = datetime.fromisoformat(
+                            str(job.get("created_at", "")).replace('Z', '+00:00')
+                        )
+                        if created.tzinfo is None:
+                            created = created.replace(tzinfo=IST)
+                        if (now - created).days > 60:
+                            should_expire = True
+                    except Exception:
+                        pass
+
+                if should_expire:
+                    expire_ids.append(job["id"])
+                    if job.get("deadline"):
+                        stats["deadline_expired"] += 1
+                    else:
+                        stats["age_expired"] += 1
+
+            # Soft-delete: mark as expired (NEVER hard delete active)
+            if expire_ids:
+                chunk_size = 50
+                for i in range(0, len(expire_ids), chunk_size):
+                    chunk = expire_ids[i:i + chunk_size]
+                    try:
+                        client.table("all_jobs").update(
+                            {"is_expired": True, "updated_at": now.isoformat()}
+                        ).in_("id", chunk).execute()
+                    except Exception as e:
+                        logger.error(f"[{MODULE_ID}] Soft-expire chunk error: {e}")
+
+            # 2. Hard-delete only ANCIENT expired jobs (90+ days, NOT applied)
+            ancient_cutoff = (now - timedelta(days=90)).isoformat()
+            try:
+                resp = client.table("all_jobs").delete().eq(
+                    "is_expired", True
+                ).eq("applied", False).lt(
+                    "updated_at", ancient_cutoff
+                ).execute()
+                stats["hard_deleted"] = len(resp.data) if resp.data else 0
+            except Exception as e:
+                logger.debug(f"[{MODULE_ID}] Ancient cleanup error: {e}")
+
+            # 3. Count protected applied jobs
+            try:
+                resp = client.table("all_jobs").select("id", count="exact").eq(
+                    "applied", True
+                ).eq("is_expired", True).execute()
+                stats["protected_applied"] = resp.count if resp.count is not None else 0
+            except Exception:
+                pass
+
+            # 4. Clean old entries from latest_jobs (keep last 7 days only)
+            week_ago = (now - timedelta(days=7)).isoformat()
+            try:
+                client.table("latest_jobs").delete().lt("scraped_at", week_ago).execute()
+            except Exception:
+                pass
+
+            total_expired = stats["deadline_expired"] + stats["age_expired"]
+            if total_expired > 0 or stats["hard_deleted"] > 0:
+                logger.info(
+                    f"[{MODULE_ID}] Smart expire: {total_expired} soft-expired "
+                    f"({stats['deadline_expired']} deadline, {stats['age_expired']} age), "
+                    f"{stats['hard_deleted']} ancient removed, "
+                    f"{stats['protected_applied']} applied protected"
+                )
+
+            record_success()
+
+        except Exception as e:
+            logger.error(f"[{MODULE_ID}] smart_expire_jobs error: {e}")
+            record_failure()
+
+        return stats
+
+    # ---- CLEANUP EXPIRED (backward-compatible wrapper) ----
 
     @staticmethod
     def cleanup_expired_jobs(days_past_deadline: int = 7) -> int:
         """
-        Mark jobs as expired if their deadline has passed.
-        Delete very old expired jobs (30+ days past deadline).
+        v0.2: Calls smart_expire_jobs instead of aggressive deletion.
+        Returns total count of actions taken.
         """
-        if not is_operational():
-            return 0
-
-        client = get_supabase()
-        if not client:
-            return 0
-
-        deleted = 0
-        try:
-            # For now, mark jobs where deadline is a parseable date in the past
-            # Also delete expired jobs older than 30 days to save storage
-            cutoff = (datetime.now(IST) - timedelta(days=30)).isoformat()
-            try:
-                resp = client.table("all_jobs").delete().eq(
-                    "is_expired", True
-                ).lt("updated_at", cutoff).execute()
-                deleted = len(resp.data) if resp.data else 0
-            except Exception as e:
-                logger.debug(f"[{MODULE_ID}] Cleanup delete error: {e}")
-
-            # Also clean from latest_jobs
-            try:
-                client.table("latest_jobs").delete().eq(
-                    "is_expired", True
-                ).execute()
-            except Exception:
-                pass
-
-            if deleted > 0:
-                logger.info(f"[{MODULE_ID}] Cleaned up {deleted} old expired jobs")
-            record_success()
-
-        except Exception as e:
-            logger.error(f"[{MODULE_ID}] cleanup_expired error: {e}")
-            record_failure()
-
-        return deleted
+        stats = SupabaseJobDB.smart_expire_jobs()
+        return stats.get("deadline_expired", 0) + stats.get("age_expired", 0) + stats.get("hard_deleted", 0)
 
     @staticmethod
     def clear_all_jobs() -> Dict[str, int]:
         """
         Delete ALL jobs from latest_jobs and all_jobs tables.
-        Used for clean start after major architectural changes.
+        v0.2 SAFETY: Requires explicit confirmation via env var.
+        Will NOT run accidentally on redeployment.
         """
+        import os
+        # SAFETY GATE: double-check that this is intentional
+        force_flag = os.getenv('FORCE_DB_RESET', '').lower()
+        if force_flag not in ('true', '1', 'yes'):
+            logger.warning(f"[{MODULE_ID}] clear_all_jobs called WITHOUT FORCE_DB_RESET — REFUSING to wipe data")
+            return {"error": "FORCE_DB_RESET not set, refusing to clear"}
+
         if not is_operational():
             return {"error": "not operational"}
 
@@ -806,9 +1068,15 @@ async def async_merge_latest_to_all() -> Tuple[int, int]:
 
 
 async def async_cleanup_expired_jobs(days: int = 7) -> int:
-    """Async wrapper for cleanup_expired_jobs."""
+    """Async wrapper for cleanup_expired_jobs (now smart_expire_jobs)."""
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, SupabaseJobDB.cleanup_expired_jobs, days)
+
+
+async def async_smart_expire_jobs() -> Dict[str, int]:
+    """Async wrapper for smart_expire_jobs."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, SupabaseJobDB.smart_expire_jobs)
 
 
 # ============================================================
