@@ -928,11 +928,11 @@ class TelegramReporter:
             pool_timeout=30.0,
         )
 
-        # CRITICAL FIX: When a custom get_updates_request is provided,
-        # individual get_updates_*_timeout params MUST NOT be set — they
-        # conflict and raise: "The parameter 'get_updates_connect_timeout'
-        # may only be set if no get_updates_request instance was set."
-        # All timeouts are already configured in the HTTPXRequest above.
+        # CRITICAL FIX (v22.0+): Timeout params (read_timeout, write_timeout, etc.)
+        # were REMOVED from Updater.start_polling() in python-telegram-bot v22.0.
+        # All timeouts MUST be configured here via HTTPXRequest objects.
+        # The get_updates_request handles long-polling timeouts (90s read).
+        # The custom_request handles regular API call timeouts (60s read).
         app = (
             TGApplication.builder()
             .token(token)
@@ -1138,14 +1138,14 @@ class TelegramReporter:
             try:
                 await self._app.initialize()
                 await self._app.start()
+                # NOTE: read_timeout, write_timeout, connect_timeout, pool_timeout
+                # were REMOVED in python-telegram-bot v22.0.
+                # Timeouts are now configured via HTTPXRequest objects in _build_app()
+                # (custom_request and get_updates_request already have proper timeouts).
                 await self._app.updater.start_polling(
                     drop_pending_updates=True,
                     allowed_updates=["message", "callback_query"],
                     poll_interval=2.0,       # Was 1.0 - reduced to lower connection pressure
-                    read_timeout=90,         # Match our custom HTTPXRequest
-                    write_timeout=30,
-                    connect_timeout=30,
-                    pool_timeout=30,
                 )
                 self._running = True
                 logger.info(
