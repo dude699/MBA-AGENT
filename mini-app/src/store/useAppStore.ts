@@ -431,6 +431,7 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'internhub-store',
+      version: 2, // Bumped to reset stale aggressive filter defaults
       partialize: (state) => ({
         appliedIds: Array.from(state.appliedIds),
         dismissedIds: Array.from(state.dismissedIds),
@@ -448,6 +449,17 @@ export const useAppStore = create<AppState>()(
         viewedIds: new Set(persisted?.viewedIds || []),
         selectedIds: new Set(),
       }),
+      migrate: (persistedState: any, version: number) => {
+        if (version < 2) {
+          // Reset filters to new defaults (old version had aggressive defaults that caused the filter glitch)
+          return {
+            ...persistedState,
+            filters: DEFAULT_FILTERS,
+            activeFilterCount: 0,
+          };
+        }
+        return persistedState;
+      },
     }
   )
 );

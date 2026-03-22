@@ -205,8 +205,8 @@ export default function Header() {
             onClick={() => useAppStore.getState().setFilters({ durationMax: filters.durationMax <= 3 ? 12 : 3 })}
           />
           <QuickChip
-            label="Paid"
-            icon={<span className="text-[10px] font-bold">INR</span>}
+            label="INR Paid"
+            icon={<span className="text-[10px] font-bold">₹</span>}
             active={filters.onlyWithStipend}
             onClick={() => useAppStore.getState().setFilters({ onlyWithStipend: !filters.onlyWithStipend })}
           />

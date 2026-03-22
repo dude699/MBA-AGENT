@@ -85,24 +85,29 @@ export async function fetchInternships(
     params.set('per_page', String(pageSize));
     params.set('sort', mapSortField(sort));
 
-    // Map filters
-    if (filters.categories?.length === 1) {
-      params.set('category', filters.categories[0].toLowerCase());
+    // Map ALL filters to backend query params
+    if (filters.categories?.length > 0) {
+      params.set('category', filters.categories.map(c => c.toLowerCase()).join(','));
     }
-    if (filters.sources?.length === 1) {
-      params.set('source', filters.sources[0].toLowerCase());
+    if (filters.sources?.length > 0) {
+      params.set('source', filters.sources.map(s => s.toLowerCase()).join(','));
     }
-    if (filters.locations?.length === 1) {
-      params.set('location', filters.locations[0].toLowerCase());
+    if (filters.locations?.length > 0) {
+      params.set('location', filters.locations.map(l => l.toLowerCase()).join(','));
     }
     if (filters.stipendMin && filters.stipendMin > 0) {
       params.set('min_stipend', String(filters.stipendMin));
     }
     if (filters.durationMax && filters.durationMax < 12) {
       params.set('max_duration', String(filters.durationMax));
+    } else {
+      params.set('max_duration', '12');
     }
     if (filters.search) {
       params.set('search', filters.search);
+    }
+    if (filters.onlyWithStipend) {
+      params.set('min_stipend', String(Math.max(filters.stipendMin || 0, 1)));
     }
 
     const resp = await fetch(`${getApiUrl('/internships')}?${params.toString()}`, {
@@ -365,10 +370,12 @@ export async function fetchSupabaseLatestJobs(
     params.set('per_page', String(pageSize));
     params.set('sort', sort);
 
-    if (filters.sources?.length === 1) params.set('source', filters.sources[0]);
-    if (filters.categories?.length === 1) params.set('category', filters.categories[0]);
-    if (filters.locations?.length === 1) params.set('location', filters.locations[0]);
+    if (filters.sources?.length) params.set('source', filters.sources.join(','));
+    if (filters.categories?.length) params.set('category', filters.categories.join(','));
+    if (filters.locations?.length) params.set('location', filters.locations.join(','));
     if (filters.search) params.set('search', filters.search);
+    if (filters.onlyWithStipend) params.set('min_stipend', '1');
+    if (filters.durationMax && filters.durationMax < 12) params.set('max_duration', String(filters.durationMax));
 
     const resp = await fetch(`${getApiUrl('/supabase/latest-jobs')}?${params.toString()}`, {
       headers: getHeaders(),
@@ -416,10 +423,12 @@ export async function fetchSupabaseAllJobs(
     params.set('sort', sort);
     if (appliedOnly) params.set('applied', 'true');
 
-    if (filters.sources?.length === 1) params.set('source', filters.sources[0]);
-    if (filters.categories?.length === 1) params.set('category', filters.categories[0]);
-    if (filters.locations?.length === 1) params.set('location', filters.locations[0]);
+    if (filters.sources?.length) params.set('source', filters.sources.join(','));
+    if (filters.categories?.length) params.set('category', filters.categories.join(','));
+    if (filters.locations?.length) params.set('location', filters.locations.join(','));
     if (filters.search) params.set('search', filters.search);
+    if (filters.onlyWithStipend) params.set('min_stipend', '1');
+    if (filters.durationMax && filters.durationMax < 12) params.set('max_duration', String(filters.durationMax));
 
     const resp = await fetch(`${getApiUrl('/supabase/all-jobs')}?${params.toString()}`, {
       headers: getHeaders(),

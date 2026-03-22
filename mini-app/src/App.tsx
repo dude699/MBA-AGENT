@@ -2,7 +2,7 @@
 // APP — Main Application Component
 // ============================================================
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { RefreshCw, ChevronUp, Clock, Archive, Database } from 'lucide-react';
 
@@ -22,6 +22,7 @@ import { SourceIcon } from '@/components/SourceIcons';
 import { useInternships, useFilteredInternships, useInfiniteScroll } from '@/hooks/useHooks';
 import { useAppStore } from '@/store/useAppStore';
 import { hapticFeedback } from '@/utils/helpers';
+import { applyFilters, applySorting } from '@/utils/helpers';
 import { SOURCE_CONFIG } from '@/utils/constants';
 import { fetchSupabaseLatestJobs, fetchSupabaseAllJobs } from '@/services/api';
 import type { Internship, InternshipSource } from '@/types';
@@ -47,6 +48,14 @@ export default function App() {
     isLoading, hasMore, totalCount, selectedIds, lockedSource,
     filters, sort, selectBySource, deselectAll,
   } = useAppStore();
+
+  // Apply client-side filters + sort to supabase jobs for consistency
+  const filteredSbJobs = useMemo(() => {
+    if (sbJobs.length === 0) return [];
+    let result = applyFilters(sbJobs, filters);
+    result = applySorting(result, sort);
+    return result;
+  }, [sbJobs, filters, sort]);
 
   // Extra bottom padding when floating apply button is visible
   const hasSelection = selectedIds.size > 0;
@@ -78,17 +87,20 @@ export default function App() {
     hapticFeedback('light');
   };
 
-  // Supabase data fetcher — now uses active filters
+  // Supabase data fetcher — now uses ALL active filters
   const loadSupabaseJobs = useCallback(async (mode: 'latest' | 'archive', page: number = 1) => {
     setSbLoading(true);
     try {
       const fetcher = mode === 'latest' ? fetchSupabaseLatestJobs : fetchSupabaseAllJobs;
-      // Pass current filters to Supabase queries
-      const filterParams: any = {};
-      if (filters.sources?.length === 1) filterParams.sources = filters.sources;
-      if (filters.categories?.length === 1) filterParams.categories = filters.categories;
-      if (filters.locations?.length === 1) filterParams.locations = filters.locations;
-      if (filters.search) filterParams.search = filters.search;
+      // Pass ALL current filters to Supabase queries
+      const filterParams: any = {
+        sources: filters.sources || [],
+        categories: filters.categories || [],
+        locations: filters.locations || [],
+        search: filters.search || '',
+        onlyWithStipend: filters.onlyWithStipend,
+        durationMax: filters.durationMax,
+      };
 
       const resp = await fetcher(page, 20, filterParams);
       if (page === 1) {
@@ -106,14 +118,14 @@ export default function App() {
     }
   }, [filters]);
 
-  // Load Supabase data when mode or filters change
+  // Load Supabase data when mode or filters change (react to all filter changes)
   useEffect(() => {
     if (browseMode !== 'live' && activeTab === 'browse') {
       setSbJobs([]);
       setSbPage(1);
       loadSupabaseJobs(browseMode === 'latest' ? 'latest' : 'archive', 1);
     }
-  }, [browseMode, activeTab, loadSupabaseJobs, filters.search, filters.sources.length, filters.categories.length]);
+  }, [browseMode, activeTab, loadSupabaseJobs]);
 
   return (
     <div className="app-root" style={{ background: '#ffffff', color: '#0a0a0a', minHeight: '100vh', touchAction: 'pan-y pan-x' }}>
@@ -282,8 +294,11 @@ export default function App() {
                   <div className="py-2 flex items-center justify-between">
                     <p className="text-xs text-primary-500">
                       <Database className="w-3 h-3 inline mr-1" />
-                      <span className="font-bold text-primary-800">{sbTotal}</span>
+                      <span className="font-bold text-primary-800">{filteredSbJobs.length}</span>
                       {' '}{browseMode === 'latest' ? 'latest session' : 'archived'} jobs
+                      {filteredSbJobs.length !== sbTotal && (
+                        <span className="text-primary-400"> of {sbTotal}</span>
+                      )}
                     </p>
                     <button
                       onClick={() => { loadSupabaseJobs(browseMode === 'latest' ? 'latest' : 'archive', 1); hapticFeedback('light'); }}
@@ -297,23 +312,33 @@ export default function App() {
                   <div className="space-y-3" style={{ paddingBottom: hasSelection ? '80px' : '16px' }}>
                     {sbLoading && sbJobs.length === 0 ? (
                       <ListSkeleton count={5} />
-                    ) : sbJobs.length === 0 ? (
+                    ) : filteredSbJobs.length === 0 ? (
                       <div className="py-16 text-center">
                         <div className="w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-4" style={{background:'#f3f4f6'}}>
                           <Clock className="w-8 h-8" style={{color:'#d1d5db'}} />
                         </div>
                         <h3 className="text-base font-bold mb-2" style={{color:'#1f2937'}}>
-                          {browseMode === 'latest' ? 'No Latest Jobs' : 'No Archived Jobs'}
+                          {sbJobs.length > 0 ? 'No Jobs Match Filters' : browseMode === 'latest' ? 'No Latest Jobs' : 'No Archived Jobs'}
                         </h3>
                         <p className="text-xs" style={{color:'#6b7280'}}>
-                          {browseMode === 'latest'
-                            ? 'Jobs from the current scraping session will appear here.'
-                            : 'All previously scraped jobs will be archived here.'}
+                          {sbJobs.length > 0
+                            ? 'Try adjusting your filters to see more results.'
+                            : browseMode === 'latest'
+                              ? 'Jobs from the current scraping session will appear here.'
+                              : 'All previously scraped jobs will be archived here.'}
                         </p>
+                        {sbJobs.length > 0 && (
+                          <button
+                            onClick={() => { useAppStore.getState().resetFilters(); hapticFeedback('medium'); }}
+                            className="btn-primary text-xs mt-3"
+                          >
+                            Reset All Filters
+                          </button>
+                        )}
                       </div>
                     ) : (
                       <>
-                        {sbJobs.map((internship, index) => (
+                        {filteredSbJobs.map((internship, index) => (
                           <InternshipCard
                             key={internship.id}
                             internship={internship}
@@ -340,10 +365,10 @@ export default function App() {
                           </div>
                         )}
 
-                        {!sbHasMore && sbJobs.length > 0 && (
+                        {!sbHasMore && filteredSbJobs.length > 0 && (
                           <div className="py-6 text-center">
                             <p className="text-xs text-primary-400">
-                              All {sbJobs.length} jobs loaded
+                              All {filteredSbJobs.length} jobs loaded
                             </p>
                           </div>
                         )}

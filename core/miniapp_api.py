@@ -79,11 +79,15 @@ async def handle_internships(request: web.Request) -> web.Response:
         page = int(request.query.get('page', '1'))
         per_page = min(int(request.query.get('per_page', '20')), 50)
         sort_by = request.query.get('sort', 'ppo')
-        category = request.query.get('category', '') or None
-        source = request.query.get('source', '') or None
-        location = request.query.get('location', '') or None
+        # Support comma-separated multi-values: use first value for DB query
+        raw_category = request.query.get('category', '') or ''
+        raw_source = request.query.get('source', '') or ''
+        raw_location = request.query.get('location', '') or ''
+        category = raw_category.split(',')[0].strip() or None
+        source = raw_source.split(',')[0].strip() or None
+        location = raw_location.split(',')[0].strip() or None
         min_stipend = int(request.query.get('min_stipend', '0'))
-        max_duration = int(request.query.get('max_duration', '6'))
+        max_duration = int(request.query.get('max_duration', '12'))
         search = request.query.get('search', '') or None
 
         offset = (page - 1) * per_page
@@ -292,14 +296,18 @@ async def handle_apply(request: web.Request) -> web.Response:
                     'fallback': 'manual',
                 }
 
+        # Only mark as 'applied' in DB if auto-apply actually succeeded
+        was_auto_applied = apply_result.get('method') == 'auto_apply'
+        db_status = 'applied' if was_auto_applied else 'queued'
         outcome = Outcome(
             listing_id=lid,
             company_id=listing.get('company_id'),
-            status='applied',
+            status=db_status,
             ppo_score_at_apply=listing.get('ppo_score', 0),
         )
         db.insert_outcome(outcome)
-        db.update_clean_listing_scores(lid, status='applied')
+        if was_auto_applied:
+            db.update_clean_listing_scores(lid, status='applied')
 
         return _json_response({
             "success": True,
@@ -480,16 +488,19 @@ async def handle_batch_apply(request: web.Request) -> web.Response:
             else:
                 apply_method = 'direct'
 
-            # Record outcome in database regardless of auto-apply result
+            # Record outcome in database — ONLY mark as 'applied' if truly auto-applied
             try:
+                db_status = 'applied' if apply_method == 'auto_applied' else 'queued'
                 outcome = Outcome(
                     listing_id=lid,
                     company_id=listing.get('company_id'),
-                    status='applied',
+                    status=db_status,
                     ppo_score_at_apply=listing.get('ppo_score', 0),
                 )
                 db.insert_outcome(outcome)
-                db.update_clean_listing_scores(lid, status='applied')
+                # Only update listing status to 'applied' for real auto-applies
+                if apply_method == 'auto_applied':
+                    db.update_clean_listing_scores(lid, status='applied')
             except Exception as db_err:
                 logger.warning(f"[{MODULE_ID}] Failed to record outcome for {lid}: {db_err}")
 
