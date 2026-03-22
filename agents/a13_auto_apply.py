@@ -609,7 +609,18 @@ class GreenhouseApplicator:
 
     def apply(self, listing: Dict, cover_letter: str = '',
               resume_path: str = '') -> ApplicationAttempt:
-        """Apply to a Greenhouse listing via public API."""
+        """
+        Apply to a Greenhouse listing via public Job Board API.
+
+        PRISM v0.2 — Based on official Greenhouse API docs:
+        POST https://boards-api.greenhouse.io/v1/boards/{board_token}/jobs/{id}
+        Content-Type: application/json (or multipart/form-data with resume)
+        Auth: HTTP Basic (API key as username, no password) — BUT many public boards
+              accept applications without auth for candidate-facing submissions.
+
+        The endpoint accepts: first_name, last_name, email, phone,
+        cover_letter_text, resume_text, and custom question_XXXXX fields.
+        """
         attempt = ApplicationAttempt(
             listing_id=listing.get('id', 0),
             platform='greenhouse',
@@ -617,82 +628,88 @@ class GreenhouseApplicator:
         )
 
         try:
-            url = listing.get('url', '')
+            import requests
+
+            url = listing.get('url', '') or listing.get('source_url', '')
             board_slug, job_id = self._extract_greenhouse_ids(url)
 
             if not board_slug or not job_id:
                 attempt.error = "Could not extract Greenhouse board/job IDs from URL"
                 return attempt
 
-            # Get application questions
-            questions_url = (
-                f"https://boards-api.greenhouse.io/v1/boards/{board_slug}"
-                f"/jobs/{job_id}/questions"
-            )
-
-            stealth = self._get_stealth()
-            if not stealth:
-                attempt.error = "Stealth client not available"
-                return attempt
-
-            # Fetch questions
-            q_response = stealth.get(
-                questions_url,
-                headers={'Accept': 'application/json'},
-                auto_delay=True,
-            )
-
-            questions = []
-            if q_response and q_response.get('status_code') == 200:
-                q_data = q_response.get('json', {})
-                if isinstance(q_data, dict):
-                    questions = q_data.get('questions', [])
-
-            # Build application payload
+            # Get user profile from listing credentials or DB
             user_profile = self._get_user_profile()
+            # Override with any credentials passed from frontend
+            if listing.get('full_name'):
+                parts = listing['full_name'].split(' ', 1)
+                user_profile['first_name'] = parts[0]
+                user_profile['last_name'] = parts[1] if len(parts) > 1 else ''
+            if listing.get('email'):
+                user_profile['email'] = listing['email']
+            if listing.get('phone'):
+                user_profile['phone'] = listing['phone']
+
+            # Generate cover letter if not provided
+            if not cover_letter and self.cover_engine:
+                cover_letter = self.cover_engine.generate(listing)
+                attempt.cover_letter = cover_letter
+
+            # Build JSON payload (official Greenhouse format)
             payload = {
                 'first_name': user_profile.get('first_name', ''),
                 'last_name': user_profile.get('last_name', ''),
                 'email': user_profile.get('email', ''),
                 'phone': user_profile.get('phone', ''),
-                'cover_letter': cover_letter or '',
+                'cover_letter_text': cover_letter or '',
             }
 
-            # Generate cover letter if not provided
-            if not cover_letter and self.cover_engine:
-                cover_letter = self.cover_engine.generate(listing)
-                payload['cover_letter'] = cover_letter
-                attempt.cover_letter = cover_letter
-
-            # Submit application
+            # Official endpoint: POST /v1/boards/{board_token}/jobs/{job_post_id}
             apply_url = (
                 f"https://boards-api.greenhouse.io/v1/boards/{board_slug}"
-                f"/jobs/{job_id}/application"
+                f"/jobs/{job_id}"
             )
 
-            apply_response = stealth.post(
+            headers = {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Origin': f'https://boards.greenhouse.io',
+                'Referer': f'https://boards.greenhouse.io/{board_slug}/jobs/{job_id}',
+            }
+
+            # Human-like delay
+            time.sleep(random.uniform(3, 8))
+
+            apply_response = requests.post(
                 apply_url,
-                data=payload,
-                headers={
-                    'Accept': 'application/json',
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                },
-                auto_delay=True,
+                json=payload,
+                headers=headers,
+                timeout=25,
             )
 
-            if apply_response and apply_response.get('status_code') in (200, 201, 302):
+            if apply_response.status_code in (200, 201, 302):
                 attempt.success = True
-                attempt.external_app_id = str(
-                    apply_response.get('json', {}).get('id', '')
-                )
+                try:
+                    resp_json = apply_response.json()
+                    attempt.external_app_id = str(resp_json.get('id', ''))
+                except Exception:
+                    attempt.external_app_id = job_id
                 logger.info(
                     f"[{AGENT_ID}] Greenhouse apply SUCCESS: "
                     f"{listing.get('title', '')} @ {listing.get('company', '')}"
                 )
+            elif apply_response.status_code == 422:
+                # Validation error — missing required fields
+                try:
+                    err_detail = apply_response.json()
+                    attempt.error = f"Greenhouse validation error: {json.dumps(err_detail)[:200]}"
+                except Exception:
+                    attempt.error = f"Greenhouse validation error (422)"
             else:
-                status = apply_response.get('status_code', 'N/A') if apply_response else 'N/A'
-                attempt.error = f"Greenhouse POST failed: status {status}"
+                attempt.error = f"Greenhouse POST returned HTTP {apply_response.status_code}"
 
+        except ImportError:
+            attempt.error = "requests library not available"
         except Exception as e:
             attempt.error = f"Greenhouse apply error: {str(e)}"
             logger.error(f"[{AGENT_ID}] Greenhouse apply error: {e}")
@@ -757,7 +774,15 @@ class LeverApplicator:
 
     def apply(self, listing: Dict, cover_letter: str = '',
               resume_path: str = '') -> ApplicationAttempt:
-        """Apply to a Lever listing via public API."""
+        """
+        Apply to a Lever listing via public application endpoint.
+
+        PRISM v0.2 — Lever's public postings accept form data at:
+        POST https://jobs.lever.co/{company}/{posting_id}/apply
+        Content-Type: application/x-www-form-urlencoded
+        Fields: name, email, phone, org, urls[LinkedIn], comments (=cover letter)
+        No auth required for public postings.
+        """
         attempt = ApplicationAttempt(
             listing_id=listing.get('id', 0),
             platform='lever',
@@ -765,7 +790,9 @@ class LeverApplicator:
         )
 
         try:
-            url = listing.get('url', '')
+            import requests
+
+            url = listing.get('url', '') or listing.get('source_url', '')
             company_slug, posting_id = self._extract_lever_ids(url)
 
             if not company_slug or not posting_id:
@@ -777,6 +804,15 @@ class LeverApplicator:
 
             # Get user profile
             user_profile = self._get_user_profile()
+            # Override with credentials from frontend
+            if listing.get('full_name'):
+                user_profile['name'] = listing['full_name']
+            elif user_profile.get('first_name'):
+                user_profile['name'] = f"{user_profile.get('first_name', '')} {user_profile.get('last_name', '')}".strip()
+            if listing.get('email'):
+                user_profile['email'] = listing['email']
+            if listing.get('phone'):
+                user_profile['phone'] = listing['phone']
 
             # Generate cover letter if not provided
             if not cover_letter and self.cover_engine:
@@ -785,42 +821,46 @@ class LeverApplicator:
 
             # Build form data
             form_data = {
-                'name': f"{user_profile.get('first_name', '')} {user_profile.get('last_name', '')}".strip(),
+                'name': user_profile.get('name', f"{user_profile.get('first_name', '')} {user_profile.get('last_name', '')}".strip()),
                 'email': user_profile.get('email', ''),
                 'phone': user_profile.get('phone', ''),
-                'org': user_profile.get('college', ''),
-                'urls[LinkedIn]': user_profile.get('linkedin', ''),
+                'org': user_profile.get('college', listing.get('college', '')),
+                'urls[LinkedIn]': user_profile.get('linkedin', listing.get('linkedin_profile', '')),
                 'comments': cover_letter or '',
             }
 
-            stealth = self._get_stealth()
-            if not stealth:
-                attempt.error = "Stealth client not available"
-                return attempt
+            headers = {
+                'Accept': 'text/html,application/json',
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Referer': f'https://jobs.lever.co/{company_slug}/{posting_id}',
+                'Origin': 'https://jobs.lever.co',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            }
 
-            # Submit application
-            apply_response = stealth.post(
+            # Human-like delay
+            time.sleep(random.uniform(3, 8))
+
+            apply_response = requests.post(
                 apply_url,
                 data=form_data,
-                headers={
-                    'Accept': 'text/html,application/json',
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                    'Referer': f'https://jobs.lever.co/{company_slug}/{posting_id}',
-                    'Origin': 'https://jobs.lever.co',
-                },
-                auto_delay=True,
+                headers=headers,
+                timeout=25,
+                allow_redirects=False,
             )
 
-            if apply_response and apply_response.get('status_code') in (200, 201, 302):
+            # Lever returns 302 redirect on success (to /thank-you page)
+            if apply_response.status_code in (200, 201, 302):
                 attempt.success = True
+                attempt.external_app_id = posting_id
                 logger.info(
                     f"[{AGENT_ID}] Lever apply SUCCESS: "
                     f"{listing.get('title', '')} @ {listing.get('company', '')}"
                 )
             else:
-                status = apply_response.get('status_code', 'N/A') if apply_response else 'N/A'
-                attempt.error = f"Lever POST failed: status {status}"
+                attempt.error = f"Lever POST returned HTTP {apply_response.status_code}"
 
+        except ImportError:
+            attempt.error = "requests library not available"
         except Exception as e:
             attempt.error = f"Lever apply error: {str(e)}"
             logger.error(f"[{AGENT_ID}] Lever apply error: {e}")
@@ -916,19 +956,16 @@ class AshbyApplicator:
         self.cover_engine = cover_engine
         self.db = db or get_db()
 
-    def _get_stealth(self):
-        try:
-            return get_stealth_client()
-        except Exception:
-            return None
-
     def apply(self, listing: Dict, cover_letter: str = '',
               resume_path: str = '') -> ApplicationAttempt:
         """
-        Auto-apply to an Ashby job posting.
+        PRISM v0.2: Auto-apply to an Ashby job posting.
 
-        Ashby public boards accept applications via their posting API
-        with multipart form data (name, email, resume, cover letter).
+        Ashby public API endpoint:
+        POST https://api.ashbyhq.com/posting-api/application-form/{posting_id}
+        Content-Type: application/json
+        Fields: name, email, phone, linkedInUrl, coverLetter
+        No auth required for public boards.
         """
         attempt = ApplicationAttempt(
             listing_id=listing.get('id', 0),
@@ -937,6 +974,8 @@ class AshbyApplicator:
         )
 
         try:
+            import requests
+
             # Extract posting ID from URL or source_id
             posting_id = self._extract_posting_id(listing)
             if not posting_id:
@@ -944,11 +983,19 @@ class AshbyApplicator:
                 attempt.success = False
                 return attempt
 
-            # Get user profile for form fields
+            # Get user profile — prefer frontend-provided credentials
             profile = self._get_user_profile()
+            if listing.get('full_name'):
+                profile['name'] = listing['full_name']
+            if listing.get('email'):
+                profile['email'] = listing['email']
+            if listing.get('phone'):
+                profile['phone'] = listing['phone']
+            if listing.get('linkedin_profile'):
+                profile['linkedin_url'] = listing['linkedin_profile']
 
-            # Build multipart form
-            form_data = {
+            # Build JSON payload
+            payload = {
                 'name': profile.get('name', ''),
                 'email': profile.get('email', ''),
                 'phone': profile.get('phone', ''),
@@ -956,42 +1003,38 @@ class AshbyApplicator:
                 'coverLetter': cover_letter[:5000] if cover_letter else '',
             }
 
-            stealth = self._get_stealth()
-            if not stealth:
-                attempt.error = "Stealth client not available"
-                attempt.success = False
-                return attempt
-
-            # Submit application
             url = f"{self.ASHBY_APPLY_URL}/{posting_id}"
-            files = None
-            if resume_path and os.path.exists(resume_path):
-                files = {'resume': (os.path.basename(resume_path),
-                                    open(resume_path, 'rb'),
-                                    'application/pdf')}
 
-            resp = stealth.post(url, data=form_data, files=files, headers={
+            headers = {
                 'Accept': 'application/json',
+                'Content-Type': 'application/json',
                 'Origin': 'https://jobs.ashbyhq.com',
-                'Referer': listing.get('source_url', 'https://jobs.ashbyhq.com'),
-            })
+                'Referer': listing.get('source_url', listing.get('url', 'https://jobs.ashbyhq.com')),
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            }
 
-            if resp and resp.status_code in (200, 201, 202):
+            # Human-like delay
+            time.sleep(random.uniform(3, 8))
+
+            resp = requests.post(url, json=payload, headers=headers, timeout=25)
+
+            if resp.status_code in (200, 201, 202):
                 attempt.success = True
-                attempt.response_data = resp.text[:500]
                 logger.info(
-                    f"[A-13] Ashby auto-apply SUCCESS: "
+                    f"[{AGENT_ID}] Ashby auto-apply SUCCESS: "
                     f"{listing.get('title', '')} at {listing.get('company', '')}"
                 )
             else:
-                status = getattr(resp, 'status_code', 'N/A')
-                attempt.error = f"Ashby API returned HTTP {status}"
+                attempt.error = f"Ashby API returned HTTP {resp.status_code}"
                 attempt.success = False
 
+        except ImportError:
+            attempt.error = "requests library not available"
+            attempt.success = False
         except Exception as e:
             attempt.error = f"Ashby apply error: {str(e)}"
             attempt.success = False
-            logger.error(f"[A-13] Ashby apply error: {e}")
+            logger.error(f"[{AGENT_ID}] Ashby apply error: {e}")
 
         return attempt
 
@@ -1043,6 +1086,7 @@ class SmartRecruitersApplicator:
 
     def _get_stealth(self):
         try:
+            from core.stealth_engine import get_stealth_client
             return get_stealth_client()
         except Exception:
             return None
@@ -1050,10 +1094,8 @@ class SmartRecruitersApplicator:
     def apply(self, listing: Dict, cover_letter: str = '',
               resume_path: str = '') -> ApplicationAttempt:
         """
-        Auto-apply to a SmartRecruiters posting.
-
-        SmartRecruiters public postings accept applications with
-        standard form fields. Custom questions require manual apply.
+        PRISM v0.2: Auto-apply to a SmartRecruiters posting.
+        Uses requests library directly for reliability.
         """
         attempt = ApplicationAttempt(
             listing_id=listing.get('id', 0),
@@ -1062,74 +1104,75 @@ class SmartRecruitersApplicator:
         )
 
         try:
-            # Check if posting has custom questions (requires manual)
-            posting_url = listing.get('source_url', '')
+            import requests
+
+            posting_url = listing.get('source_url', listing.get('url', ''))
             if not posting_url:
                 attempt.error = "No SmartRecruiters posting URL"
                 attempt.success = False
                 return attempt
 
             profile = self._get_user_profile()
-            name_parts = profile.get('name', 'MBA Student').split(' ', 1)
+            # Override with frontend credentials
+            if listing.get('full_name'):
+                name_parts = listing['full_name'].split(' ', 1)
+                profile['first_name'] = name_parts[0]
+                profile['last_name'] = name_parts[1] if len(name_parts) > 1 else ''
+            if listing.get('email'):
+                profile['email'] = listing['email']
+            if listing.get('phone'):
+                profile['phone'] = listing['phone']
+
+            name_parts = profile.get('name', 'MBA Student').split(' ', 1) if 'name' in profile else [profile.get('first_name', ''), profile.get('last_name', '')]
 
             form_data = {
-                'firstName': name_parts[0],
+                'firstName': name_parts[0] if name_parts else '',
                 'lastName': name_parts[1] if len(name_parts) > 1 else '',
                 'email': profile.get('email', ''),
                 'phone': profile.get('phone', ''),
                 'coverLetter': cover_letter[:5000] if cover_letter else '',
             }
 
-            stealth = self._get_stealth()
-            if not stealth:
-                attempt.error = "Stealth client not available"
-                attempt.success = False
-                return attempt
-
-            # Extract company and posting IDs
+            # Extract posting ID
             posting_id = self._extract_posting_id(listing)
             if not posting_id:
-                attempt.error = "Could not extract SmartRecruiters posting ID — manual apply required"
+                attempt.error = "Could not extract SmartRecruiters posting ID"
                 attempt.success = False
                 return attempt
 
             url = f"{self.SR_APPLY_BASE}/api/apply/{posting_id}"
-            files = None
-            if resume_path and os.path.exists(resume_path):
-                files = {'resume': (os.path.basename(resume_path),
-                                    open(resume_path, 'rb'),
-                                    'application/pdf')}
-
-            resp = stealth.post(url, data=form_data, files=files, headers={
+            headers = {
                 'Accept': 'application/json',
+                'Content-Type': 'application/x-www-form-urlencoded',
                 'Origin': self.SR_APPLY_BASE,
                 'Referer': posting_url,
-                'User-Agent': random.choice([
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36",
-                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36",
-                ]),
-            })
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36',
+            }
 
-            if resp and resp.status_code in (200, 201, 202):
+            time.sleep(random.uniform(3, 8))
+
+            resp = requests.post(url, data=form_data, headers=headers, timeout=25)
+
+            if resp.status_code in (200, 201, 202):
                 attempt.success = True
-                attempt.response_data = resp.text[:500]
                 logger.info(
-                    f"[A-13] SmartRecruiters auto-apply SUCCESS: "
+                    f"[{AGENT_ID}] SmartRecruiters auto-apply SUCCESS: "
                     f"{listing.get('title', '')} at {listing.get('company', '')}"
                 )
-            elif resp and resp.status_code == 400:
-                # Likely custom questions required
-                attempt.error = "SmartRecruiters posting requires custom questions — manual apply needed"
+            elif resp.status_code == 400:
+                attempt.error = "SmartRecruiters requires custom questions — manual apply needed"
                 attempt.success = False
             else:
-                status = getattr(resp, 'status_code', 'N/A')
-                attempt.error = f"SmartRecruiters API returned HTTP {status}"
+                attempt.error = f"SmartRecruiters API returned HTTP {resp.status_code}"
                 attempt.success = False
 
+        except ImportError:
+            attempt.error = "requests library not available"
+            attempt.success = False
         except Exception as e:
             attempt.error = f"SmartRecruiters apply error: {str(e)}"
             attempt.success = False
-            logger.error(f"[A-13] SmartRecruiters apply error: {e}")
+            logger.error(f"[{AGENT_ID}] SmartRecruiters apply error: {e}")
 
         return attempt
 

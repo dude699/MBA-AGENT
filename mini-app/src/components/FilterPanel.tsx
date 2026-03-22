@@ -33,18 +33,20 @@ export default function FilterPanel() {
     hapticFeedback('light');
   };
 
-  if (!isFilterOpen) return null;
-
   return (
-    <AnimatePresence>
+    <AnimatePresence mode="wait">
+      {isFilterOpen && (
       <motion.div
+        key="filter-backdrop"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
+        transition={{ duration: 0.2 }}
         className="fixed inset-0 z-50 bg-black/20 backdrop-blur-sm"
-        onClick={() => setFilterOpen(false)}
+        onClick={(e) => { e.stopPropagation(); setFilterOpen(false); }}
       >
         <motion.div
+          key="filter-sheet"
           initial={{ y: '100%' }}
           animate={{ y: 0 }}
           exit={{ y: '100%' }}
@@ -52,6 +54,7 @@ export default function FilterPanel() {
           className="absolute bottom-0 left-0 right-0 bg-white rounded-t-3xl max-h-[85vh] overflow-hidden flex flex-col"
           style={{ boxShadow: '0 -8px 40px rgba(0,0,0,0.08)' }}
           onClick={(e) => e.stopPropagation()}
+          onTouchMove={(e) => e.stopPropagation()}
         >
           {/* Handle */}
           <div className="flex justify-center pt-3 pb-1">
@@ -82,8 +85,8 @@ export default function FilterPanel() {
             </div>
           </div>
 
-          {/* Scrollable Filters — extra bottom padding to clear bottom bar */}
-          <div className="flex-1 overflow-y-auto" style={{ paddingBottom: 'calc(80px + env(safe-area-inset-bottom, 0px))' }}>
+          {/* Scrollable Filters */}
+          <div className="flex-1 overflow-y-auto overscroll-contain" style={{ WebkitOverflowScrolling: 'touch' }}>
             {/* SOURCE FILTER */}
             <FilterSection
               title="Source Platform"
@@ -451,21 +454,22 @@ export default function FilterPanel() {
             </FilterSection>
           </div>
 
-          {/* Apply Button */}
-          <div className="absolute bottom-0 left-0 right-0 p-4" style={{
-            background: 'rgba(255,255,255,0.95)',
+          {/* Apply Button — sticky at bottom, not absolute */}
+          <div className="flex-shrink-0 p-4 border-t border-primary-100" style={{
+            background: 'rgba(255,255,255,0.97)',
             backdropFilter: 'blur(20px)',
-            borderTop: '1px solid rgba(0,0,0,0.05)',
+            paddingBottom: 'calc(1rem + env(safe-area-inset-bottom, 0px))',
           }}>
             <button
-              onClick={() => { setFilterOpen(false); hapticFeedback('medium'); }}
+              onClick={(e) => { e.stopPropagation(); setFilterOpen(false); hapticFeedback('medium'); }}
               className="btn-primary w-full text-sm"
             >
-              Apply Filters
+              Apply Filters {activeFilterCount > 0 ? `(${activeFilterCount})` : ''}
             </button>
           </div>
         </motion.div>
       </motion.div>
+      )}
     </AnimatePresence>
   );
 }
@@ -484,8 +488,9 @@ function FilterSection({
   return (
     <div style={{ borderBottom: '1px solid rgba(0,0,0,0.04)' }}>
       <button
-        onClick={onToggle}
+        onClick={(e) => { e.stopPropagation(); onToggle(); }}
         className="flex items-center justify-between w-full px-5 py-3.5 hover:bg-primary-50/50 transition-colors"
+        type="button"
       >
         <div className="flex items-center gap-2">
           <span className="text-primary-400">{icon}</span>
@@ -499,19 +504,16 @@ function FilterSection({
         </div>
         {expanded ? <ChevronUp className="w-4 h-4 text-primary-300" /> : <ChevronDown className="w-4 h-4 text-primary-300" />}
       </button>
-      <AnimatePresence>
-        {expanded && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="overflow-hidden"
-          >
-            <div className="px-5 pb-4">{children}</div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {expanded && (
+        <motion.div
+          initial={{ height: 0, opacity: 0 }}
+          animate={{ height: 'auto', opacity: 1 }}
+          transition={{ duration: 0.2 }}
+          className="overflow-hidden"
+        >
+          <div className="px-5 pb-4" onClick={(e) => e.stopPropagation()}>{children}</div>
+        </motion.div>
+      )}
     </div>
   );
 }
@@ -525,13 +527,15 @@ function ChipGrid({
   onChange: (selected: string[]) => void;
 }) {
   return (
-    <div className="flex flex-wrap gap-1.5">
+    <div className="flex flex-wrap gap-1.5" onClick={(e) => e.stopPropagation()}>
       {items.map((item) => {
         const active = selected.includes(item);
         return (
           <button
             key={item}
-            onClick={() => {
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
               const next = active
                 ? selected.filter((s) => s !== item)
                 : [...selected, item];

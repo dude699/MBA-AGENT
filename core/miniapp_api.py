@@ -345,12 +345,31 @@ async def handle_batch_apply(request: web.Request) -> web.Response:
         # Cap at 10 per batch for safety
         listing_ids = listing_ids[:10]
 
-        # Sources that support auto-apply via A-13
-        AUTO_APPLY_SOURCES = ('internshala', 'naukri', 'greenhouse', 'lever')
+        # PRISM v0.2: Sources that support auto-apply via A-13 platform applicators
+        # Each source maps to its applicator class in A-13
+        AUTO_APPLY_SOURCES = {
+            'internshala': 'internshala',
+            'greenhouse': 'greenhouse',
+            'lever': 'lever',
+            'ashby': 'ashby',
+            'ashbyhq': 'ashby',
+            'smartrecruiters': 'smartrecruiters',
+            'smart_recruiters': 'smartrecruiters',
+        }
+        # Sources that CANNOT be auto-applied (require manual login/CAPTCHA)
+        MANUAL_ONLY_SOURCES = ('naukri', 'workday', 'linkedin')
 
         results = []
         success_count = 0
         fail_count = 0
+
+        # Pre-initialize orchestrator once for the entire batch
+        orchestrator = None
+        try:
+            from agents.a13_auto_apply import get_auto_apply_orchestrator
+            orchestrator = get_auto_apply_orchestrator()
+        except Exception as orch_err:
+            logger.warning(f"[{MODULE_ID}] A-13 orchestrator init failed: {orch_err}")
 
         for lid_raw in listing_ids:
             try:
@@ -373,22 +392,93 @@ async def handle_batch_apply(request: web.Request) -> web.Response:
             apply_error = ''
             external_id = ''
 
-            # Attempt A-13 auto-apply for supported sources WITH credentials
-            if credentials and lst_source in AUTO_APPLY_SOURCES:
+            # ===== PRISM v0.2: Smart Portal Routing =====
+            # Route 1: Auto-apply via A-13 platform applicators (Greenhouse, Lever, Ashby, etc.)
+            if lst_source in AUTO_APPLY_SOURCES and orchestrator:
+                applicator_key = AUTO_APPLY_SOURCES[lst_source]
                 try:
-                    from agents.a13_auto_apply import get_auto_applier
-                    applier = get_auto_applier()
-                    attempt = applier.apply_single(listing, credentials)
-                    if attempt and attempt.success:
-                        apply_method = 'auto_applied'
-                        external_id = attempt.external_app_id or ''
+                    applicator = orchestrator._applicators.get(applicator_key)
+                    if applicator:
+                        # Build listing dict for the applicator
+                        listing_data = {
+                            'id': lid,
+                            'title': listing.get('title', ''),
+                            'company': listing.get('company', ''),
+                            'url': source_url,
+                            'source_url': source_url,
+                            'description_text': listing.get('description_text', ''),
+                            'source': lst_source,
+                            'location': listing.get('location', ''),
+                            'category': listing.get('category', ''),
+                            'source_id': listing.get('source_id', ''),
+                        }
+
+                        # Generate cover letter via orchestrator's engine
+                        cover_letter = ''
+                        try:
+                            cover_letter = orchestrator.cover_engine.generate(listing_data)
+                        except Exception:
+                            pass
+
+                        # Merge user-provided credentials/profile into the listing
+                        if credentials:
+                            listing_data.update({
+                                k: v for k, v in credentials.items()
+                                if k in ('full_name', 'email', 'phone', 'college', 'degree',
+                                         'graduation_year', 'cover_letter', 'availability',
+                                         'linkedin_profile', 'current_location')
+                            })
+
+                        # Execute the platform-specific applicator
+                        attempt = applicator.apply(listing_data, cover_letter=cover_letter)
+
+                        if attempt and attempt.success:
+                            apply_method = 'auto_applied'
+                            external_id = getattr(attempt, 'external_app_id', '') or ''
+                        else:
+                            apply_method = 'auto_apply_failed'
+                            apply_error = getattr(attempt, 'error', '') or 'Auto-apply attempt failed'
                     else:
                         apply_method = 'auto_apply_failed'
-                        apply_error = attempt.error if attempt else 'Auto-apply not available'
+                        apply_error = f'No applicator configured for {lst_source}'
                 except Exception as e:
                     apply_method = 'auto_apply_error'
                     apply_error = str(e)[:200]
-                    logger.warning(f"[{MODULE_ID}] A-13 batch auto-apply failed for {lid} ({lst_source}): {e}")
+                    logger.warning(f"[{MODULE_ID}] A-13 auto-apply failed for {lid} ({lst_source}): {e}")
+
+            # Route 2: Internshala uses session-cookie-based form submission
+            elif lst_source == 'internshala' and orchestrator:
+                try:
+                    listing_data = {
+                        'id': lid,
+                        'title': listing.get('title', ''),
+                        'company': listing.get('company', ''),
+                        'url': source_url,
+                        'description_text': listing.get('description_text', ''),
+                        'source': 'internshala',
+                        'location': listing.get('location', ''),
+                        'category': listing.get('category', ''),
+                    }
+                    attempt = orchestrator.internshala.apply(listing_data)
+                    if attempt and attempt.success:
+                        apply_method = 'auto_applied'
+                        external_id = getattr(attempt, 'external_app_id', '') or ''
+                    else:
+                        apply_method = 'auto_apply_failed'
+                        apply_error = getattr(attempt, 'error', '') or 'Internshala apply failed'
+                except Exception as e:
+                    apply_method = 'auto_apply_error'
+                    apply_error = str(e)[:200]
+                    logger.warning(f"[{MODULE_ID}] Internshala auto-apply failed for {lid}: {e}")
+
+            # Route 3: Manual-only sources — record and provide URL for user
+            elif lst_source in MANUAL_ONLY_SOURCES:
+                apply_method = 'direct'
+                apply_error = f'{lst_source.title()} requires manual application'
+
+            # Route 4: Unknown sources — record and provide URL
+            else:
+                apply_method = 'direct'
 
             # Record outcome in database regardless of auto-apply result
             try:

@@ -168,8 +168,8 @@ export function useBatchApply() {
             successCount++;
             processedIds.push(id);
           } else if (result.success && result.method === 'direct') {
-            // Backend recorded it, but needs manual submission
-            // Collect URL for a single batch-open at the end
+            // Backend recorded it — manual-only source (Naukri/Workday/LinkedIn)
+            // Only open URL for manual completion, mark as "pending manual"
             markApplied(id, 'applied');
             successCount++;
             processedIds.push(id);
@@ -177,20 +177,21 @@ export function useBatchApply() {
               manualFallbackUrls.push(result.source_url);
             }
           } else if (result.method === 'auto_apply_failed' || result.method === 'auto_apply_error') {
-            // Auto-apply was attempted but failed
-            failCount++;
-            failedIds.push(id);
-            errors.push({
-              internshipId: id,
-              error: result.error || 'Auto-apply failed',
-              timestamp: new Date().toISOString(),
-              retryable: true,
-            });
-            // Still mark as applied since we recorded it
+            // Auto-apply was attempted but failed — open URL as fallback
             markApplied(id, 'applied');
+            // Count as partial success (recorded, but manual needed)
+            successCount++;
+            processedIds.push(id);
             if (result.source_url) {
               manualFallbackUrls.push(result.source_url);
             }
+            // Track the error for reporting
+            errors.push({
+              internshipId: id,
+              error: result.error || 'Auto-apply failed, opened for manual',
+              timestamp: new Date().toISOString(),
+              retryable: true,
+            });
           } else {
             // Complete failure
             failCount++;
@@ -232,19 +233,24 @@ export function useBatchApply() {
         }
 
         // Show appropriate toast
-        const autoApplied = results.filter(r => r.method === 'auto_applied').length;
-        const directRecorded = results.filter(r => r.method === 'direct').length;
+        const autoApplied = results.filter((r: any) => r.method === 'auto_applied').length;
+        const directRecorded = results.filter((r: any) => r.method === 'direct').length;
+        const autoFailed = results.filter((r: any) => r.method === 'auto_apply_failed' || r.method === 'auto_apply_error').length;
 
-        if (autoApplied > 0 && failCount === 0) {
-          toast.success(`${autoApplied} applications auto-submitted!${directRecorded > 0 ? ` ${directRecorded} opened for manual submission.` : ''}`);
-        } else if (autoApplied > 0) {
-          toast.success(`${autoApplied} auto-submitted, ${failCount} need manual apply`);
+        if (autoApplied > 0 && directRecorded === 0 && autoFailed === 0) {
+          toast.success(`🎉 ${autoApplied} application${autoApplied > 1 ? 's' : ''} auto-submitted successfully!`);
+        } else if (autoApplied > 0 && directRecorded > 0) {
+          toast.success(`${autoApplied} auto-submitted! ${directRecorded} manual-only portal${directRecorded > 1 ? 's' : ''} opened.`);
+        } else if (autoApplied > 0 && autoFailed > 0) {
+          toast.success(`${autoApplied} auto-submitted! ${autoFailed} need manual apply (pages opened).`);
         } else if (directRecorded > 0 && manualFallbackUrls.length > 0) {
-          toast.success(`${directRecorded} applications recorded. ${Math.min(manualFallbackUrls.length, 5)} pages opened for submission.`);
+          toast.success(`${directRecorded} recorded. ${Math.min(manualFallbackUrls.length, 5)} portal page${manualFallbackUrls.length > 1 ? 's' : ''} opened for manual apply.`);
         } else if (directRecorded > 0) {
-          toast.success(`${directRecorded} applications recorded successfully.`);
+          toast.success(`${directRecorded} applications recorded.`);
+        } else if (autoFailed > 0 && manualFallbackUrls.length > 0) {
+          toast(`Auto-apply encountered issues. ${manualFallbackUrls.length} portal pages opened for manual apply.`, { icon: '⚠️' });
         } else {
-          toast.error(`Applications need manual submission. ${manualFallbackUrls.length} pages opened.`);
+          toast.error(`Applications could not be auto-submitted. Please apply manually.`);
         }
       } else {
         // API call failed entirely
