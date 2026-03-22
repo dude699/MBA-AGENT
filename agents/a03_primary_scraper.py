@@ -139,61 +139,117 @@ NAUKRI_API_HEADERS = {
 }
 
 # PRISM v0.2: Naukri MBA search queries for API v2
-# EXPANDED for maximum yield — focused on MBA/Data/AI only
+# EXPANDED for maximum yield — MBA/Data/AI/Analytics ONLY
+# NO sales, NO business development, NO generic tech/coding roles
 NAUKRI_MBA_QUERIES = [
-    # Core MBA Internships
+    # === CORE MBA INTERNSHIPS (highest yield) ===
     {"keyword": "MBA intern", "experience": "0"},
     {"keyword": "MBA internship", "experience": "0"},
+    {"keyword": "MBA summer internship", "experience": "0"},
     {"keyword": "management trainee intern", "experience": "0"},
-    {"keyword": "summer internship MBA", "experience": "0"},
+    {"keyword": "management trainee", "experience": "0"},
+    {"keyword": "summer internship MBA 2026", "experience": "0"},
+    {"keyword": "summer intern business", "experience": "0"},
+    {"keyword": "management internship", "experience": "0"},
+
+    # === MARKETING & BRAND ===
     {"keyword": "marketing intern MBA", "experience": "0"},
+    {"keyword": "marketing intern", "experience": "0"},
+    {"keyword": "digital marketing intern", "experience": "0"},
+    {"keyword": "brand management intern", "experience": "0"},
+    {"keyword": "brand marketing intern", "experience": "0"},
+    {"keyword": "market research intern", "experience": "0"},
+    {"keyword": "performance marketing intern", "experience": "0"},
+    {"keyword": "growth marketing intern", "experience": "0"},
+    {"keyword": "social media marketing intern", "experience": "0"},
+    {"keyword": "content marketing intern", "experience": "0"},
+    {"keyword": "marketing analytics intern", "experience": "0"},
+    {"keyword": "category management intern", "experience": "0"},
+
+    # === FINANCE & INVESTMENT ===
     {"keyword": "finance intern MBA", "experience": "0"},
-    {"keyword": "consulting intern", "experience": "0"},
-    {"keyword": "strategy intern", "experience": "0"},
-    {"keyword": "operations intern MBA", "experience": "0"},
-    {"keyword": "product management intern", "experience": "0"},
-    {"keyword": "HR intern MBA", "experience": "0"},
+    {"keyword": "finance intern", "experience": "0"},
     {"keyword": "investment banking intern", "experience": "0"},
     {"keyword": "equity research intern", "experience": "0"},
-    {"keyword": "brand management intern", "experience": "0"},
     {"keyword": "corporate finance intern", "experience": "0"},
-    {"keyword": "supply chain intern MBA", "experience": "0"},
-    {"keyword": "business analyst intern", "experience": "0"},
-    {"keyword": "management consulting intern", "experience": "0"},
+    {"keyword": "financial analyst intern", "experience": "0"},
+    {"keyword": "financial planning intern", "experience": "0"},
     {"keyword": "private equity intern", "experience": "0"},
     {"keyword": "venture capital intern", "experience": "0"},
-    {"keyword": "market research intern", "experience": "0"},
-    # Data & Analytics
+    {"keyword": "risk analyst intern", "experience": "0"},
+    {"keyword": "credit analyst intern", "experience": "0"},
+    {"keyword": "valuation intern", "experience": "0"},
+    {"keyword": "treasury intern", "experience": "0"},
+    {"keyword": "audit intern", "experience": "0"},
+
+    # === CONSULTING & STRATEGY ===
+    {"keyword": "consulting intern", "experience": "0"},
+    {"keyword": "strategy intern", "experience": "0"},
+    {"keyword": "management consulting intern", "experience": "0"},
+    {"keyword": "corporate strategy intern", "experience": "0"},
+    {"keyword": "strategy analyst intern", "experience": "0"},
+
+    # === OPERATIONS & SUPPLY CHAIN ===
+    {"keyword": "operations intern MBA", "experience": "0"},
+    {"keyword": "operations intern", "experience": "0"},
+    {"keyword": "supply chain intern MBA", "experience": "0"},
+    {"keyword": "supply chain intern", "experience": "0"},
+    {"keyword": "logistics intern", "experience": "0"},
+    {"keyword": "procurement intern", "experience": "0"},
+
+    # === PRODUCT MANAGEMENT ===
+    {"keyword": "product management intern", "experience": "0"},
+    {"keyword": "product manager intern", "experience": "0"},
+    {"keyword": "product intern", "experience": "0"},
+    {"keyword": "program management intern", "experience": "0"},
+    {"keyword": "project management intern", "experience": "0"},
+
+    # === HR ===
+    {"keyword": "HR intern MBA", "experience": "0"},
+    {"keyword": "HR intern", "experience": "0"},
+    {"keyword": "human resources intern", "experience": "0"},
+    {"keyword": "talent acquisition intern", "experience": "0"},
+
+    # === DATA & ANALYTICS (MBA-relevant) ===
     {"keyword": "data analyst intern", "experience": "0"},
-    {"keyword": "data science intern", "experience": "0"},
+    {"keyword": "data analytics intern", "experience": "0"},
+    {"keyword": "business analyst intern", "experience": "0"},
     {"keyword": "business analytics intern", "experience": "0"},
     {"keyword": "analytics intern", "experience": "0"},
-    {"keyword": "data engineering intern", "experience": "0"},
+    {"keyword": "data science intern", "experience": "0"},
     {"keyword": "business intelligence intern", "experience": "0"},
-    {"keyword": "quantitative analyst intern", "experience": "0"},
     {"keyword": "research analyst intern", "experience": "0"},
     {"keyword": "insights analyst intern", "experience": "0"},
+    {"keyword": "quantitative analyst intern", "experience": "0"},
     {"keyword": "statistical analyst intern", "experience": "0"},
-    # AI/ML
+
+    # === AI / ML (MBA-relevant analytics) ===
     {"keyword": "AI intern", "experience": "0"},
     {"keyword": "machine learning intern", "experience": "0"},
     {"keyword": "artificial intelligence intern", "experience": "0"},
     {"keyword": "NLP intern", "experience": "0"},
     {"keyword": "deep learning intern", "experience": "0"},
     {"keyword": "generative AI intern", "experience": "0"},
-    # Broader MBA roles
-    {"keyword": "corporate strategy intern", "experience": "0"},
+    {"keyword": "AI product intern", "experience": "0"},
+    {"keyword": "ML engineer intern", "experience": "0"},
+    {"keyword": "data engineering intern", "experience": "0"},
+
+    # === BROADER MBA ROLES ===
     {"keyword": "pricing analyst intern", "experience": "0"},
-    {"keyword": "category management intern", "experience": "0"},
     {"keyword": "revenue management intern", "experience": "0"},
-    {"keyword": "digital marketing intern MBA", "experience": "0"},
     {"keyword": "growth intern", "experience": "0"},
-    {"keyword": "program management intern", "experience": "0"},
-    {"keyword": "project management intern", "experience": "0"},
-    {"keyword": "financial planning intern", "experience": "0"},
-    {"keyword": "risk analyst intern", "experience": "0"},
+    {"keyword": "e-commerce intern", "experience": "0"},
+    {"keyword": "sustainability intern", "experience": "0"},
     {"keyword": "compliance intern", "experience": "0"},
-    {"keyword": "audit intern", "experience": "0"},
+    {"keyword": "ESG intern", "experience": "0"},
+    {"keyword": "real estate finance intern", "experience": "0"},
+    {"keyword": "investor relations intern", "experience": "0"},
+    {"keyword": "mergers acquisitions intern", "experience": "0"},
+    {"keyword": "M&A intern", "experience": "0"},
+    {"keyword": "corporate development intern", "experience": "0"},
+    {"keyword": "commercial intern", "experience": "0"},
+    {"keyword": "general management intern", "experience": "0"},
+    {"keyword": "PGDM internship", "experience": "0"},
 ]
 
 # IIMjobs configuration
@@ -213,7 +269,7 @@ LINKEDIN_DORK = 'site:linkedin.com/jobs/view "{query}" india intern'
 # PRISM v0.1: Rate limits per portal
 PORTAL_RATE_LIMITS = {
     "internshala": {"rpm": 50, "pages_per_session": 10, "delay_range": (5, 15)},
-    "naukri":      {"rpm": 40, "pages_per_session": 12, "delay_range": (8, 18)},
+    "naukri":      {"rpm": 40, "pages_per_session": 20, "delay_range": (6, 14)},
     "iimjobs":     {"rpm": 40, "pages_per_session": 5,  "delay_range": (6, 12)},
     "linkedin":    {"rpm": 5,  "pages_per_session": 3,  "delay_range": (15, 30)},
     "indeed":      {"rpm": 20, "pages_per_session": 10, "delay_range": (3, 8)},
@@ -1431,8 +1487,8 @@ class NaukriScraper:
             logger.warning(f"[{AGENT_ID}] Naukri API v2 yielded 0 — trying API v3")
             self._api_available = False
 
-        # ── SECONDARY: Try API v3 if v2 failed or yielded few results ──
-        if len(api_listings) < 20:
+        # ── SECONDARY: Try API v3 if v2 failed or yielded moderate results ──
+        if len(api_listings) < 50:
             v3_listings = self._scrape_api_v3(max_pages=max_pages)
             all_listings.extend(v3_listings)
             if v3_listings:
@@ -1440,8 +1496,8 @@ class NaukriScraper:
 
         # ── FALLBACK: DDG Dorks ──
         # Always run DDG to catch listings not in API results
-        # (broader coverage), but limit queries if API worked
-        max_dorks = 5 if (len(api_listings) >= 20) else 14
+        # PRISM v0.2: Run more dorks to catch broader coverage
+        max_dorks = 5 if (len(api_listings) >= 50) else 16
         ddg_listings = self._scrape_ddg_dorks(max_dorks=max_dorks)
         all_listings.extend(ddg_listings)
 
@@ -1484,17 +1540,21 @@ class NaukriScraper:
         random.shuffle(queries)
 
         queries_used = 0
-        max_queries = min(len(queries), 15)  # Was 10 - increased coverage
+        # PRISM v0.2: Use up to 30 queries (was 15) for maximum coverage
+        max_queries = min(len(queries), 30)
 
         for query_info in queries:
             if queries_used >= max_queries:
                 break
 
             for page in range(1, max_pages + 1):
-                if self._request_count >= PORTAL_RATE_LIMITS["naukri"]["pages_per_session"] * 3:
+                if self._request_count >= PORTAL_RATE_LIMITS["naukri"]["pages_per_session"] * 4:
                     break
 
                 try:
+                    # PRISM v0.2: Alternate between relevance and freshness sorting
+                    sort_mode = 'f' if queries_used % 3 == 0 else 'r'
+
                     params = {
                         'noOfResults': '25',
                         'urlType': 'search_by_keyword',
@@ -1502,8 +1562,8 @@ class NaukriScraper:
                         'keyword': query_info["keyword"],
                         'pageNo': str(page),
                         'experience': query_info.get("experience", "0"),
-                        'sort': 'r',  # Relevance
-                        'jobAge': '15',  # Was 7 — expanded to 15 days for more listings
+                        'sort': sort_mode,
+                        'jobAge': '30',  # PRISM v0.2: 30 days (was 15) for wider coverage
                         'seoKey': '',
                         'src': 'jobsearchDesk',
                     }
@@ -1569,7 +1629,7 @@ class NaukriScraper:
 
         return listings
 
-    def _scrape_api_v3(self, max_pages: int = 3) -> List[RawListing]:
+    def _scrape_api_v3(self, max_pages: int = 5) -> List[RawListing]:
         """
         PRISM v0.1.1 SECONDARY: Naukri API v3 search.
 
@@ -1580,10 +1640,10 @@ class NaukriScraper:
         listings = []
         seen_urls: Set[str] = set()
 
-        # Use a subset of queries for v3
+        # Use more queries for v3 — PRISM v0.2
         queries = NAUKRI_MBA_QUERIES.copy()
         random.shuffle(queries)
-        max_queries = min(len(queries), 8)
+        max_queries = min(len(queries), 15)  # Was 8 — use more queries
 
         for idx, query_info in enumerate(queries[:max_queries]):
             for page in range(1, max_pages + 1):
@@ -1770,7 +1830,7 @@ class NaukriScraper:
             logger.warning(f"[{AGENT_ID}] DDG not available for Naukri fallback")
             return listings
 
-        # DDG dork queries for Naukri
+        # PRISM v0.2: DDG dork queries for Naukri — MBA/Data/AI focused, NO sales/tech
         dork_queries = [
             'site:naukri.com "MBA intern" india',
             'site:naukri.com "MBA internship" stipend',
@@ -1788,6 +1848,14 @@ class NaukriScraper:
             'site:naukri.com "investment banking intern" OR "equity research intern"',
             'site:naukri.com "corporate finance intern" india',
             'site:naukri.com "market research intern" OR "consumer insights"',
+            'site:naukri.com "AI intern" OR "artificial intelligence intern" india',
+            'site:naukri.com "business analytics intern" OR "business intelligence intern"',
+            'site:naukri.com "private equity intern" OR "venture capital intern"',
+            'site:naukri.com "PGDM internship" OR "general management intern"',
+            'site:naukri.com "digital marketing intern" OR "growth marketing intern"',
+            'site:naukri.com "pricing analyst intern" OR "revenue management intern"',
+            'site:naukri.com "compliance intern" OR "ESG intern" india',
+            'site:naukri.com "M&A intern" OR "corporate development intern"',
         ]
 
         random.shuffle(dork_queries)
