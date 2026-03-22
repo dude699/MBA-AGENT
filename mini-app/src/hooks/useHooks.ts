@@ -154,8 +154,6 @@ export function useBatchApply() {
         const processedIds: string[] = [];
         const failedIds: string[] = [];
         const errors: Array<{ internshipId: string; error: string; timestamp: string; retryable: boolean }> = [];
-        // Track which ones need manual fallback
-        const manualFallbackUrls: string[] = [];
 
         for (let i = 0; i < results.length; i++) {
           const result = results[i];
@@ -163,32 +161,24 @@ export function useBatchApply() {
           setBatchState({ currentIndex: i, status: 'running' });
 
           if (result.success && result.method === 'auto_applied') {
-            // Truly auto-applied by backend A-13
+            // Truly auto-applied by backend A-13 — mark as applied
             markApplied(id, 'applied');
             successCount++;
             processedIds.push(id);
           } else if (result.success && result.method === 'direct') {
             // Backend recorded it — manual-only source (Naukri/Workday/LinkedIn)
-            // Only open URL for manual completion, mark as "pending manual"
-            markApplied(id, 'applied');
+            // Do NOT mark as applied — user hasn't actually applied yet
+            // Just record it was processed
             successCount++;
             processedIds.push(id);
-            if (result.source_url) {
-              manualFallbackUrls.push(result.source_url);
-            }
           } else if (result.method === 'auto_apply_failed' || result.method === 'auto_apply_error') {
-            // Auto-apply was attempted but failed — open URL as fallback
-            markApplied(id, 'applied');
-            // Count as partial success (recorded, but manual needed)
-            successCount++;
-            processedIds.push(id);
-            if (result.source_url) {
-              manualFallbackUrls.push(result.source_url);
-            }
-            // Track the error for reporting
+            // Auto-apply was attempted but failed
+            // Do NOT mark as applied — it failed
+            failCount++;
+            failedIds.push(id);
             errors.push({
               internshipId: id,
-              error: result.error || 'Auto-apply failed, opened for manual',
+              error: result.error || 'Auto-apply failed',
               timestamp: new Date().toISOString(),
               retryable: true,
             });
@@ -221,36 +211,25 @@ export function useBatchApply() {
         completeBatch();
         hapticFeedback('heavy');
 
-        // Open fallback URLs in a controlled way (max 5 at once to avoid popup blocker)
-        if (manualFallbackUrls.length > 0) {
-          const maxOpen = Math.min(manualFallbackUrls.length, 5);
-          for (let i = 0; i < maxOpen; i++) {
-            window.open(manualFallbackUrls[i], '_blank');
-            if (i < maxOpen - 1) {
-              await new Promise((r) => setTimeout(r, 500));
-            }
-          }
-        }
+        // NO window.open — all applications are handled server-side
+        // Users can manually open links from job detail if needed
 
         // Show appropriate toast
         const autoApplied = results.filter((r: any) => r.method === 'auto_applied').length;
         const directRecorded = results.filter((r: any) => r.method === 'direct').length;
         const autoFailed = results.filter((r: any) => r.method === 'auto_apply_failed' || r.method === 'auto_apply_error').length;
+        const totalFailed = failCount;
 
-        if (autoApplied > 0 && directRecorded === 0 && autoFailed === 0) {
-          toast.success(`🎉 ${autoApplied} application${autoApplied > 1 ? 's' : ''} auto-submitted successfully!`);
-        } else if (autoApplied > 0 && directRecorded > 0) {
-          toast.success(`${autoApplied} auto-submitted! ${directRecorded} manual-only portal${directRecorded > 1 ? 's' : ''} opened.`);
-        } else if (autoApplied > 0 && autoFailed > 0) {
-          toast.success(`${autoApplied} auto-submitted! ${autoFailed} need manual apply (pages opened).`);
-        } else if (directRecorded > 0 && manualFallbackUrls.length > 0) {
-          toast.success(`${directRecorded} recorded. ${Math.min(manualFallbackUrls.length, 5)} portal page${manualFallbackUrls.length > 1 ? 's' : ''} opened for manual apply.`);
+        if (autoApplied > 0 && totalFailed === 0) {
+          toast.success(`${autoApplied} application${autoApplied > 1 ? 's' : ''} auto-submitted!`);
+        } else if (autoApplied > 0 && totalFailed > 0) {
+          toast.success(`${autoApplied} auto-submitted. ${totalFailed} failed — retry or apply manually from detail page.`);
         } else if (directRecorded > 0) {
-          toast.success(`${directRecorded} applications recorded.`);
-        } else if (autoFailed > 0 && manualFallbackUrls.length > 0) {
-          toast(`Auto-apply encountered issues. ${manualFallbackUrls.length} portal pages opened for manual apply.`, { icon: '⚠️' });
+          toast(`${directRecorded} job${directRecorded > 1 ? 's' : ''} processed. Open detail page to apply manually on the portal.`, { icon: 'i' });
+        } else if (autoFailed > 0) {
+          toast.error(`Auto-apply failed for ${autoFailed} job${autoFailed > 1 ? 's' : ''}. Try again later.`);
         } else {
-          toast.error(`Applications could not be auto-submitted. Please apply manually.`);
+          toast.error(`Applications failed. Please try again or apply manually.`);
         }
       } else {
         // API call failed entirely

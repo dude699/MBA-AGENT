@@ -382,6 +382,10 @@
     position: relative;
     z-index: 1;
     cursor: pointer;
+    /* Prevent visual bleed-through / glitches */
+    overflow: hidden;
+    isolation: isolate;
+    contain: layout paint;
   }
   .internship-card:hover {
     border-color: rgba(209,213,219,0.9);
@@ -880,14 +884,7 @@
   pointer-events: none;
 }
 
-/* Improved card interaction feedback */
-.internship-card {
-  transition: all 0.3s var(--ease-premium);
-}
-.internship-card:active {
-  transform: scale(0.985) !important;
-  transition-duration: 0.1s;
-}
+/* Improved card interaction feedback — merged into main rule above */
 
 /* Touch ripple effect */
 .touch-ripple {

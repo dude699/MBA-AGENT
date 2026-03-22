@@ -49,17 +49,14 @@ const InternshipCard = memo(function InternshipCard({ internship, index }: Props
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20 }}
+      initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{
-        duration: 0.45,
-        delay: Math.min(index * 0.05, 0.35),
+        duration: 0.3,
+        delay: Math.min(index * 0.03, 0.2),
         ease: [0.22, 1, 0.36, 1],
       }}
-      className={`internship-card touch-ripple ${isSelected ? 'selected' : ''} ${internship.alreadyApplied ? 'opacity-55' : ''}`}
-      style={{
-        willChange: 'transform, opacity',
-      }}
+      className={`internship-card ${isSelected ? 'selected' : ''} ${internship.alreadyApplied ? 'opacity-55' : ''}`}
     >
       {/* Blue Ocean Badge — animated float */}
       {isBlueOcean && !internship.isPremium && (

@@ -102,6 +102,7 @@ INTERNSHALA_AJAX_URL = "https://internshala.com/internships/ajax/search_ajax"
 INTERNSHALA_MOBILE_API = "https://internshala.com/api/v1/internship_listings"
 
 # PRISM v0.1: Internshala category IDs for MBA-relevant roles
+# EXPANDED: added more categories for broader coverage
 INTERNSHALA_CATEGORY_IDS = {
     "finance":             {"id": "4",  "slug": "finance-internship"},
     "marketing":           {"id": "5",  "slug": "marketing-internship"},
@@ -113,6 +114,11 @@ INTERNSHALA_CATEGORY_IDS = {
     "human_resources":     {"id": "7",  "slug": "hr-internship"},
     "product_management":  {"id": "26", "slug": "product-management-internship"},
     "consulting":          {"id": "18", "slug": "consulting-internship"},
+    "strategy":            {"id": "20", "slug": "strategy-internship"},
+    "ecommerce":           {"id": "24", "slug": "ecommerce-internship"},
+    "supply_chain":        {"id": "25", "slug": "supply-chain-logistics-internship"},
+    "media":               {"id": "11", "slug": "media-internship"},
+    "research":            {"id": "17", "slug": "research-internship"},
 }
 
 # Naukri configuration — PRISM v0.1: Direct API v2 as PRIMARY
@@ -1540,8 +1546,8 @@ class NaukriScraper:
         random.shuffle(queries)
 
         queries_used = 0
-        # PRISM v0.2: Use up to 30 queries (was 15) for maximum coverage
-        max_queries = min(len(queries), 30)
+        # PRISM v0.3: Use ALL available queries for maximum coverage
+        max_queries = len(queries)
 
         for query_info in queries:
             if queries_used >= max_queries:
@@ -1563,7 +1569,7 @@ class NaukriScraper:
                         'pageNo': str(page),
                         'experience': query_info.get("experience", "0"),
                         'sort': sort_mode,
-                        'jobAge': '30',  # PRISM v0.2: 30 days (was 15) for wider coverage
+                        'jobAge': '60',  # PRISM v0.3: 60 days for maximum coverage
                         'seoKey': '',
                         'src': 'jobsearchDesk',
                     }
@@ -3344,6 +3350,7 @@ class PrimaryScraper:
         PRISM Wave 3: Night Deep Crawl (22:30 IST, Mon/Wed)
         Targets: ALL portals, all tiers, maximum coverage
         Includes Wellfound GraphQL
+        ENHANCED: Higher page counts, retry on failure, reset health on manual trigger
         """
         logger.info(f"[{AGENT_ID}] === PRISM WAVE 3: NIGHT DEEP CRAWL ===")
         start_time = time.time()
@@ -3351,32 +3358,45 @@ class PrimaryScraper:
         pre_count = self.db.count_raw_listings()
         self.db.update_agent_heartbeat(AGENT_ID, "running")
 
-        # ALL portals in deep mode
+        # Reset portal health for deep crawl — give all portals a fresh chance
+        for portal in self._portal_health:
+            if self._portal_health[portal]["consecutive_failures"] < 5:
+                self._portal_health[portal]["consecutive_failures"] = 0
+
+        # ALL portals in deep mode with HIGHER limits
         portal_scrapers = [
-            ('internshala', lambda: self.internshala.scrape_all_categories(pages_per_category=8)),
-            ('naukri', lambda: self.naukri.scrape_mba_internships(max_pages=8)),
-            ('iimjobs', lambda: self.iimjobs.scrape_mba_internships(max_dorks=10)),
-            ('linkedin', lambda: self.linkedin.search_jobs(max_dorks=5)),
+            ('internshala', lambda: self.internshala.scrape_all_categories(pages_per_category=10)),
+            ('naukri', lambda: self.naukri.scrape_mba_internships(max_pages=10)),
+            ('iimjobs', lambda: self.iimjobs.scrape_mba_internships(max_dorks=14)),
+            ('linkedin', lambda: self.linkedin.search_jobs(max_dorks=8)),
             ('indeed', lambda: self.indeed.scrape_feeds()),
-            ('career_page', lambda: self.career_page.scrape_career_pages(max_companies=20)),
-            ('instahyre', lambda: self.instahyre.scrape_jobs(max_dorks=4)),
-            ('wellfound', lambda: self.wellfound.scrape_mba_roles(max_pages=3)),
-            ('ashby', lambda: self.ashby.scrape_boards(max_companies=20)),
-            ('smartrecruiters', lambda: self.smartrecruiters.scrape_companies(max_companies=15)),
+            ('career_page', lambda: self.career_page.scrape_career_pages(max_companies=25)),
+            ('instahyre', lambda: self.instahyre.scrape_jobs(max_dorks=6)),
+            ('wellfound', lambda: self.wellfound.scrape_mba_roles(max_pages=5)),
+            ('ashby', lambda: self.ashby.scrape_boards(max_companies=25)),
+            ('smartrecruiters', lambda: self.smartrecruiters.scrape_companies(max_companies=20)),
         ]
 
         for portal_name, scraper_fn in portal_scrapers:
             if not self._should_scrape_portal(portal_name):
                 continue
-            try:
-                listings = scraper_fn()
-                results['source'][portal_name] = len(listings)
-                results['total'] += len(listings)
-                self._record_portal_result(portal_name, True, len(listings))
-            except Exception as e:
-                results['errors'].append(f"{portal_name}: {str(e)}")
-                self._record_portal_result(portal_name, False)
-                logger.error(f"[{AGENT_ID}] Night crawl {portal_name} failed: {e}")
+
+            # Retry up to 2 times on failure
+            for attempt in range(2):
+                try:
+                    listings = scraper_fn()
+                    results['source'][portal_name] = len(listings)
+                    results['total'] += len(listings)
+                    self._record_portal_result(portal_name, True, len(listings))
+                    break  # Success, no retry needed
+                except Exception as e:
+                    if attempt == 0:
+                        logger.warning(f"[{AGENT_ID}] Night crawl {portal_name} attempt 1 failed: {e}, retrying...")
+                        time.sleep(random.uniform(3, 8))
+                    else:
+                        results['errors'].append(f"{portal_name}: {str(e)}")
+                        self._record_portal_result(portal_name, False)
+                        logger.error(f"[{AGENT_ID}] Night crawl {portal_name} failed after 2 attempts: {e}")
 
         # Finalize
         post_count = self.db.count_raw_listings()
