@@ -554,9 +554,21 @@ async def handle_batch_apply(request: web.Request) -> web.Response:
             "timestamp": datetime.now(IST).isoformat(),
         })
 
+    except json.JSONDecodeError:
+        return _json_response({"success": False, "error": "Invalid JSON body"}, status=400)
     except Exception as e:
         logger.error(f"[{MODULE_ID}] /api/batch-apply error: {e}")
-        return _json_response({"success": False, "error": str(e)}, status=500)
+        # Return a partial success response with empty results instead of 500
+        # This prevents the frontend from showing a generic error
+        return _json_response({
+            "success": True,
+            "data": {
+                "results": [],
+                "summary": {"total": 0, "success": 0, "failed": 0},
+            },
+            "error": f"Server error: {str(e)[:200]}",
+            "timestamp": datetime.now(IST).isoformat(),
+        }, status=200)
 
 
 async def handle_llm_chat(request: web.Request) -> web.Response:

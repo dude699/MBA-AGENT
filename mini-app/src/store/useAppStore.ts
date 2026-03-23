@@ -466,7 +466,7 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'internhub-store',
-      version: 4, // v4: nuclear reset — fix filter persist glitch, source case issues, count disconnect
+      version: 5, // v5: force reset all persisted filters/selections to fix lingering glitches
       partialize: (state) => ({
         appliedIds: Array.from(state.appliedIds),
         dismissedIds: Array.from(state.dismissedIds),
@@ -485,18 +485,17 @@ export const useAppStore = create<AppState>()(
         selectedIds: new Set(),
       }),
       migrate: (persistedState: any, version: number) => {
-        if (version < 4) {
-          // v4: nuclear reset — clear ALL persisted state that causes glitches
-          // Root bugs fixed:
-          // 1. Old filters with stale durationMax/stipendMax causing invisible filtering
-          // 2. lockedSource persisted across sessions causing "multiple source" errors
-          // 3. selectedIds persisted causing stale selections
+        if (version < 5) {
+          // v5: nuclear reset — clear ALL persisted filters/selections/batch state
+          // to fix lingering glitches from v4 and below
           return {
             ...persistedState,
             filters: { ...DEFAULT_FILTERS },
             activeFilterCount: 0,
             selectedIds: [],
             lockedSource: null,
+            // Clear batch state to prevent stuck cooldown timers
+            batch: undefined,
           };
         }
         return persistedState;
