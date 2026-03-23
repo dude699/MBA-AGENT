@@ -3,7 +3,7 @@
 // Smooth entrance, depth hover, micro-interactions
 // ============================================================
 
-import React, { memo, useCallback } from 'react';
+import React, { memo, useCallback, useMemo } from 'react';
 import {
   MapPin, Clock, Users, Star, Shield, CheckCircle2,
   TrendingUp, AlertTriangle, Check, Building2, Sparkles
@@ -25,10 +25,12 @@ interface Props {
 const InternshipCard = memo(function InternshipCard({ internship, index }: Props) {
   const { selectedIds, lockedSource, toggleSelect, setDetailOpen } = useAppStore();
   const isSelected = selectedIds.has(internship.id);
-  const safeSource = (internship.source || 'company_direct').toLowerCase();
-  const sourceConfig = SOURCE_CONFIG[safeSource] || { name: safeSource || 'Unknown', color: '#6b7280', icon: 'company_direct', maxBatchSize: 3, cooldownMinutes: 15, riskLevel: 'medium' as const };
-  const tierConfig = TIER_LABELS[internship.companyTier];
-  const deadline = formatDeadline(internship.deadline);
+
+  // Memoize computed values to prevent re-renders
+  const safeSource = useMemo(() => (internship.source || 'company_direct').toLowerCase(), [internship.source]);
+  const sourceConfig = useMemo(() => SOURCE_CONFIG[safeSource] || { name: safeSource || 'Unknown', color: '#6b7280', icon: 'company_direct', maxBatchSize: 3, cooldownMinutes: 15, riskLevel: 'medium' as const }, [safeSource]);
+  const tierConfig = useMemo(() => TIER_LABELS[internship.companyTier], [internship.companyTier]);
+  const deadline = useMemo(() => formatDeadline(internship.deadline), [internship.deadline]);
 
   const canSelect = !lockedSource || lockedSource === safeSource;
 
@@ -53,6 +55,12 @@ const InternshipCard = memo(function InternshipCard({ internship, index }: Props
   return (
     <div
       className={`internship-card ${isSelected ? 'selected' : ''} ${internship.alreadyApplied ? 'opacity-60' : ''}`}
+      style={{
+        // Prevent mobile rendering glitches
+        transform: 'translateZ(0)',
+        backfaceVisibility: 'hidden',
+        WebkitBackfaceVisibility: 'hidden',
+      }}
     >
       {/* Blue Ocean Badge — animated float */}
       {isBlueOcean && !internship.isPremium && (
@@ -76,7 +84,7 @@ const InternshipCard = memo(function InternshipCard({ internship, index }: Props
         </div>
       )}
 
-      <div className="p-4 cursor-pointer active:bg-gray-50 transition-colors" onClick={handleOpen} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter') handleOpen(); }}>
+      <div className="p-4 cursor-pointer active:bg-gray-50/50" onClick={handleOpen} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter') handleOpen(); }}>
         {/* Top Row: Source + Deadline + Select */}
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
@@ -111,22 +119,24 @@ const InternshipCard = memo(function InternshipCard({ internship, index }: Props
               </span>
             )}
 
-            {/* Checkbox — animated, sized for touch */}
+            {/* Checkbox — sized for touch, no transform animations */}
             <button
               onClick={handleSelect}
-              className={`flex-shrink-0 rounded-lg border-2 flex items-center justify-center transition-colors duration-150 ${
-                isSelected
-                  ? 'border-[#0a0a0a] bg-[#0a0a0a]'
-                  : canSelect
-                    ? 'border-[#9ca3af] hover:border-[#6b7280] bg-white'
-                    : 'border-[#d1d5db] bg-[#f9fafb] opacity-50 cursor-not-allowed'
-              }`}
-              style={{ width: '28px', height: '28px', minWidth: '28px' }}
+              className="flex-shrink-0 rounded-lg border-2 flex items-center justify-center"
+              style={{
+                width: '32px',
+                height: '32px',
+                minWidth: '32px',
+                borderColor: isSelected ? '#0a0a0a' : canSelect ? '#9ca3af' : '#d1d5db',
+                background: isSelected ? '#0a0a0a' : canSelect ? '#ffffff' : '#f9fafb',
+                opacity: !canSelect && !isSelected ? 0.5 : 1,
+                transition: 'border-color 0.15s, background 0.15s',
+              }}
             >
               {isSelected ? (
                 <Check className="w-3.5 h-3.5 text-white" />
               ) : canSelect ? (
-                <div className="w-2.5 h-2.5 rounded-sm border border-[#d1d5db]" />
+                <div className="w-2.5 h-2.5 rounded-sm border border-gray-300" />
               ) : null}
             </button>
           </div>

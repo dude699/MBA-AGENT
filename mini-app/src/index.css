@@ -110,8 +110,9 @@
     padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px));
     overflow: visible !important;
     touch-action: pan-y;
-    /* Prevent layout shifts */
-    contain: layout style;
+    /* FIX: removed 'contain: layout style' — it caused rendering
+       glitches on mobile where cards would flash/disappear.
+       The app-root doesn't need containment. */
   }
 
   main {
@@ -370,52 +371,37 @@
     border-color: #d1d5db;
   }
 
-  /* Internship card — premium with depth and hover */
+  /* Internship card — mobile-first, zero-glitch design */
   .internship-card {
     @apply relative rounded-2xl;
     background: #ffffff;
     border: 1.5px solid rgba(229,231,235,0.9);
-    box-shadow: 0 1px 4px rgba(0,0,0,0.04), 0 0 0 0.5px rgba(0,0,0,0.02);
-    transition: border-color 0.2s ease, box-shadow 0.2s ease;
-    /* Ensure card is clickable and above any overlapping elements */
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    /* ZERO transitions on mobile — prevents ALL animation glitches */
     position: relative;
     z-index: 1;
     cursor: pointer;
-    /* FIX: removed contain, isolation, overflow:hidden — these caused
-       rendering glitches / blank cards / visual artifacts in Telegram WebView
-       and mobile Chrome. The card doesn't need paint containment. */
     overflow: visible;
-    /* Mobile: prevent text overflow breaking card layout */
     word-break: break-word;
     overflow-wrap: break-word;
-  }
-  .internship-card:hover {
-    border-color: rgba(209,213,219,0.9);
-    box-shadow:
-      0 4px 16px rgba(0,0,0,0.05),
-      0 1px 4px rgba(0,0,0,0.03);
-  }
-  .internship-card:active {
-    border-color: rgba(209,213,219,1);
-    transition-duration: 0.05s;
+    /* GPU layer for smooth compositing */
+    transform: translateZ(0);
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
   }
   .internship-card.selected {
     border-color: #0a0a0a;
-    box-shadow:
-      0 0 0 2px rgba(10,10,10,0.1),
-      0 4px 16px rgba(0,0,0,0.06);
+    box-shadow: 0 0 0 2px rgba(10,10,10,0.1), 0 2px 8px rgba(0,0,0,0.06);
   }
 
-  /* Mobile: zero transform animations on cards to prevent glitches */
-  @media (max-width: 480px) {
+  /* Desktop only: subtle hover effects */
+  @media (hover: hover) and (min-width: 768px) {
     .internship-card {
       transition: border-color 0.15s ease, box-shadow 0.15s ease;
     }
     .internship-card:hover {
-      transform: none;
-    }
-    .internship-card:active {
-      transform: none;
+      border-color: rgba(209,213,219,0.9);
+      box-shadow: 0 4px 16px rgba(0,0,0,0.05);
     }
   }
 

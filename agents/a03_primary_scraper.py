@@ -256,6 +256,53 @@ NAUKRI_MBA_QUERIES = [
     {"keyword": "commercial intern", "experience": "0"},
     {"keyword": "general management intern", "experience": "0"},
     {"keyword": "PGDM internship", "experience": "0"},
+
+    # === PRISM v0.3: EXPANDED QUERIES (more coverage) ===
+    {"keyword": "intern 2026 MBA", "experience": "0"},
+    {"keyword": "intern IIM", "experience": "0"},
+    {"keyword": "intern ISB", "experience": "0"},
+    {"keyword": "intern XLRI", "experience": "0"},
+    {"keyword": "intern FMS", "experience": "0"},
+    {"keyword": "intern MDI", "experience": "0"},
+    {"keyword": "intern NMIMS", "experience": "0"},
+    {"keyword": "CFA intern", "experience": "0"},
+    {"keyword": "FRM intern", "experience": "0"},
+    {"keyword": "wealth management intern", "experience": "0"},
+    {"keyword": "portfolio management intern", "experience": "0"},
+    {"keyword": "fund management intern", "experience": "0"},
+    {"keyword": "hedge fund intern", "experience": "0"},
+    {"keyword": "asset management intern", "experience": "0"},
+    {"keyword": "fintech intern", "experience": "0"},
+    {"keyword": "blockchain intern MBA", "experience": "0"},
+    {"keyword": "crypto analyst intern", "experience": "0"},
+    {"keyword": "SaaS intern", "experience": "0"},
+    {"keyword": "startup intern MBA", "experience": "0"},
+    {"keyword": "D2C intern", "experience": "0"},
+    {"keyword": "FMCG intern", "experience": "0"},
+    {"keyword": "pharma intern MBA", "experience": "0"},
+    {"keyword": "healthcare management intern", "experience": "0"},
+    {"keyword": "edtech intern", "experience": "0"},
+    {"keyword": "healthtech intern", "experience": "0"},
+    {"keyword": "agritech intern", "experience": "0"},
+    {"keyword": "cleantech intern", "experience": "0"},
+    {"keyword": "climate finance intern", "experience": "0"},
+    {"keyword": "impact investing intern", "experience": "0"},
+    {"keyword": "social impact intern", "experience": "0"},
+    {"keyword": "public policy intern", "experience": "0"},
+    {"keyword": "government relations intern", "experience": "0"},
+    {"keyword": "market analyst intern", "experience": "0"},
+    {"keyword": "competitive intelligence intern", "experience": "0"},
+    {"keyword": "demand planning intern", "experience": "0"},
+    {"keyword": "trade marketing intern", "experience": "0"},
+    {"keyword": "channel sales intern", "experience": "0"},
+    {"keyword": "key account management intern", "experience": "0"},
+    {"keyword": "CRM intern", "experience": "0"},
+    {"keyword": "customer success intern", "experience": "0"},
+    {"keyword": "customer experience intern", "experience": "0"},
+    {"keyword": "UX research intern", "experience": "0"},
+    {"keyword": "design thinking intern", "experience": "0"},
+    {"keyword": "innovation intern", "experience": "0"},
+    {"keyword": "digital transformation intern", "experience": "0"},
 ]
 
 # IIMjobs configuration
@@ -3174,40 +3221,32 @@ class PrimaryScraper:
         pre_count = self.db.count_raw_listings()
         self.db.update_agent_heartbeat(AGENT_ID, "running")
 
-        # Internshala — PRISM: Mobile Ajax API with category_ids
-        if self._should_scrape_portal('internshala'):
-            try:
-                listings = self.internshala.scrape_all_categories(pages_per_category=5)
-                results['source']['internshala'] = len(listings)
-                results['total'] += len(listings)
-                self._record_portal_result('internshala', True, len(listings))
-            except Exception as e:
-                results['errors'].append(f"Internshala: {str(e)}")
-                self._record_portal_result('internshala', False)
-                logger.error(f"[{AGENT_ID}] Internshala failed: {e}")
+        # PRISM v0.3: All wave-1 portals with retry logic
+        wave1_portals = [
+            ('internshala', lambda: self.internshala.scrape_all_categories(pages_per_category=5)),
+            ('naukri', lambda: self.naukri.scrape_mba_internships(max_pages=5)),
+            ('iimjobs', lambda: self.iimjobs.scrape_mba_internships(max_dorks=8)),
+        ]
 
-        # Naukri — PRISM: API v2 PRIMARY, DDG fallback
-        if self._should_scrape_portal('naukri'):
-            try:
-                listings = self.naukri.scrape_mba_internships(max_pages=5)
-                results['source']['naukri'] = len(listings)
-                results['total'] += len(listings)
-                self._record_portal_result('naukri', True, len(listings))
-            except Exception as e:
-                results['errors'].append(f"Naukri: {str(e)}")
-                self._record_portal_result('naukri', False)
-                logger.error(f"[{AGENT_ID}] Naukri failed: {e}")
-
-        # IIMjobs — PRISM: DDG site dorks
-        if self._should_scrape_portal('iimjobs'):
-            try:
-                listings = self.iimjobs.scrape_mba_internships(max_dorks=8)
-                results['source']['iimjobs'] = len(listings)
-                results['total'] += len(listings)
-                self._record_portal_result('iimjobs', True, len(listings))
-            except Exception as e:
-                results['errors'].append(f"IIMjobs: {str(e)}")
-                self._record_portal_result('iimjobs', False)
+        for portal_name, scraper_fn in wave1_portals:
+            if not self._should_scrape_portal(portal_name):
+                continue
+            # Retry up to 2 times on failure
+            for attempt in range(2):
+                try:
+                    listings = scraper_fn()
+                    results['source'][portal_name] = len(listings)
+                    results['total'] += len(listings)
+                    self._record_portal_result(portal_name, True, len(listings))
+                    break
+                except Exception as e:
+                    if attempt == 0:
+                        logger.warning(f"[{AGENT_ID}] Wave 1 {portal_name} attempt 1 failed: {e}, retrying...")
+                        time.sleep(random.uniform(3, 8))
+                    else:
+                        results['errors'].append(f"{portal_name}: {str(e)}")
+                        self._record_portal_result(portal_name, False)
+                        logger.error(f"[{AGENT_ID}] Wave 1 {portal_name} failed after 2 attempts: {e}")
 
         # Finalize
         post_count = self.db.count_raw_listings()

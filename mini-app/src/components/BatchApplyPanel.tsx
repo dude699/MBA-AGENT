@@ -181,22 +181,10 @@ export default function BatchApplyPanel() {
   };
 
   return (
-    <AnimatePresence>
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        className="fixed inset-0 z-50 bg-black/30 backdrop-blur-sm"
-        onClick={() => setBatchPanelOpen(false)}
-      >
-        <motion.div
-          initial={{ y: '100%' }}
-          animate={{ y: 0 }}
-          exit={{ y: '100%' }}
-          transition={{ type: 'spring', damping: 30, stiffness: 300 }}
-          className="absolute bottom-0 left-0 right-0 bg-white rounded-t-3xl max-h-[90vh] overflow-hidden flex flex-col"
-          onClick={(e) => e.stopPropagation()}
-        >
+    <BatchPanelWrapper
+      isOpen={isBatchPanelOpen}
+      onClose={() => setBatchPanelOpen(false)}
+    >
           {/* Handle */}
           <div className="flex justify-center pt-3 pb-1">
             <div className="w-10 h-1 bg-primary-200 rounded-full" />
@@ -583,8 +571,57 @@ export default function BatchApplyPanel() {
               </p>
             )}
           </div>
-        </motion.div>
-      </motion.div>
-    </AnimatePresence>
+    </BatchPanelWrapper>
+  );
+}
+
+// ===== WRAPPER: CSS-only animation to prevent mobile glitches =====
+function BatchPanelWrapper({ isOpen, onClose, children }: { isOpen: boolean; onClose: () => void; children: React.ReactNode }) {
+  const [visible, setVisible] = React.useState(false);
+
+  React.useEffect(() => {
+    if (isOpen) {
+      requestAnimationFrame(() => setVisible(true));
+      document.body.style.overflow = 'hidden';
+    } else {
+      setVisible(false);
+      document.body.style.overflow = '';
+    }
+    return () => { document.body.style.overflow = ''; };
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50"
+      style={{
+        backgroundColor: visible ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0)',
+        transition: 'background-color 0.25s ease',
+      }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div
+        style={{
+          position: 'absolute',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          maxHeight: '90vh',
+          background: '#ffffff',
+          borderRadius: '24px 24px 0 0',
+          boxShadow: '0 -8px 40px rgba(0,0,0,0.08)',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+          transform: visible ? 'translateY(0)' : 'translateY(100%)',
+          transition: 'transform 0.3s cubic-bezier(0.22, 1, 0.36, 1)',
+          willChange: 'transform',
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {children}
+      </div>
+    </div>
   );
 }

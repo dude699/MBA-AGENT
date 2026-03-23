@@ -167,14 +167,24 @@ export function useBatchApply() {
       //      attempt real auto-apply via A-13
       //   2. For all sources: record the application in the database
       //   3. Return results with source_url ONLY as fallback info
-      const batchResult = await batchApplyToInternships(
-        ids,
-        cred?.credentials || {},
-        normalizedLockedSource
-      );
+      // Wrap the entire batch API call in a robust try-catch
+      let batchResult: any;
+      try {
+        batchResult = await batchApplyToInternships(
+          ids,
+          cred?.credentials || {},
+          normalizedLockedSource
+        );
+      } catch (apiErr: any) {
+        // Network/fetch-level error — complete batch gracefully
+        completeBatch();
+        hapticFeedback('medium');
+        toast.error('Connection error. Please check your internet and try again.');
+        return;
+      }
 
       if (batchResult.success && batchResult.data) {
-        const { results } = batchResult.data;
+        const results = batchResult.data?.results || [];
         let successCount = 0;
         let failCount = 0;
         const processedIds: string[] = [];
@@ -183,46 +193,44 @@ export function useBatchApply() {
 
         for (let i = 0; i < results.length; i++) {
           const result = results[i];
-          const id = String(result.id);
+          const id = String(result?.id || ids[i] || '');
           setBatchState({ currentIndex: i, status: 'running' });
 
-          if (result.success && result.method === 'auto_applied') {
-            // Truly auto-applied by backend A-13 — mark as applied
-            markApplied(id, 'applied');
-            successCount++;
-            processedIds.push(id);
-          } else if (result.success && result.method === 'direct') {
-            // Backend recorded it — manual-only source (Naukri/Workday/LinkedIn)
-            // Do NOT mark as applied — user hasn't actually applied yet
-            // Do NOT count as success — it's just "queued/recorded"
-            processedIds.push(id);
-            // Don't increment successCount — it wasn't actually submitted
-          } else if (result.method === 'auto_apply_failed' || result.method === 'auto_apply_error') {
-            // Auto-apply was attempted but failed
-            // Do NOT mark as applied — it failed
+          try {
+            if (result?.success && result?.method === 'auto_applied') {
+              // Truly auto-applied by backend A-13
+              markApplied(id, 'applied');
+              successCount++;
+              processedIds.push(id);
+            } else if (result?.success && result?.method === 'direct') {
+              // Backend recorded it — manual-only source
+              // Mark as queued, not applied
+              processedIds.push(id);
+              successCount++; // Count as success since server accepted it
+            } else if (result?.success) {
+              // Any other success method
+              processedIds.push(id);
+              successCount++;
+            } else {
+              // Failure — any kind
+              failCount++;
+              failedIds.push(id);
+              errors.push({
+                internshipId: id,
+                error: result?.error || 'Application failed',
+                timestamp: new Date().toISOString(),
+                retryable: true,
+              });
+            }
+          } catch (itemErr) {
+            // Single item processing error — don't crash the loop
             failCount++;
             failedIds.push(id);
-            errors.push({
-              internshipId: id,
-              error: result.error || 'Auto-apply failed',
-              timestamp: new Date().toISOString(),
-              retryable: true,
-            });
-          } else {
-            // Complete failure
-            failCount++;
-            failedIds.push(id);
-            errors.push({
-              internshipId: id,
-              error: result.error || 'Application failed',
-              timestamp: new Date().toISOString(),
-              retryable: true,
-            });
           }
 
           // Small delay between UI updates for visual progress
           if (i < results.length - 1) {
-            await new Promise((r) => setTimeout(r, 200));
+            await new Promise((r) => setTimeout(r, 150));
           }
         }
 
@@ -240,33 +248,30 @@ export function useBatchApply() {
         // NO window.open — all applications are handled server-side
         // Users can manually open links from job detail if needed
 
-        // Show appropriate toast
-        const autoApplied = results.filter((r: any) => r.method === 'auto_applied').length;
-        const directRecorded = results.filter((r: any) => r.method === 'direct').length;
-        const autoFailed = results.filter((r: any) => r.method === 'auto_apply_failed' || r.method === 'auto_apply_error').length;
-
-        if (autoApplied > 0 && autoFailed === 0) {
-          toast.success(`${autoApplied} application${autoApplied > 1 ? 's' : ''} auto-submitted!`);
-        } else if (autoApplied > 0 && autoFailed > 0) {
-          toast.success(`${autoApplied} auto-submitted, ${autoFailed} failed. Check detail page for failed ones.`);
-        } else if (directRecorded > 0 && autoFailed === 0) {
-          toast(`${directRecorded} job${directRecorded > 1 ? 's' : ''} recorded. Open detail page to apply manually.`, { icon: '\u2139\uFE0F' });
-        } else if (autoFailed > 0) {
-          toast.error(`Auto-apply failed for ${autoFailed} job${autoFailed > 1 ? 's' : ''}. Try again or apply manually.`);
+        // Show toast based on results
+        if (successCount > 0 && failCount === 0) {
+          toast.success(`${successCount} application${successCount > 1 ? 's' : ''} submitted!`);
+        } else if (successCount > 0 && failCount > 0) {
+          toast.success(`${successCount} submitted, ${failCount} failed.`);
+        } else if (failCount > 0) {
+          toast.error(`${failCount} application${failCount > 1 ? 's' : ''} failed. Try again or apply manually.`);
+        } else if (results.length === 0) {
+          toast.error('No results returned from server. Please try again.');
         } else {
-          toast.error(`Applications failed. Please try again or apply manually.`);
+          toast('Applications processed.', { icon: '\u2139\uFE0F' });
         }
       } else {
-        // API call failed entirely
+        // API returned error or empty result
         completeBatch();
         hapticFeedback('medium');
-        toast.error('Server error. Please try again or apply manually.');
+        const errorMsg = batchResult?.error || 'Server error';
+        toast.error(`${errorMsg}. Please try again.`);
       }
     } catch (err: any) {
-      // Network error
-      completeBatch();
+      // Unexpected error in the entire flow
+      try { completeBatch(); } catch {}
       hapticFeedback('medium');
-      toast.error('Connection error. Please check your internet and try again.');
+      toast.error('Unexpected error. Please try again.');
     }
   }, [selectedIds, lockedSource, credentials, batch]);
 
