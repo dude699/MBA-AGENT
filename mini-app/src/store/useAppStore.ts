@@ -106,26 +106,31 @@ interface AppState {
 function countActiveFilters(filters: FilterState): number {
   let count = 0;
   if (filters.search) count++;
-  if (filters.sources.length > 0) count++;
-  if (filters.categories.length > 0) count++;
-  if (filters.locations.length > 0) count++;
-  if (filters.locationTypes.length > 0) count++;
+  if (filters.sources?.length > 0) count++;
+  if (filters.categories?.length > 0) count++;
+  if (filters.locations?.length > 0) count++;
+  if (filters.locationTypes?.length > 0) count++;
   if (filters.stipendMin > 0) count++;
   if (filters.stipendMax < 100000) count++;
-  if (filters.stipendType.length > 0) count++;
-  if (filters.durationMax < 3) count++;
-  if (filters.skills.length > 0) count++;
-  if (filters.companyTiers.length > 0) count++;
-  if (filters.sectors.length > 0) count++;
+  if (filters.stipendType?.length > 0) count++;
+  // FIX: durationMax default is 12, so count active when it's LESS than 12 (not < 3!)
+  if (filters.durationMax < 12) count++;
+  // FIX: durationMin default is 0, count when it's > 0
+  if (filters.durationMin > 0) count++;
+  if (filters.skills?.length > 0) count++;
+  if (filters.companyTiers?.length > 0) count++;
+  if (filters.sectors?.length > 0) count++;
   if (filters.minOpenings > 0) count++;
   if (filters.minMatchScore > 0) count++;
   if (filters.maxGhostScore < 100) count++;
   if (filters.onlyVerified) count++;
   if (filters.onlyPremium) count++;
+  if (filters.onlyWithStipend) count++;
+  if (filters.hideApplied) count++;
   if (filters.postedWithin !== 'any') count++;
   if (filters.deadlineWithin !== 'any') count++;
   if (filters.successRateMin > 0) count++;
-  if (filters.tags.length > 0) count++;
+  if (filters.tags?.length > 0) count++;
   return count;
 }
 
@@ -140,7 +145,7 @@ export const useAppStore = create<AppState>()(
       appliedIds: new Set<string>(),
       dismissedIds: new Set<string>(),
 
-      filters: DEFAULT_FILTERS,
+      filters: { ...DEFAULT_FILTERS },
       sort: DEFAULT_SORT,
       activeFilterCount: 0,
 
@@ -263,11 +268,13 @@ export const useAppStore = create<AppState>()(
           } else {
             // Source locking: can only select from one source at a time
             const item = state.internships.find((i) => i.id === id);
-            if (item && state.lockedSource && item.source !== state.lockedSource) {
+            const itemSource = (item?.source || '').toLowerCase();
+            const locked = (state.lockedSource || '').toLowerCase();
+            if (item && state.lockedSource && itemSource !== locked) {
               return state; // Don't add from different source
             }
             if (item && !state.lockedSource) {
-              return { selectedIds: new Set([id]), lockedSource: item.source };
+              return { selectedIds: new Set([id]), lockedSource: itemSource as any };
             }
             newSelected.add(id);
           }
@@ -280,10 +287,10 @@ export const useAppStore = create<AppState>()(
 
       selectAll: () => {
         const state = get();
-        const source = state.lockedSource;
+        const source = (state.lockedSource || '').toLowerCase();
         if (!source) return;
         const sourceItems = state.filteredInternships
-          .filter((i) => i.source === source && !i.alreadyApplied && !i.isExpired)
+          .filter((i) => (i.source || '').toLowerCase() === source && !i.alreadyApplied && !i.isExpired)
           .slice(0, 50);
         set({ selectedIds: new Set(sourceItems.map((i) => i.id)) });
       },
@@ -293,12 +300,13 @@ export const useAppStore = create<AppState>()(
       },
 
       selectBySource: (source) => {
+        const normalizedSource = (source || '').toLowerCase();
         const items = get().filteredInternships
-          .filter((i) => i.source === source && !i.alreadyApplied && !i.isExpired)
+          .filter((i) => (i.source || '').toLowerCase() === normalizedSource && !i.alreadyApplied && !i.isExpired)
           .slice(0, 50);
         set({
           selectedIds: new Set(items.map((i) => i.id)),
-          lockedSource: source,
+          lockedSource: normalizedSource as any,
         });
       },
 
@@ -431,7 +439,7 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'internhub-store',
-      version: 2, // Bumped to reset stale aggressive filter defaults
+      version: 3, // v3: reset all stale filters — fix filter glitch + count disconnect
       partialize: (state) => ({
         appliedIds: Array.from(state.appliedIds),
         dismissedIds: Array.from(state.dismissedIds),
@@ -450,11 +458,13 @@ export const useAppStore = create<AppState>()(
         selectedIds: new Set(),
       }),
       migrate: (persistedState: any, version: number) => {
-        if (version < 2) {
-          // Reset filters to new defaults (old version had aggressive defaults that caused the filter glitch)
+        if (version < 3) {
+          // v3: nuclear reset — old persisted filters cause invisible filtering glitch
+          // The root bug: old stored filters had stipendMax=100000, durationMax=3 etc.
+          // that silently filtered out most jobs making counts mismatch
           return {
             ...persistedState,
-            filters: DEFAULT_FILTERS,
+            filters: { ...DEFAULT_FILTERS },
             activeFilterCount: 0,
           };
         }

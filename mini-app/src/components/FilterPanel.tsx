@@ -85,8 +85,12 @@ export default function FilterPanel() {
             </div>
           </div>
 
-          {/* Scrollable Filters */}
-          <div className="flex-1 overflow-y-auto overscroll-contain" style={{ WebkitOverflowScrolling: 'touch' }}>
+          {/* Scrollable Filters — mobile-safe touch scrolling */}
+          <div
+            className="flex-1 overflow-y-auto overscroll-contain"
+            style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}
+            onTouchMove={(e) => e.stopPropagation()}
+          >
             {/* SOURCE FILTER */}
             <FilterSection
               title="Source Platform"
@@ -193,7 +197,7 @@ export default function FilterPanel() {
               icon={<Clock className="w-4 h-4" />}
               expanded={expandedSections.has('duration')}
               onToggle={() => toggleSection('duration')}
-              count={filters.durationMax < 12 ? 1 : 0}
+              count={(filters.durationMax || 12) < 12 ? 1 : 0}
             >
               <div className="space-y-2">
                 <input

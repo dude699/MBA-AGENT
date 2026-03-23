@@ -79,13 +79,18 @@ async def handle_internships(request: web.Request) -> web.Response:
         page = int(request.query.get('page', '1'))
         per_page = min(int(request.query.get('per_page', '20')), 50)
         sort_by = request.query.get('sort', 'ppo')
-        # Support comma-separated multi-values: use first value for DB query
+        # Support comma-separated multi-values for filters
         raw_category = request.query.get('category', '') or ''
         raw_source = request.query.get('source', '') or ''
         raw_location = request.query.get('location', '') or ''
-        category = raw_category.split(',')[0].strip() or None
-        source = raw_source.split(',')[0].strip() or None
-        location = raw_location.split(',')[0].strip() or None
+        # Parse ALL comma-separated values (not just the first)
+        categories = [c.strip().lower() for c in raw_category.split(',') if c.strip()]
+        sources = [s.strip().lower() for s in raw_source.split(',') if s.strip()]
+        locations = [l.strip().lower() for l in raw_location.split(',') if l.strip()]
+        # For backward compatibility with DB layer, pass first value
+        category = categories[0] if categories else None
+        source = sources[0] if sources else None
+        location = locations[0] if locations else None
         min_stipend = int(request.query.get('min_stipend', '0'))
         max_duration = int(request.query.get('max_duration', '12'))
         search = request.query.get('search', '') or None
@@ -103,6 +108,23 @@ async def handle_internships(request: web.Request) -> web.Response:
             min_stipend=min_stipend,
             location=location,
         )
+
+        # Post-filter for multi-value filters the DB layer doesn't support natively
+        if len(sources) > 1:
+            listings = [l for l in listings if (l.get('source', '') or '').lower() in sources]
+        if len(categories) > 1:
+            listings = [l for l in listings if (l.get('category', '') or '').lower() in categories]
+        if len(locations) > 1:
+            listings = [l for l in listings if (l.get('location', '') or '').lower() in locations]
+        if search:
+            search_lower = search.lower()
+            listings = [l for l in listings if
+                search_lower in (l.get('title', '') or '').lower() or
+                search_lower in (l.get('company', '') or '').lower() or
+                search_lower in (l.get('category', '') or '').lower() or
+                search_lower in (l.get('location', '') or '').lower() or
+                search_lower in (l.get('description_text', '') or '').lower()
+            ]
 
         # Transform to frontend-friendly format
         items = []
@@ -345,7 +367,7 @@ async def handle_batch_apply(request: web.Request) -> web.Response:
         body = await request.json()
         listing_ids = body.get('listing_ids', [])
         credentials = body.get('credentials', {})
-        source = body.get('source', '')
+        source = (body.get('source', '') or '').lower().strip()
 
         if not listing_ids:
             return _json_response({"success": False, "error": "No listing IDs provided"}, status=400)

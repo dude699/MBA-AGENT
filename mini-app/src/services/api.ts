@@ -243,9 +243,9 @@ export async function batchApplyToInternships(
       method: 'POST',
       headers: getHeaders(),
       body: JSON.stringify({
-        listing_ids: listingIds.map(id => parseInt(id, 10)),
+        listing_ids: listingIds.map(id => parseInt(id, 10) || id),
         credentials,
-        source,
+        source: (source || '').toLowerCase(),
       }),
     });
 
@@ -540,7 +540,7 @@ function ensureInternshipFields(item: any): Internship {
     companyLogo: item.companyLogo || undefined,
     companySize: item.companySize || '',
     companyRating: item.companyRating || 0,
-    source: item.source || 'internshala',
+    source: (item.source || 'internshala').toLowerCase(),
     sourceUrl: item.sourceUrl || '',
     stipend: item.stipend || 0,
     stipendCurrency: item.stipendCurrency || '₹',

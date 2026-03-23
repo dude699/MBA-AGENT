@@ -116,12 +116,14 @@ export function useBatchApply() {
       return;
     }
 
+    const normalizedLockedSource = (lockedSource || '').toLowerCase();
+
     // Check if this source has credential requirements
     const credReq = (await import('@/utils/constants')).CREDENTIAL_REQUIREMENTS;
-    const needsCreds = credReq.some((c: any) => c.source === lockedSource);
+    const needsCreds = credReq.some((c: any) => (c.source || '').toLowerCase() === normalizedLockedSource);
 
-    // Get credentials if they exist (optional for some sources)
-    const cred = credentials.find((c) => c.source === lockedSource);
+    // Get credentials if they exist (optional for some sources) — case-insensitive
+    const cred = credentials.find((c) => (c.source || '').toLowerCase() === normalizedLockedSource);
 
     if (needsCreds && (!cred || !cred.isValid)) {
       toast.error(`Please add ${lockedSource} credentials first`);
@@ -144,7 +146,7 @@ export function useBatchApply() {
       const batchResult = await batchApplyToInternships(
         ids,
         cred?.credentials || {},
-        lockedSource
+        normalizedLockedSource
       );
 
       if (batchResult.success && batchResult.data) {
@@ -168,9 +170,9 @@ export function useBatchApply() {
           } else if (result.success && result.method === 'direct') {
             // Backend recorded it — manual-only source (Naukri/Workday/LinkedIn)
             // Do NOT mark as applied — user hasn't actually applied yet
-            // Just record it was processed
-            successCount++;
+            // Do NOT count as success — it's just "queued/recorded"
             processedIds.push(id);
+            // Don't increment successCount — it wasn't actually submitted
           } else if (result.method === 'auto_apply_failed' || result.method === 'auto_apply_error') {
             // Auto-apply was attempted but failed
             // Do NOT mark as applied — it failed
@@ -218,16 +220,15 @@ export function useBatchApply() {
         const autoApplied = results.filter((r: any) => r.method === 'auto_applied').length;
         const directRecorded = results.filter((r: any) => r.method === 'direct').length;
         const autoFailed = results.filter((r: any) => r.method === 'auto_apply_failed' || r.method === 'auto_apply_error').length;
-        const totalFailed = failCount;
 
-        if (autoApplied > 0 && totalFailed === 0) {
+        if (autoApplied > 0 && autoFailed === 0) {
           toast.success(`${autoApplied} application${autoApplied > 1 ? 's' : ''} auto-submitted!`);
-        } else if (autoApplied > 0 && totalFailed > 0) {
-          toast.success(`${autoApplied} auto-submitted. ${totalFailed} failed — retry or apply manually from detail page.`);
-        } else if (directRecorded > 0) {
-          toast(`${directRecorded} job${directRecorded > 1 ? 's' : ''} processed. Open detail page to apply manually on the portal.`, { icon: 'i' });
+        } else if (autoApplied > 0 && autoFailed > 0) {
+          toast.success(`${autoApplied} auto-submitted, ${autoFailed} failed. Check detail page for failed ones.`);
+        } else if (directRecorded > 0 && autoFailed === 0) {
+          toast(`${directRecorded} job${directRecorded > 1 ? 's' : ''} recorded. Open detail page to apply manually.`, { icon: '\u2139\uFE0F' });
         } else if (autoFailed > 0) {
-          toast.error(`Auto-apply failed for ${autoFailed} job${autoFailed > 1 ? 's' : ''}. Try again later.`);
+          toast.error(`Auto-apply failed for ${autoFailed} job${autoFailed > 1 ? 's' : ''}. Try again or apply manually.`);
         } else {
           toast.error(`Applications failed. Please try again or apply manually.`);
         }

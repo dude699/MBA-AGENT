@@ -109,17 +109,18 @@ export default function BatchApplyPanel() {
 
   if (!isBatchPanelOpen) return null;
 
-  const sourceConfig = lockedSource ? SOURCE_CONFIG[lockedSource] : null;
+  const normalizedLockedSource = (lockedSource || '').toLowerCase();
+  const sourceConfig = lockedSource ? (SOURCE_CONFIG[normalizedLockedSource] || SOURCE_CONFIG[lockedSource]) : null;
   const riskLevel = sourceConfig?.riskLevel || 'medium';
   const riskWarning = RISK_WARNINGS[riskLevel];
   const maxBatch = sourceConfig?.maxBatchSize || 5;
-  const hasCreds = credentials.some((c) => c.source === lockedSource && c.isValid);
-  const credReq = CREDENTIAL_REQUIREMENTS.find((c) => c.source === lockedSource);
+  const hasCreds = credentials.some((c) => (c.source || '').toLowerCase() === normalizedLockedSource && c.isValid);
+  const credReq = CREDENTIAL_REQUIREMENTS.find((c) => (c.source || '').toLowerCase() === normalizedLockedSource);
   const isDirectApplySource = !credReq;
   const canApply = true;
 
   // Get portal-specific extra fields
-  const portalFields = PORTAL_EXTRA_FIELDS[lockedSource || ''] || PORTAL_EXTRA_FIELDS.default;
+  const portalFields = PORTAL_EXTRA_FIELDS[normalizedLockedSource] || PORTAL_EXTRA_FIELDS.default;
   const hasRequiredEmpty = portalFields.some(f => f.required && !extraInfoData[f.key]);
 
   const selectedInternships = internships.filter((i) => selectedIds.has(i.id));
@@ -128,7 +129,7 @@ export default function BatchApplyPanel() {
   const handleSaveCredentials = () => {
     if (!lockedSource) return;
     setCredentials({
-      source: lockedSource,
+      source: normalizedLockedSource,
       credentials: credFormData,
       isValid: true,
       lastVerified: new Date().toISOString(),
@@ -155,9 +156,9 @@ export default function BatchApplyPanel() {
     const store = useAppStore.getState();
     if (Object.keys(extraInfoData).length > 0) {
       // Merge extra info into credentials so backend receives it
-      const existingCreds = store.credentials.find(c => c.source === lockedSource);
+      const existingCreds = store.credentials.find(c => (c.source || '').toLowerCase() === normalizedLockedSource);
       store.setCredentials({
-        source: lockedSource || '',
+        source: normalizedLockedSource || '',
         credentials: {
           ...(existingCreds?.credentials || {}),
           ...credFormData,
