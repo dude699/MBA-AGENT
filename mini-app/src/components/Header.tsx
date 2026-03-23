@@ -14,7 +14,7 @@ import { hapticFeedback } from '@/utils/helpers';
 
 export default function Header() {
   const {
-    filters, activeFilterCount, sort, totalCount,
+    filters, activeFilterCount, sort,
     isFilterOpen, isSortOpen, isLLMPanelOpen,
     setFilterOpen, setSortOpen, setLLMPanelOpen, setSearch,
     selectedIds, lockedSource,
@@ -22,7 +22,7 @@ export default function Header() {
 
   const [searchFocused, setSearchFocused] = useState(false);
   const [searchValue, setSearchValue] = useState(filters.search);
-  const searchTimeoutRef = useRef<NodeJS.Timeout>();
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
 
   // Debounced search
   const handleSearchChange = useCallback((value: string) => {
@@ -74,7 +74,7 @@ export default function Header() {
               <div className="flex items-center gap-1.5">
                 <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-micro-pulse" style={{ boxShadow: '0 0 6px rgba(52,211,153,0.5)' }} />
                 <p className="text-[10px] font-medium tracking-wide" style={{ color: 'rgba(255,255,255,0.45)' }}>
-                  {totalCount > 0 ? `${totalCount.toLocaleString()} Opportunities` : 'PRISM Intelligence Active'}
+                  PRISM Intelligence Active
                 </p>
               </div>
             </div>

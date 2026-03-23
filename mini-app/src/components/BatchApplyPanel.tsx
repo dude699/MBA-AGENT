@@ -123,7 +123,15 @@ export default function BatchApplyPanel() {
   const portalFields = PORTAL_EXTRA_FIELDS[normalizedLockedSource] || PORTAL_EXTRA_FIELDS.default;
   const hasRequiredEmpty = portalFields.some(f => f.required && !extraInfoData[f.key]);
 
-  const selectedInternships = internships.filter((i) => selectedIds.has(i.id));
+  // Search both store internships AND supabase cache for selected items
+  const sbCache = ((window as any).__sbJobsCache || []) as any[];
+  const allKnownJobs = [...internships, ...sbCache];
+  const seenIds = new Set<string>();
+  const selectedInternships = allKnownJobs.filter((i) => {
+    if (!selectedIds.has(i.id) || seenIds.has(i.id)) return false;
+    seenIds.add(i.id);
+    return true;
+  });
   const applyCount = Math.min(selectedIds.size, maxBatch);
 
   const handleSaveCredentials = () => {

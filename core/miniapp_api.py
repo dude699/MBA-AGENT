@@ -1287,7 +1287,7 @@ def _transform_listing(listing: Dict, detailed: bool = False) -> Dict:
     applicants = listing.get('applicants', 0) or 0
     duration = listing.get('duration_months', 0) or 0
     tier = listing.get('tier')
-    source = listing.get('source', '')
+    source = (listing.get('source', '') or '').lower().strip()
 
     # v0.2: Extract skills from description if not provided
     desc = listing.get('description_text', '') or ''
@@ -1416,7 +1416,7 @@ def _transform_supabase_listing(row: Dict) -> Dict:
         "companyLogo": row.get("company_logo") or None,
         "companySize": row.get("company_size", ""),
         "companyRating": row.get("company_rating", 0) or 0,
-        "source": row.get("source", ""),
+        "source": (row.get("source", "") or "").lower().strip(),
         "sourceUrl": row.get("source_url", ""),
         "stipend": stipend,
         "stipendCurrency": row.get("stipend_currency", "INR") or "INR",
