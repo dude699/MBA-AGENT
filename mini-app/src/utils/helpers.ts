@@ -58,57 +58,77 @@ export function formatDeadline(dateStr: string): { text: string; urgent: boolean
 
 // ===== FILTERING =====
 export function applyFilters(internships: Internship[], filters: FilterState): Internship[] {
+  if (!filters || !internships) return internships || [];
+
   return internships.filter((item) => {
-    // Search
+    if (!item) return false;
+
+    // Search — null-safe
     if (filters.search) {
       const q = filters.search.toLowerCase();
-      const searchable = `${item.title} ${item.company} ${item.category} ${item.skills.join(' ')} ${item.location} ${item.sector}`.toLowerCase();
+      const searchable = `${item.title || ''} ${item.company || ''} ${item.category || ''} ${(item.skills || []).join(' ')} ${item.location || ''} ${item.sector || ''}`.toLowerCase();
       if (!searchable.includes(q)) return false;
     }
 
-    // Source filter
-    if (filters.sources.length > 0 && !filters.sources.includes(item.source)) return false;
+    // Source filter — case-insensitive
+    if (filters.sources?.length > 0) {
+      const itemSource = (item.source || '').toLowerCase();
+      if (!filters.sources.some(s => s.toLowerCase() === itemSource)) return false;
+    }
 
-    // Category filter
-    if (filters.categories.length > 0 && !filters.categories.includes(item.category)) return false;
+    // Category filter — case-insensitive
+    if (filters.categories?.length > 0) {
+      const itemCat = (item.category || '').toLowerCase();
+      if (!filters.categories.some(c => c.toLowerCase() === itemCat)) return false;
+    }
 
-    // Location filter
-    if (filters.locations.length > 0 && !filters.locations.includes(item.location)) return false;
+    // Location filter — case-insensitive
+    if (filters.locations?.length > 0) {
+      const itemLoc = (item.location || '').toLowerCase();
+      if (!filters.locations.some(l => l.toLowerCase() === itemLoc)) return false;
+    }
 
-    // Location type filter
-    if (filters.locationTypes.length > 0 && !filters.locationTypes.includes(item.locationType)) return false;
+    // Location type filter — case-insensitive
+    if (filters.locationTypes?.length > 0) {
+      const itemLocType = (item.locationType || 'onsite').toLowerCase();
+      if (!filters.locationTypes.some(t => t.toLowerCase() === itemLocType)) return false;
+    }
 
     // Stipend range
-    if (item.stipend < filters.stipendMin) return false;
-    if (item.stipend > filters.stipendMax) return false;
+    const stipend = item.stipend || 0;
+    if (stipend < (filters.stipendMin || 0)) return false;
+    if (stipend > (filters.stipendMax ?? 100000)) return false;
 
     // Stipend type
-    if (filters.stipendType.length > 0 && !filters.stipendType.includes(item.stipendType)) return false;
+    if (filters.stipendType?.length > 0 && !filters.stipendType.includes(item.stipendType)) return false;
 
     // Duration range
-    if (item.duration < filters.durationMin) return false;
-    if (item.duration > filters.durationMax) return false;
+    const duration = item.duration || 0;
+    if (duration < (filters.durationMin || 0)) return false;
+    if (duration > (filters.durationMax ?? 12)) return false;
 
     // Skills
-    if (filters.skills.length > 0) {
-      const has = item.skills.some((s) => filters.skills.includes(s));
+    if (filters.skills?.length > 0) {
+      const itemSkills = item.skills || [];
+      if (itemSkills.length === 0) return false;
+      const has = itemSkills.some((s) => filters.skills.includes(s));
       if (!has) return false;
     }
 
     // Company tier
-    if (filters.companyTiers.length > 0 && !filters.companyTiers.includes(item.companyTier)) return false;
+    if (filters.companyTiers?.length > 0 && !filters.companyTiers.includes(item.companyTier)) return false;
 
     // Sectors
-    if (filters.sectors.length > 0 && !filters.sectors.includes(item.sector)) return false;
+    if (filters.sectors?.length > 0 && !filters.sectors.includes(item.sector)) return false;
 
     // Min openings
-    if (item.openings < filters.minOpenings) return false;
+    if ((item.openings || 0) < (filters.minOpenings || 0)) return false;
 
     // Min match score
-    if (item.matchScore < filters.minMatchScore) return false;
+    if ((item.matchScore || 0) < (filters.minMatchScore || 0)) return false;
 
     // Max ghost score
-    if (item.ghostScore > filters.maxGhostScore) return false;
+    if ((item.ghostScore || 0) > (filters.maxGhostScore ?? 100)) return false;
 
     // Hide applied
     if (filters.hideApplied && item.alreadyApplied) return false;
@@ -123,13 +143,13 @@ export function applyFilters(internships: Internship[], filters: FilterState): I
     if (filters.onlyPremium && !item.isPremium) return false;
 
     // Only with stipend
-    if (filters.onlyWithStipend && item.stipend === 0) return false;
+    if (filters.onlyWithStipend && (item.stipend || 0) === 0) return false;
 
     // Posted within
-    if (filters.postedWithin !== 'any') {
+    if (filters.postedWithin && filters.postedWithin !== 'any') {
       const daysMap: Record<string, number> = { '24h': 1, '3d': 3, '7d': 7, '14d': 14, '30d': 30 };
       const days = daysMap[filters.postedWithin];
-      if (days) {
+      if (days && item.postedDate) {
         try {
           const postedDate = parseISO(item.postedDate);
           const cutoff = addDays(new Date(), -days);
@@ -139,10 +159,10 @@ export function applyFilters(internships: Internship[], filters: FilterState): I
     }
 
     // Deadline within
-    if (filters.deadlineWithin !== 'any') {
+    if (filters.deadlineWithin && filters.deadlineWithin !== 'any') {
       const daysMap: Record<string, number> = { '3d': 3, '7d': 7, '14d': 14, '30d': 30 };
       const days = daysMap[filters.deadlineWithin];
-      if (days) {
+      if (days && item.deadline) {
         try {
           const deadline = parseISO(item.deadline);
           const cutoff = addDays(new Date(), days);
@@ -152,11 +172,13 @@ export function applyFilters(internships: Internship[], filters: FilterState): I
     }
 
     // Success rate
-    if (item.successRate < filters.successRateMin) return false;
+    if ((item.successRate || 0) < (filters.successRateMin || 0)) return false;
 
     // Tags
-    if (filters.tags.length > 0) {
-      const has = item.tags.some((t) => filters.tags.includes(t));
+    if (filters.tags?.length > 0) {
+      const itemTags = item.tags || [];
+      if (itemTags.length === 0) return false;
+      const has = itemTags.some((t) => filters.tags.includes(t));
       if (!has) return false;
     }
 

@@ -30,9 +30,10 @@ export default function InternshipDetail() {
   }
   if (!item) return null;
 
-  const sourceConfig = SOURCE_CONFIG[item.source];
+  const safeSource = (item.source || 'company_direct').toLowerCase();
+  const sourceConfig = SOURCE_CONFIG[safeSource] || { name: safeSource, color: '#6b7280', icon: 'company_direct', maxBatchSize: 3, cooldownMinutes: 15, riskLevel: 'medium' as const };
   const tierConfig = TIER_LABELS[item.companyTier];
-  const deadline = formatDeadline(item.deadline);
+  const deadline = formatDeadline(item.deadline || '');
   const isSelected = selectedIds.has(item.id);
 
   return (

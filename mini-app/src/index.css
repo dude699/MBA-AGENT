@@ -376,8 +376,8 @@
     background: #ffffff;
     border: 1.5px solid rgba(229,231,235,0.9);
     box-shadow: 0 1px 4px rgba(0,0,0,0.04), 0 0 0 0.5px rgba(0,0,0,0.02);
-    transition: all 0.35s var(--ease-premium);
-    will-change: transform, box-shadow;
+    transition: all 0.25s var(--ease-premium);
+    will-change: auto; /* Don't force GPU for all cards — saves memory on mobile */
     /* Ensure card is clickable and above any overlapping elements */
     position: relative;
     z-index: 1;
@@ -385,7 +385,11 @@
     /* Prevent visual bleed-through / glitches */
     overflow: hidden;
     isolation: isolate;
-    contain: layout paint;
+    /* FIX: removed contain:paint which caused rendering glitches on mobile */
+    contain: layout style;
+    /* Mobile: prevent text overflow breaking card layout */
+    word-break: break-word;
+    overflow-wrap: break-word;
   }
   .internship-card:hover {
     border-color: rgba(209,213,219,0.9);
@@ -403,6 +407,19 @@
     box-shadow:
       0 0 0 2px rgba(10,10,10,0.1),
       0 8px 30px rgba(0,0,0,0.08);
+  }
+
+  /* Mobile: reduce animation overhead, prevent card glitches */
+  @media (max-width: 480px) {
+    .internship-card {
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    .internship-card:hover {
+      transform: none;
+    }
+    .internship-card:active {
+      transform: scale(0.99);
+    }
   }
 
   /* AI Chat bubbles — premium with subtle shadow */

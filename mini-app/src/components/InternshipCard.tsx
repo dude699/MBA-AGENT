@@ -26,14 +26,16 @@ interface Props {
 const InternshipCard = memo(function InternshipCard({ internship, index }: Props) {
   const { selectedIds, lockedSource, toggleSelect, setDetailOpen } = useAppStore();
   const isSelected = selectedIds.has(internship.id);
-  const sourceConfig = SOURCE_CONFIG[internship.source] || { name: internship.source || 'Unknown', color: '#6b7280', icon: 'company_direct', maxBatchSize: 3, cooldownMinutes: 15, riskLevel: 'medium' as const };
+  const safeSource = (internship.source || 'company_direct').toLowerCase();
+  const sourceConfig = SOURCE_CONFIG[safeSource] || { name: safeSource || 'Unknown', color: '#6b7280', icon: 'company_direct', maxBatchSize: 3, cooldownMinutes: 15, riskLevel: 'medium' as const };
   const tierConfig = TIER_LABELS[internship.companyTier];
   const deadline = formatDeadline(internship.deadline);
 
-  const canSelect = !lockedSource || lockedSource === internship.source;
+  const canSelect = !lockedSource || lockedSource === safeSource;
 
-  const isBlueOcean = internship.matchScore >= 80 && internship.applicants < 50;
-  const isHighPay = internship.stipend >= 25000;
+  const isBlueOcean = (internship.matchScore || 0) >= 80 && (internship.applicants || 0) < 50;
+  const isHighPay = (internship.stipend || 0) >= 25000;
+  const safeLocationType = (internship.locationType || 'onsite').toLowerCase();
 
   const handleSelect = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
@@ -56,7 +58,7 @@ const InternshipCard = memo(function InternshipCard({ internship, index }: Props
         delay: Math.min(index * 0.03, 0.2),
         ease: [0.22, 1, 0.36, 1],
       }}
-      className={`internship-card ${isSelected ? 'selected' : ''} ${internship.alreadyApplied ? 'opacity-55' : ''}`}
+      className={`internship-card ${isSelected ? 'selected' : ''} ${internship.alreadyApplied ? 'opacity-60' : ''}`}
     >
       {/* Blue Ocean Badge — animated float */}
       {isBlueOcean && !internship.isPremium && (
@@ -89,7 +91,7 @@ const InternshipCard = memo(function InternshipCard({ internship, index }: Props
               style={{ backgroundColor: sourceConfig.color + '10', color: sourceConfig.color }}
               whileTap={{ scale: 0.95 }}
             >
-              <SourceIcon source={internship.source} size={12} />
+              <SourceIcon source={safeSource} size={12} />
               {sourceConfig.name}
             </motion.span>
             {internship.isVerified && (
@@ -156,7 +158,7 @@ const InternshipCard = memo(function InternshipCard({ internship, index }: Props
             <span className="text-xs font-semibold text-primary-500 line-clamp-1 flex-1">
               {internship.company}
             </span>
-            {internship.companyRating > 0 && (
+            {(internship.companyRating || 0) > 0 && (
               <span className="flex items-center gap-0.5 text-[10px] text-primary-400">
                 <Star className="w-3 h-3 text-amber-400 fill-amber-400" />
                 {internship.companyRating}
@@ -187,7 +189,7 @@ const InternshipCard = memo(function InternshipCard({ internship, index }: Props
                 color: isHighPay ? '#059669' : '#0a0a0a',
               }}
             >
-              {formatStipend(internship.stipend)}
+              {formatStipend(internship.stipend || 0)}
             </span>
             {isHighPay && (
               <span className="text-[8px] font-bold px-1 py-0.5 rounded bg-emerald-50 text-emerald-600">
@@ -199,27 +201,27 @@ const InternshipCard = memo(function InternshipCard({ internship, index }: Props
           {/* Duration */}
           <div className="flex items-center gap-1 text-xs text-primary-500">
             <Clock className="w-3.5 h-3.5 text-primary-300" />
-            <span className="font-medium">{formatDuration(internship.duration)}</span>
+            <span className="font-medium">{formatDuration(internship.duration || 0)}</span>
           </div>
 
           {/* Location */}
           <div className="flex items-center gap-1 text-xs text-primary-500">
             <MapPin className="w-3.5 h-3.5 text-primary-300" />
-            <span className="font-medium">{internship.location}</span>
+            <span className="font-medium">{internship.location || 'Not specified'}</span>
             <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
-              internship.locationType === 'remote' ? 'bg-emerald-50 text-emerald-600' :
-              internship.locationType === 'hybrid' ? 'bg-blue-50 text-blue-600' :
+              safeLocationType === 'remote' ? 'bg-emerald-50 text-emerald-600' :
+              safeLocationType === 'hybrid' ? 'bg-blue-50 text-blue-600' :
               'bg-primary-50 text-primary-500'
             }`}>
-              {internship.locationType.toUpperCase()}
+              {safeLocationType.toUpperCase()}
             </span>
           </div>
         </div>
 
         {/* Skills */}
-        {internship.skills.length > 0 && (
+        {(internship.skills?.length || 0) > 0 && (
           <div className="flex flex-wrap gap-1.5 mb-3">
-            {internship.skills.slice(0, 4).map((skill) => (
+            {(internship.skills || []).slice(0, 4).map((skill) => (
               <span
                 key={skill}
                 className="text-[10px] font-medium px-2 py-0.5 rounded-md transition-colors"
@@ -228,9 +230,9 @@ const InternshipCard = memo(function InternshipCard({ internship, index }: Props
                 {skill}
               </span>
             ))}
-            {internship.skills.length > 4 && (
+            {(internship.skills?.length || 0) > 4 && (
               <span className="text-[10px] font-medium text-primary-400">
-                +{internship.skills.length - 4}
+                +{(internship.skills?.length || 0) - 4}
               </span>
             )}
           </div>
@@ -270,7 +272,7 @@ const InternshipCard = memo(function InternshipCard({ internship, index }: Props
             <div className="flex items-center gap-1">
               <Users className="w-3 h-3 text-primary-300" />
               <span className="text-[10px] font-medium text-primary-400">
-                {formatNumber(internship.applicants)}
+                {formatNumber(internship.applicants || 0)}
               </span>
             </div>
           </div>
@@ -290,14 +292,14 @@ const InternshipCard = memo(function InternshipCard({ internship, index }: Props
         </div>
 
         {/* Openings + Ghost Score */}
-        {(internship.openings > 1 || internship.ghostScore > 50) && (
+        {((internship.openings || 0) > 1 || (internship.ghostScore || 0) > 50) && (
           <div className="flex items-center gap-2 mt-2">
-            {internship.openings > 1 && (
+            {(internship.openings || 0) > 1 && (
               <span className="text-[10px] font-medium text-blue-600 bg-blue-50 px-2 py-0.5 rounded-md">
                 {internship.openings} openings
               </span>
             )}
-            {internship.ghostScore > 50 && (
+            {(internship.ghostScore || 0) > 50 && (
               <span className="text-[10px] font-medium text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md flex items-center gap-0.5">
                 <AlertTriangle className="w-3 h-3" /> Ghost risk: {internship.ghostScore}%
               </span>

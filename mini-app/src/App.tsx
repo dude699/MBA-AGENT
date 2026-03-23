@@ -200,25 +200,27 @@ export default function App() {
                         All Sources
                       </button>
                       {(Object.entries(SOURCE_CONFIG) as [string, typeof SOURCE_CONFIG[string]][]).slice(0, 16).map(([source, config]) => {
-                        const count = filteredInternships.filter((i) => i.source === source).length;
+                        const normalizedSource = source.toLowerCase();
+                        const count = filteredInternships.filter((i) => (i.source || '').toLowerCase() === normalizedSource).length;
                         if (count === 0) return null;
+                        const isLocked = (lockedSource || '').toLowerCase() === normalizedSource;
                         return (
                           <button
                             key={source}
                             onClick={() => {
-                              if (lockedSource === source) {
+                              if (isLocked) {
                                 deselectAll();
                               } else {
-                                selectBySource(source as InternshipSource);
+                                selectBySource(normalizedSource as InternshipSource);
                               }
                               hapticFeedback('light');
                             }}
                             className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-all whitespace-nowrap ${
-                              lockedSource === source
+                              isLocked
                                 ? 'text-white shadow-sm'
                                 : 'bg-white text-primary-600 border border-primary-200/60 hover:border-primary-300'
                             }`}
-                            style={lockedSource === source ? { backgroundColor: config.color } : {}}
+                            style={isLocked ? { backgroundColor: config.color } : {}}
                           >
                             <SourceIcon source={source} size={12} /> {config.name}
                             <span className="opacity-70">({count})</span>
@@ -228,12 +230,12 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Results Count */}
+                  {/* Results Count — single source of truth: filteredInternships.length IS the real count */}
                   <div className="px-5 py-2 flex items-center justify-between">
                     <p className="text-xs text-primary-500">
-                      <span className="font-bold text-primary-800">{filteredInternships.length}</span> internships found
-                      {filteredInternships.length !== totalCount && (
-                        <span className="text-primary-400"> of {totalCount}</span>
+                      <span className="font-bold text-primary-800">{filteredInternships.length}</span> internships
+                      {totalCount > 0 && filteredInternships.length !== totalCount && (
+                        <span className="text-primary-400"> (filtered from {totalCount})</span>
                       )}
                     </p>
                     <button
@@ -296,8 +298,8 @@ export default function App() {
                       <Database className="w-3 h-3 inline mr-1" />
                       <span className="font-bold text-primary-800">{filteredSbJobs.length}</span>
                       {' '}{browseMode === 'latest' ? 'latest session' : 'archived'} jobs
-                      {filteredSbJobs.length !== sbTotal && (
-                        <span className="text-primary-400"> of {sbTotal}</span>
+                      {sbTotal > 0 && filteredSbJobs.length !== sbTotal && (
+                        <span className="text-primary-400"> (filtered from {sbTotal})</span>
                       )}
                     </p>
                     <button
