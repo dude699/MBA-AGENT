@@ -63,7 +63,7 @@ interface AppState {
   dismissInternship: (id: string) => void;
 
   // Actions — Selection
-  toggleSelect: (id: string) => void;
+  toggleSelect: (id: string, sourceHint?: string) => void;
   selectAll: () => void;
   deselectAll: () => void;
   selectBySource: (source: InternshipSource) => void;
@@ -260,27 +260,42 @@ export const useAppStore = create<AppState>()(
       },
 
       // ===== SELECTION ACTIONS =====
-      toggleSelect: (id) => {
+      toggleSelect: (id, sourceHint?: string) => {
         set((state) => {
           const newSelected = new Set(state.selectedIds);
           if (newSelected.has(id)) {
             newSelected.delete(id);
-          } else {
-            // Source locking: can only select from one source at a time
-            const item = state.internships.find((i) => i.id === id);
-            const itemSource = (item?.source || '').toLowerCase();
-            const locked = (state.lockedSource || '').toLowerCase();
-            if (item && state.lockedSource && itemSource !== locked) {
-              return state; // Don't add from different source
+            if (newSelected.size === 0) {
+              return { selectedIds: newSelected, lockedSource: null };
             }
-            if (item && !state.lockedSource) {
-              return { selectedIds: new Set([id]), lockedSource: itemSource as any };
-            }
-            newSelected.add(id);
+            return { selectedIds: newSelected };
           }
-          if (newSelected.size === 0) {
-            return { selectedIds: newSelected, lockedSource: null };
+
+          // Source locking: can only select from one source at a time
+          // Look up the item in store internships first, then use sourceHint
+          // (sourceHint is passed from the card for supabase/non-store items)
+          const item = state.internships.find((i) => i.id === id);
+          const itemSource = (item?.source || sourceHint || '').toLowerCase().trim();
+
+          if (!itemSource) {
+            // Can't determine source — refuse to add
+            return state;
           }
+
+          const locked = (state.lockedSource || '').toLowerCase().trim();
+
+          if (locked && itemSource !== locked) {
+            // Different source — refuse
+            return state;
+          }
+
+          if (!locked) {
+            // First selection — lock to this source, start fresh
+            return { selectedIds: new Set([id]), lockedSource: itemSource as any };
+          }
+
+          // Same source — add to selection
+          newSelected.add(id);
           return { selectedIds: newSelected };
         });
       },
@@ -300,12 +315,24 @@ export const useAppStore = create<AppState>()(
       },
 
       selectBySource: (source) => {
-        const normalizedSource = (source || '').toLowerCase();
-        const items = get().filteredInternships
-          .filter((i) => (i.source || '').toLowerCase() === normalizedSource && !i.alreadyApplied && !i.isExpired)
-          .slice(0, 50);
+        const normalizedSource = (source || '').toLowerCase().trim();
+        // Search in both store internships AND the window-level sbJobs cache
+        const storeItems = get().filteredInternships
+          .filter((i) => (i.source || '').toLowerCase().trim() === normalizedSource && !i.alreadyApplied && !i.isExpired);
+        const sbCache = ((window as any).__sbJobsCache || []) as any[];
+        const sbItems = sbCache
+          .filter((i: any) => (i.source || '').toLowerCase().trim() === normalizedSource && !i.alreadyApplied && !i.isExpired);
+        // Combine, deduplicate by id, take first 50
+        const seen = new Set<string>();
+        const allItems: any[] = [];
+        for (const i of [...storeItems, ...sbItems]) {
+          if (!seen.has(i.id)) {
+            seen.add(i.id);
+            allItems.push(i);
+          }
+        }
         set({
-          selectedIds: new Set(items.map((i) => i.id)),
+          selectedIds: new Set(allItems.slice(0, 50).map((i: any) => i.id)),
           lockedSource: normalizedSource as any,
         });
       },
@@ -439,7 +466,7 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'internhub-store',
-      version: 3, // v3: reset all stale filters — fix filter glitch + count disconnect
+      version: 4, // v4: nuclear reset — fix filter persist glitch, source case issues, count disconnect
       partialize: (state) => ({
         appliedIds: Array.from(state.appliedIds),
         dismissedIds: Array.from(state.dismissedIds),
@@ -458,14 +485,18 @@ export const useAppStore = create<AppState>()(
         selectedIds: new Set(),
       }),
       migrate: (persistedState: any, version: number) => {
-        if (version < 3) {
-          // v3: nuclear reset — old persisted filters cause invisible filtering glitch
-          // The root bug: old stored filters had stipendMax=100000, durationMax=3 etc.
-          // that silently filtered out most jobs making counts mismatch
+        if (version < 4) {
+          // v4: nuclear reset — clear ALL persisted state that causes glitches
+          // Root bugs fixed:
+          // 1. Old filters with stale durationMax/stipendMax causing invisible filtering
+          // 2. lockedSource persisted across sessions causing "multiple source" errors
+          // 3. selectedIds persisted causing stale selections
           return {
             ...persistedState,
             filters: { ...DEFAULT_FILTERS },
             activeFilterCount: 0,
+            selectedIds: [],
+            lockedSource: null,
           };
         }
         return persistedState;

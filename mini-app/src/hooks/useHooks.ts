@@ -112,11 +112,36 @@ export function useBatchApply() {
     }
 
     if (!lockedSource) {
-      toast.error('Select internships from a single source');
-      return;
+      // Try to auto-detect source from selected internships
+      const sbCache = ((window as any).__sbJobsCache || []) as any[];
+      const storeJobs = useAppStore.getState().internships;
+      const allJobs = [...storeJobs, ...sbCache];
+      const selectedSources = new Set<string>();
+      for (const id of selectedIds) {
+        const job = allJobs.find((j: any) => j.id === id);
+        if (job) selectedSources.add((job.source || '').toLowerCase().trim());
+      }
+      if (selectedSources.size === 1) {
+        const detectedSource = [...selectedSources][0];
+        useAppStore.getState().setLockedSource(detectedSource as any);
+        // Continue with detected source
+      } else if (selectedSources.size > 1) {
+        toast.error('Selected internships are from multiple sources. Please select from only one source.');
+        return;
+      } else {
+        toast.error('Could not determine source. Please deselect and reselect internships.');
+        return;
+      }
     }
 
-    const normalizedLockedSource = (lockedSource || '').toLowerCase();
+    // Re-read lockedSource in case it was auto-detected above
+    const currentLockedSource = useAppStore.getState().lockedSource;
+    const normalizedLockedSource = (currentLockedSource || lockedSource || '').toLowerCase().trim();
+
+    if (!normalizedLockedSource) {
+      toast.error('Could not determine source. Please try again.');
+      return;
+    }
 
     // Check if this source has credential requirements
     const credReq = (await import('@/utils/constants')).CREDENTIAL_REQUIREMENTS;
@@ -130,7 +155,6 @@ export function useBatchApply() {
       return;
     }
 
-    const { internships: storeInternships } = useAppStore.getState();
     const ids = Array.from(selectedIds);
 
     startBatch();

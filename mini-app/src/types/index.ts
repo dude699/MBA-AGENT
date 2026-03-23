@@ -208,6 +208,8 @@ export interface LLMMessage {
     tokensUsed?: number;
     internshipIds?: string[];
     action?: LLMAction;
+    provider?: string;
+    profile?: string;
   };
 }
 

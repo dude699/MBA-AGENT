@@ -274,14 +274,14 @@ LINKEDIN_DORK = 'site:linkedin.com/jobs/view "{query}" india intern'
 
 # PRISM v0.1: Rate limits per portal
 PORTAL_RATE_LIMITS = {
-    "internshala": {"rpm": 50, "pages_per_session": 10, "delay_range": (5, 15)},
-    "naukri":      {"rpm": 40, "pages_per_session": 20, "delay_range": (6, 14)},
-    "iimjobs":     {"rpm": 40, "pages_per_session": 5,  "delay_range": (6, 12)},
+    "internshala": {"rpm": 50, "pages_per_session": 15, "delay_range": (4, 12)},
+    "naukri":      {"rpm": 40, "pages_per_session": 25, "delay_range": (5, 12)},
+    "iimjobs":     {"rpm": 40, "pages_per_session": 8,  "delay_range": (5, 10)},
     "linkedin":    {"rpm": 5,  "pages_per_session": 3,  "delay_range": (15, 30)},
-    "indeed":      {"rpm": 20, "pages_per_session": 10, "delay_range": (3, 8)},
-    "wellfound":   {"rpm": 20, "pages_per_session": 5,  "delay_range": (5, 12)},
+    "indeed":      {"rpm": 25, "pages_per_session": 12, "delay_range": (3, 7)},
+    "wellfound":   {"rpm": 20, "pages_per_session": 8,  "delay_range": (4, 10)},
     "career_page": {"rpm": 30, "pages_per_session": 15, "delay_range": (4, 10)},
-    "instahyre":   {"rpm": 15, "pages_per_session": 3,  "delay_range": (8, 15)},
+    "instahyre":   {"rpm": 15, "pages_per_session": 5,  "delay_range": (6, 12)},
 }
 
 # PRISM v0.1: Mobile User-Agent pool for Internshala/Naukri
@@ -3132,9 +3132,9 @@ class PrimaryScraper:
             if portal_name not in self._active_portals:
                 return False
 
-        # Skip portals with >3 consecutive failures
+        # Skip portals with >5 consecutive failures (increased from 3 for resilience)
         health = self._portal_health.get(portal_name, {})
-        if health.get("consecutive_failures", 0) >= 3:
+        if health.get("consecutive_failures", 0) >= 5:
             logger.warning(
                 f"[{AGENT_ID}] Skipping {portal_name} — "
                 f"{health['consecutive_failures']} consecutive failures"

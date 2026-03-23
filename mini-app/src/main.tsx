@@ -23,9 +23,9 @@ try {
   if (tg) {
     tg.ready();
     tg.expand();
-    // Use white theme colors to match our UI
-    tg.setHeaderColor('#ffffff');
-    tg.setBackgroundColor('#ffffff');
+    // Use dark header color to match our dark header UI
+    try { tg.setHeaderColor('#050508'); } catch {}
+    try { tg.setBackgroundColor('#ffffff'); } catch {}
     if (tg.enableClosingConfirmation) {
       tg.enableClosingConfirmation();
     }

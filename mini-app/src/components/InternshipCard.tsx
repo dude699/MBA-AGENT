@@ -4,7 +4,6 @@
 // ============================================================
 
 import React, { memo, useCallback } from 'react';
-import { motion } from 'framer-motion';
 import {
   MapPin, Clock, Users, Star, Shield, CheckCircle2,
   TrendingUp, AlertTriangle, Check, Building2, Sparkles
@@ -40,9 +39,11 @@ const InternshipCard = memo(function InternshipCard({ internship, index }: Props
   const handleSelect = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     if (!canSelect && !isSelected) return;
-    toggleSelect(internship.id);
+    // Pass source as hint so store can determine source even for supabase jobs
+    // that aren't in the store's internships array
+    toggleSelect(internship.id, safeSource);
     hapticSelection();
-  }, [canSelect, isSelected, internship.id]);
+  }, [canSelect, isSelected, internship.id, safeSource]);
 
   const handleOpen = useCallback(() => {
     setDetailOpen(internship.id);
@@ -50,14 +51,7 @@ const InternshipCard = memo(function InternshipCard({ internship, index }: Props
   }, [internship.id]);
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{
-        duration: 0.3,
-        delay: Math.min(index * 0.03, 0.2),
-        ease: [0.22, 1, 0.36, 1],
-      }}
+    <div
       className={`internship-card ${isSelected ? 'selected' : ''} ${internship.alreadyApplied ? 'opacity-60' : ''}`}
     >
       {/* Blue Ocean Badge — animated float */}
@@ -86,14 +80,13 @@ const InternshipCard = memo(function InternshipCard({ internship, index }: Props
         {/* Top Row: Source + Deadline + Select */}
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
-            <motion.span
+            <span
               className="source-badge"
               style={{ backgroundColor: sourceConfig.color + '10', color: sourceConfig.color }}
-              whileTap={{ scale: 0.95 }}
             >
               <SourceIcon source={safeSource} size={12} />
               {sourceConfig.name}
-            </motion.span>
+            </span>
             {internship.isVerified && (
               <span className="flex items-center gap-0.5 text-[10px] text-emerald-600 font-medium">
                 <Shield className="w-3 h-3" />
@@ -119,30 +112,23 @@ const InternshipCard = memo(function InternshipCard({ internship, index }: Props
             )}
 
             {/* Checkbox — animated, sized for touch */}
-            <motion.button
+            <button
               onClick={handleSelect}
-              className={`flex-shrink-0 rounded-lg border-2 flex items-center justify-center transition-colors duration-200 ${
+              className={`flex-shrink-0 rounded-lg border-2 flex items-center justify-center transition-colors duration-150 ${
                 isSelected
                   ? 'border-[#0a0a0a] bg-[#0a0a0a]'
                   : canSelect
                     ? 'border-[#9ca3af] hover:border-[#6b7280] bg-white'
                     : 'border-[#d1d5db] bg-[#f9fafb] opacity-50 cursor-not-allowed'
               }`}
-              style={{ width: '26px', height: '26px', minWidth: '26px' }}
-              whileTap={canSelect ? { scale: 0.85 } : {}}
+              style={{ width: '28px', height: '28px', minWidth: '28px' }}
             >
               {isSelected ? (
-                <motion.div
-                  initial={{ scale: 0 }}
-                  animate={{ scale: 1 }}
-                  transition={{ type: 'spring', stiffness: 500, damping: 15 }}
-                >
-                  <Check className="w-3.5 h-3.5 text-white" />
-                </motion.div>
+                <Check className="w-3.5 h-3.5 text-white" />
               ) : canSelect ? (
                 <div className="w-2.5 h-2.5 rounded-sm border border-[#d1d5db]" />
               ) : null}
-            </motion.button>
+            </button>
           </div>
         </div>
 
@@ -241,22 +227,18 @@ const InternshipCard = memo(function InternshipCard({ internship, index }: Props
         {/* Bottom Stats Row */}
         <div className="flex items-center justify-between pt-2.5" style={{ borderTop: '1px solid rgba(229,231,235,0.5)' }}>
           <div className="flex items-center gap-3">
-            {/* Match Score — animated ring with glow */}
+            {/* Match Score */}
             <div className="flex items-center gap-1.5">
-              <motion.div
-                initial={{ scale: 0, rotate: -180 }}
-                animate={{ scale: 1, rotate: 0 }}
-                transition={{ delay: Math.min(index * 0.05, 0.35) + 0.3, type: 'spring', stiffness: 300, damping: 20 }}
+              <div
                 className="w-7 h-7 rounded-full flex items-center justify-center text-[9px] font-bold"
                 style={{
                   background: getMatchScoreColor(internship.matchScore) + '15',
                   color: getMatchScoreColor(internship.matchScore),
                   border: `1.5px solid ${getMatchScoreColor(internship.matchScore)}35`,
-                  boxShadow: internship.matchScore >= 80 ? `0 0 8px ${getMatchScoreColor(internship.matchScore)}20` : 'none',
                 }}
               >
                 {internship.matchScore}
-              </motion.div>
+              </div>
               <span className="text-[10px] font-medium text-primary-400">Match</span>
             </div>
 
@@ -307,7 +289,7 @@ const InternshipCard = memo(function InternshipCard({ internship, index }: Props
           </div>
         )}
       </div>
-    </motion.div>
+    </div>
   );
 });
 

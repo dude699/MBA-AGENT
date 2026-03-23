@@ -230,13 +230,10 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Results Count — single source of truth: filteredInternships.length IS the real count */}
+                  {/* Results Count — single source of truth: filteredInternships.length IS the ONLY count shown */}
                   <div className="px-5 py-2 flex items-center justify-between">
                     <p className="text-xs text-primary-500">
                       <span className="font-bold text-primary-800">{filteredInternships.length}</span> internships
-                      {totalCount > 0 && filteredInternships.length !== totalCount && (
-                        <span className="text-primary-400"> (filtered from {totalCount})</span>
-                      )}
                     </p>
                     <button
                       onClick={() => { refetch(); hapticFeedback('light'); }}
