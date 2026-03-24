@@ -533,6 +533,9 @@ function RealSystemStatus() {
   const agentCount = Object.keys(agents).length;
   const runningAgents = Object.values(agents).filter((a: any) => a.status === 'running').length;
   const errorAgents = Object.values(agents).filter((a: any) => a.status === 'error').length;
+  // v4.0: Canonical count from health endpoint — THE single truth
+  const canonicalCount = health?.canonical_job_count || 0;
+  const canonicalBreakdown = health?.canonical_breakdown || {};
 
   const statusEmojis: Record<string, string> = {
     idle: '🟡', running: '🟢', error: '🔴', completed: '✅', disabled: '⛔',
@@ -660,10 +663,29 @@ function RealSystemStatus() {
           </div>
         )}
 
+        {/* Canonical Job Count — THE number shown everywhere */}
+        {canonicalCount > 0 && (
+          <div className="mt-3 pt-2 border-t border-primary-200/40">
+            <div className="p-3 bg-gradient-to-r from-indigo-50 to-purple-50 rounded-xl border border-indigo-100">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-[9px] font-bold text-indigo-500 uppercase mb-0.5">Total Jobs Available</p>
+                  <p className="text-2xl font-black text-indigo-700">{canonicalCount.toLocaleString()}</p>
+                </div>
+                <div className="text-right text-[9px] text-primary-400">
+                  {canonicalBreakdown.sqlite > 0 && <p>SQLite: {canonicalBreakdown.sqlite}</p>}
+                  {canonicalBreakdown.supabase > 0 && <p>Cloud: {canonicalBreakdown.supabase}</p>}
+                </div>
+              </div>
+              <p className="text-[9px] text-indigo-400 mt-1">This is the canonical count used across all surfaces</p>
+            </div>
+          </div>
+        )}
+
         {/* Supabase stats */}
         {sbConnected && Object.keys(sbStats).length > 0 && (
           <div className="mt-3 pt-2 border-t border-primary-200/40">
-            <p className="text-[10px] font-bold text-primary-500 mb-1.5">Cloud Database</p>
+            <p className="text-[10px] font-bold text-primary-500 mb-1.5">Cloud Database Detail</p>
             <div className="grid grid-cols-3 gap-2">
               {sbStats.latest_jobs_count !== undefined && (
                 <div className="text-center p-1.5 bg-white rounded-lg">

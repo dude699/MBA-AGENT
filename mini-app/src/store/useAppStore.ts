@@ -161,6 +161,8 @@ export const useAppStore = create<AppState>()(
         errors: [],
         successCount: 0,
         failCount: 0,
+        manualApplyLinks: [],
+        manualNeededCount: 0,
       },
       lockedSource: null,
 
@@ -386,6 +388,8 @@ export const useAppStore = create<AppState>()(
             errors: [],
             successCount: 0,
             failCount: 0,
+            manualApplyLinks: [],
+            manualNeededCount: 0,
           },
         });
       },

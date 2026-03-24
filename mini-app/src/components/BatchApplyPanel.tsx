@@ -359,15 +359,15 @@ export default function BatchApplyPanel() {
               </div>
 
               {isDirectApplySource && !hasCreds && (
-                <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-xl mb-2">
+                <div className="p-3 bg-blue-50 border border-blue-100 rounded-xl mb-2">
                   <div className="flex items-center gap-2 mb-1">
-                    <Send className="w-3.5 h-3.5 text-emerald-600" />
-                    <span className="text-[11px] font-bold text-emerald-700">Auto-Apply Ready</span>
+                    <ExternalLink className="w-3.5 h-3.5 text-blue-600" />
+                    <span className="text-[11px] font-bold text-blue-700">Manual Apply with AI Assist</span>
                   </div>
-                  <p className="text-[11px] text-emerald-600">
-                    PRISM will generate personalized cover letters and
-                    submit applications to {sourceConfig?.name || 'the portal'} automatically. Failed
-                    applications will fall back to manual apply.
+                  <p className="text-[11px] text-blue-600">
+                    PRISM will generate a personalized cover letter and provide
+                    direct links to apply on {sourceConfig?.name || 'the portal'}. You'll click
+                    the links to complete your application.
                   </p>
                 </div>
               )}
@@ -463,7 +463,7 @@ export default function BatchApplyPanel() {
               </div>
             </div>
 
-            {/* Batch Progress (when running) */}
+            {/* Batch Progress (when running) — v4.0: Real-time step visibility */}
             {batch.status === 'running' && (
               <div className="mx-5 mt-4 p-4 bg-accent/5 rounded-xl border border-accent/20">
                 <div className="flex items-center gap-2 mb-2">
@@ -473,17 +473,28 @@ export default function BatchApplyPanel() {
                     {batch.currentIndex + 1} / {batch.totalCount}
                   </span>
                 </div>
-                <div className="w-full h-2 bg-primary-100 rounded-full overflow-hidden">
+                <div className="w-full h-2.5 bg-primary-100 rounded-full overflow-hidden">
                   <div
-                    className="h-full bg-accent rounded-full"
+                    className="h-full rounded-full"
                     style={{
                       width: `${progress}%`,
                       transition: 'width 0.5s ease',
+                      background: 'linear-gradient(90deg, #6366f1, #8b5cf6)',
                     }}
                   />
                 </div>
+                {/* Step-by-step detail */}
+                <div className="mt-2 p-2 bg-white/60 rounded-lg">
+                  <p className="text-[10px] text-primary-600 font-medium">
+                    {batch.currentIndex < batch.totalCount
+                      ? `Processing job ${batch.currentIndex + 1}: Sending to ${sourceConfig?.name || 'portal'}...`
+                      : 'Finishing up...'
+                    }
+                  </p>
+                </div>
                 <div className="flex justify-between mt-2 text-[10px] text-primary-500">
-                  <span className="text-status-success font-medium">{batch.successCount} success</span>
+                  <span className="text-status-success font-medium">{batch.successCount} auto-applied</span>
+                  <span className="text-blue-500 font-medium">{(batch as any).manualNeededCount || 0} manual needed</span>
                   <span className="text-status-danger font-medium">{batch.failCount} failed</span>
                 </div>
               </div>
@@ -505,15 +516,97 @@ export default function BatchApplyPanel() {
               </div>
             )}
 
-            {/* Batch Complete */}
+            {/* ===== BATCH COMPLETE — v4.0: Shows clickable manual apply links ===== */}
             {batch.status === 'cooldown' && isComplete && (
-              <div className="mx-5 mt-4 p-4 bg-status-success/5 rounded-xl border border-status-success/20">
-                <div className="flex items-center gap-2 mb-1">
-                  <CheckCircle2 className="w-4 h-4 text-status-success" />
-                  <span className="text-xs font-bold text-status-success">Batch Complete</span>
+              <div className="mx-5 mt-4 space-y-3">
+                {/* Summary */}
+                <div className={`p-4 rounded-xl border ${
+                  batch.successCount > 0
+                    ? 'bg-status-success/5 border-status-success/20'
+                    : (batch as any).manualNeededCount > 0
+                      ? 'bg-blue-50 border-blue-200'
+                      : 'bg-red-50 border-red-200'
+                }`}>
+                  <div className="flex items-center gap-2 mb-2">
+                    {batch.successCount > 0 ? (
+                      <CheckCircle2 className="w-4 h-4 text-status-success" />
+                    ) : (batch as any).manualNeededCount > 0 ? (
+                      <ExternalLink className="w-4 h-4 text-blue-600" />
+                    ) : (
+                      <AlertTriangle className="w-4 h-4 text-red-500" />
+                    )}
+                    <span className={`text-xs font-bold ${
+                      batch.successCount > 0 ? 'text-status-success'
+                        : (batch as any).manualNeededCount > 0 ? 'text-blue-700'
+                        : 'text-red-600'
+                    }`}>
+                      Batch Complete
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-center">
+                    <div>
+                      <p className="text-lg font-bold text-emerald-600">{batch.successCount}</p>
+                      <p className="text-[10px] text-primary-500">Auto-Applied</p>
+                    </div>
+                    <div>
+                      <p className="text-lg font-bold text-blue-600">{(batch as any).manualNeededCount || 0}</p>
+                      <p className="text-[10px] text-primary-500">Manual Needed</p>
+                    </div>
+                    <div>
+                      <p className="text-lg font-bold text-red-500">{batch.failCount}</p>
+                      <p className="text-[10px] text-primary-500">Failed</p>
+                    </div>
+                  </div>
                 </div>
-                <p className="text-[11px] text-primary-600">
-                  {batch.successCount} applications submitted successfully.
+
+                {/* ===== CLICKABLE MANUAL APPLY LINKS ===== */}
+                {/* This is the FIX for "not opening on laptop/desktop" */}
+                {/* window.open() is BLOCKED by popup blockers. Instead render <a> links */}
+                {((batch as any).manualApplyLinks || []).length > 0 && (
+                  <div className="p-4 bg-blue-50 rounded-xl border border-blue-200">
+                    <div className="flex items-center gap-2 mb-2">
+                      <ExternalLink className="w-4 h-4 text-blue-600" />
+                      <span className="text-xs font-bold text-blue-700">
+                        Click to Apply Manually ({((batch as any).manualApplyLinks || []).length})
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-blue-600 mb-3">
+                      These jobs could not be auto-applied. Click each link to open the application page:
+                    </p>
+                    <div className="space-y-2 max-h-[200px] overflow-y-auto">
+                      {((batch as any).manualApplyLinks || []).map((link: { id: string; url: string; title: string; company: string }, idx: number) => (
+                        <a
+                          key={link.id || idx}
+                          href={link.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-2 p-2.5 bg-white rounded-lg border border-blue-100 hover:border-blue-300 hover:bg-blue-50 transition-all active:scale-[0.98]"
+                          onClick={() => hapticFeedback('light')}
+                        >
+                          <span className="w-5 h-5 bg-blue-600 rounded-md flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0">
+                            {idx + 1}
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-semibold text-primary-800 line-clamp-1">{link.title}</p>
+                            {link.company && <p className="text-[10px] text-primary-500 line-clamp-1">{link.company}</p>}
+                          </div>
+                          <ExternalLink className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* All auto-applied successfully */}
+                {batch.successCount > 0 && ((batch as any).manualNeededCount || 0) === 0 && batch.failCount === 0 && (
+                  <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-200">
+                    <p className="text-[11px] text-emerald-700 font-medium text-center">
+                      All {batch.successCount} applications were submitted automatically! No manual action needed.
+                    </p>
+                  </div>
+                )}
+
+                <p className="text-[10px] text-primary-400 text-center">
                   Select new internships to start another batch.
                 </p>
               </div>

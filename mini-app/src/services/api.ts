@@ -507,6 +507,32 @@ export async function fetchSupabaseStats(): Promise<APIResponse<any>> {
   }
 }
 
+// ===== CANONICAL JOB COUNT =====
+// Single source of truth for job count across ALL surfaces.
+// Call this from Header, Profile, Settings — everywhere you show a count.
+export async function fetchCanonicalCount(): Promise<APIResponse<{
+  canonical_count: number;
+  sqlite_count: number;
+  supabase_count: number;
+}>> {
+  try {
+    const resp = await fetch(getApiUrl('/canonical-count'), { headers: getHeaders() });
+    if (!resp.ok) throw new Error(`API error: ${resp.status}`);
+    const data = await resp.json();
+    return {
+      success: data.success,
+      data: data.data,
+      timestamp: data.timestamp || new Date().toISOString(),
+    };
+  } catch (error) {
+    return {
+      success: false,
+      data: { canonical_count: 0, sqlite_count: 0, supabase_count: 0 },
+      timestamp: new Date().toISOString(),
+    };
+  }
+}
+
 // ===== SYSTEM HEALTH CHECK =====
 export async function fetchSystemHealth(): Promise<APIResponse<{
   backend: boolean;
