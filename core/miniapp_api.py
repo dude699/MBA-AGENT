@@ -1898,6 +1898,12 @@ async def handle_system_health(request: web.Request) -> web.Response:
         "uptime": 0,
     }
 
+    # ===== CANONICAL JOB COUNT =====
+    # Single source of truth for ALL surfaces (mini-app tabs, Telegram bot, profile)
+    canonical_count = 0
+    sqlite_count = 0
+    supabase_count = 0
+
     # System metrics — zero-cost, pure computation
     try:
         import psutil
@@ -1945,6 +1951,9 @@ async def handle_system_health(request: web.Request) -> web.Response:
             try:
                 stats = db.get_stats() if hasattr(db, 'get_stats') else {}
                 result["db_stats"] = stats
+                # Get SQLite count for canonical total
+                source_counts = db.get_source_counts()
+                sqlite_count = sum(source_counts.values()) if source_counts else 0
             except Exception:
                 pass
     except Exception:
@@ -2002,6 +2011,8 @@ async def handle_system_health(request: web.Request) -> web.Response:
                 from core.supabase_db import SupabaseJobDB
                 stats = SupabaseJobDB.get_stats()
                 result["supabase_stats"] = stats
+                # Get Supabase count for canonical total
+                supabase_count = stats.get('all_jobs_total', 0) or stats.get('total', 0) or 0
             except Exception:
                 pass
         else:
@@ -2009,9 +2020,60 @@ async def handle_system_health(request: web.Request) -> web.Response:
     except Exception as e:
         result["supabase"] = {"connected": False, "error": str(e)[:200]}
 
+    # ===== CANONICAL JOB COUNT: The ONE number used everywhere =====
+    # Rule: max(sqlite_count, supabase_count) to avoid undercounting
+    canonical_count = max(sqlite_count, supabase_count)
+    result["canonical_job_count"] = canonical_count
+    result["canonical_breakdown"] = {
+        "sqlite": sqlite_count,
+        "supabase": supabase_count,
+        "note": "Use canonical_job_count as THE job count everywhere",
+    }
+
     return _json_response({
         "success": True,
         "data": result,
+        "timestamp": datetime.now(IST).isoformat(),
+    })
+
+
+async def handle_canonical_count(request: web.Request) -> web.Response:
+    """
+    GET /api/canonical-count
+    Returns THE single source of truth job count for all UI surfaces.
+    Lightweight endpoint — no agent heartbeats, no AI check, just counts.
+    Use this everywhere: mini-app header, Telegram bot, profile tab.
+    """
+    sqlite_count = 0
+    supabase_count = 0
+
+    try:
+        from core.database import get_db
+        db = get_db()
+        if db:
+            source_counts = db.get_source_counts()
+            sqlite_count = sum(source_counts.values()) if source_counts else 0
+    except Exception:
+        pass
+
+    try:
+        from core.supabase_client import is_operational
+        if is_operational():
+            from core.supabase_db import SupabaseJobDB
+            stats = SupabaseJobDB.get_stats()
+            supabase_count = stats.get('all_jobs_total', 0) or stats.get('total', 0) or 0
+    except Exception:
+        pass
+
+    canonical = max(sqlite_count, supabase_count)
+
+    return _json_response({
+        "success": True,
+        "data": {
+            "canonical_count": canonical,
+            "sqlite_count": sqlite_count,
+            "supabase_count": supabase_count,
+        },
         "timestamp": datetime.now(IST).isoformat(),
     })
 
@@ -2096,6 +2158,9 @@ def register_miniapp_routes(app):
 
     # System health check
     app.router.add_get('/api/system/health', handle_system_health)
+
+    # Canonical job count — single source of truth for all surfaces
+    app.router.add_get('/api/canonical-count', handle_canonical_count)
 
     # Admin: Database reset (clears all listings for fresh start)
     app.router.add_post('/api/admin/reset-db', handle_admin_reset_db)

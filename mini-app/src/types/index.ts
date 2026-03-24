@@ -188,6 +188,9 @@ export interface BatchState {
   errors: BatchError[];
   successCount: number;
   failCount: number;
+  // v4.0: Manual apply links (rendered as clickable <a> tags, not window.open)
+  manualApplyLinks?: Array<{ id: string; url: string; title: string; company: string }>;
+  manualNeededCount?: number;
 }
 
 export interface BatchError {

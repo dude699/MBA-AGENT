@@ -3,7 +3,7 @@
 // Fully scrollable, real data, professional charts
 // ============================================================
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import {
   BarChart3, TrendingUp, Target, Users, Briefcase, CheckCircle2,
@@ -14,12 +14,23 @@ import { useAnalytics } from '@/hooks/useHooks';
 import { SOURCE_CONFIG } from '@/utils/constants';
 import { formatNumber } from '@/utils/helpers';
 import { useAppStore } from '@/store/useAppStore';
+import { fetchCanonicalCount } from '@/services/api';
 
 export default function AnalyticsDashboard() {
   const { data: response, isLoading, refetch } = useAnalytics();
   const analytics = response?.data;
   const { appliedIds, viewedIds, dismissedIds } = useAppStore();
   const [refreshing, setRefreshing] = useState(false);
+  const [canonicalCount, setCanonicalCount] = useState<number>(0);
+
+  // Fetch canonical count for consistent display
+  useEffect(() => {
+    fetchCanonicalCount().then(resp => {
+      if (resp.success && resp.data?.canonical_count) {
+        setCanonicalCount(resp.data.canonical_count);
+      }
+    }).catch(() => {});
+  }, []);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -61,7 +72,7 @@ export default function AnalyticsDashboard() {
         <MetricCard
           icon={<Briefcase className="w-5 h-5 text-blue-500" />}
           label="Total Listings"
-          value={formatNumber(analytics.totalListings)}
+          value={formatNumber(canonicalCount > 0 ? canonicalCount : analytics.totalListings)}
           bg="#eff6ff"
           accent="#3b82f6"
         />

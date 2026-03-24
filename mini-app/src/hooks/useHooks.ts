@@ -95,10 +95,17 @@ export function useAnalytics() {
 }
 
 // ===== BATCH APPLY =====
-// v3.0: ALL sources go through backend batch-apply API for real application.
-// The backend handles auto-apply via A-13 for supported sources (internshala,
-// naukri, greenhouse, lever) and marks as applied for tracking.
-// NO MORE window.open() as primary action — that was the entire bug.
+// v4.0: COMPLETE REWRITE — fixes "Application processed" false positive.
+// ROOT CAUSE: backend returns success:true + method:'direct' for ALL sources
+// meaning "we recorded it" not "we applied". Frontend was treating ALL
+// success:true as "applied" which is WRONG.
+// 
+// FIX 1: Only count method:'auto_applied' as real success. Everything else
+//        is manual-apply-needed.
+// FIX 2: window.open() is BLOCKED by popup blockers on Telegram Desktop
+//        and most browsers. Instead, we store URLs in batch state and
+//        render clickable links in the BatchApplyPanel completion UI.
+// FIX 3: Show real-time step-by-step toast notifications during apply.
 export function useBatchApply() {
   const {
     batch, selectedIds, lockedSource, credentials,
@@ -124,7 +131,6 @@ export function useBatchApply() {
       if (selectedSources.size === 1) {
         const detectedSource = [...selectedSources][0];
         useAppStore.getState().setLockedSource(detectedSource as any);
-        // Continue with detected source
       } else if (selectedSources.size > 1) {
         toast.error('Selected internships are from multiple sources. Please select from only one source.');
         return;
@@ -134,7 +140,6 @@ export function useBatchApply() {
       }
     }
 
-    // Re-read lockedSource in case it was auto-detected above
     const currentLockedSource = useAppStore.getState().lockedSource;
     const normalizedLockedSource = (currentLockedSource || lockedSource || '').toLowerCase().trim();
 
@@ -143,10 +148,7 @@ export function useBatchApply() {
       return;
     }
 
-    // Check if this source has credential requirements
     const needsCreds = CREDENTIAL_REQUIREMENTS.some((c: any) => (c.source || '').toLowerCase() === normalizedLockedSource);
-
-    // Get credentials if they exist (optional for some sources) — case-insensitive
     const cred = credentials.find((c) => (c.source || '').toLowerCase() === normalizedLockedSource);
 
     if (needsCreds && (!cred || !cred.isValid)) {
@@ -159,58 +161,77 @@ export function useBatchApply() {
     startBatch();
     hapticFeedback('medium');
 
+    // Step 1: Notify user the process is starting
+    toast.loading('Connecting to server...', { id: 'batch-step' });
+
     try {
-      // ALL sources now go through the batch-apply API.
-      // The backend will:
-      //   1. For credential sources (internshala, naukri, greenhouse, lever):
-      //      attempt real auto-apply via A-13
-      //   2. For all sources: record the application in the database
-      //   3. Return results with source_url ONLY as fallback info
-      // Wrap the entire batch API call in a robust try-catch
       let batchResult: any;
       try {
+        // Step 2: Sending to backend
+        toast.loading(`Sending ${ids.length} applications to server...`, { id: 'batch-step' });
         batchResult = await batchApplyToInternships(
           ids,
           cred?.credentials || {},
           normalizedLockedSource
         );
+        toast.dismiss('batch-step');
       } catch (apiErr: any) {
-        // Network/fetch-level error — complete batch gracefully
+        toast.dismiss('batch-step');
         completeBatch();
         hapticFeedback('medium');
-        toast.error('Connection error. Please check your internet and try again.');
+        toast.error('Connection error. Check your internet and try again.');
         return;
       }
 
       if (batchResult.success && batchResult.data) {
         const results = batchResult.data?.results || [];
-        let successCount = 0;
+        let autoAppliedCount = 0;
+        let manualNeededCount = 0;
         let failCount = 0;
         const processedIds: string[] = [];
         const failedIds: string[] = [];
         const errors: Array<{ internshipId: string; error: string; timestamp: string; retryable: boolean }> = [];
-        // Track URLs that need manual apply
-        const manualApplyUrls: string[] = [];
+        // CRITICAL: Store URLs for manual apply — rendered as clickable links, NOT window.open()
+        const manualApplyLinks: Array<{ id: string; url: string; title: string; company: string }> = [];
+
+        // Resolve job details for nice names
+        const sbCache = ((window as any).__sbJobsCache || []) as any[];
+        const storeJobs = useAppStore.getState().internships;
+        const allJobs = [...storeJobs, ...sbCache];
 
         for (let i = 0; i < results.length; i++) {
           const result = results[i];
           const id = String(result?.id || ids[i] || '');
+          const job = allJobs.find((j: any) => String(j.id) === id);
+          const jobTitle = job?.title || `Job #${id}`;
+          const jobCompany = job?.company || '';
+
           setBatchState({ currentIndex: i, status: 'running' });
+
+          // Step-by-step toast: show what's happening for each job
+          toast.loading(`Processing ${i + 1}/${results.length}: ${jobTitle.slice(0, 40)}...`, { id: 'batch-step' });
 
           try {
             if (result?.success && result?.method === 'auto_applied') {
-              // Truly auto-applied by backend A-13
+              // ===== REAL AUTO-APPLY: Backend A-13 submitted the application =====
               markApplied(id, 'applied');
-              successCount++;
+              autoAppliedCount++;
               processedIds.push(id);
+              toast.success(`Auto-applied: ${jobTitle.slice(0, 35)}`, { duration: 2000 });
             } else if (result?.success) {
-              // Backend recorded it but auto-apply failed or not supported
-              // CRITICAL FIX: collect source URLs for manual apply
+              // ===== NOT AUTO-APPLIED: Backend only RECORDED it =====
+              // method is 'direct' or 'auto_apply_failed' or 'auto_apply_error'
+              // This means the user MUST manually apply
               processedIds.push(id);
-              successCount++;
-              const sourceUrl = result?.source_url || '';
-              if (sourceUrl && (result?.method === 'auto_apply_failed' || result?.method === 'auto_apply_error' || result?.method === 'direct')) {
-                manualApplyUrls.push(sourceUrl);
+              manualNeededCount++;
+              const sourceUrl = result?.source_url || job?.sourceUrl || '';
+              if (sourceUrl) {
+                manualApplyLinks.push({ id, url: sourceUrl, title: jobTitle, company: jobCompany });
+              }
+              // Do NOT call markApplied — the user hasn't actually applied!
+              // Show honest toast about what happened
+              if (result?.method === 'auto_apply_failed') {
+                toast(`Auto-apply failed for ${jobTitle.slice(0, 30)}. Manual apply needed.`, { icon: '\u26A0\uFE0F', duration: 2500 });
               }
             } else {
               failCount++;
@@ -221,6 +242,7 @@ export function useBatchApply() {
                 timestamp: new Date().toISOString(),
                 retryable: true,
               });
+              toast.error(`Failed: ${jobTitle.slice(0, 35)}`, { duration: 2000 });
             }
           } catch (itemErr) {
             failCount++;
@@ -228,66 +250,49 @@ export function useBatchApply() {
           }
 
           if (i < results.length - 1) {
-            await new Promise((r) => setTimeout(r, 150));
+            await new Promise((r) => setTimeout(r, 300));
           }
         }
 
+        toast.dismiss('batch-step');
+
+        // Store manual apply links in batch state so the UI can render clickable links
         setBatchState({
           processedIds,
           failedIds,
-          successCount,
+          successCount: autoAppliedCount,
           failCount,
           errors,
+          manualApplyLinks: manualApplyLinks as any,
+          manualNeededCount,
         });
 
         completeBatch();
         hapticFeedback('heavy');
 
-        // CRITICAL FIX: Open source URLs for jobs that need manual apply
-        // This is what was missing — users were told to "apply manually"
-        // but had NO way to actually reach the listing URL!
-        if (manualApplyUrls.length > 0) {
-          // Open first URL immediately, queue rest with small delays
-          for (let i = 0; i < Math.min(manualApplyUrls.length, 5); i++) {
-            const url = manualApplyUrls[i];
-            if (url) {
-              if (i === 0) {
-                window.open(url, '_blank');
-              } else {
-                setTimeout(() => window.open(url, '_blank'), i * 800);
-              }
-            }
-          }
-        }
-
-        // Show clear toast based on results
-        const autoApplied = results.filter((r: any) => r?.method === 'auto_applied').length;
-        const manualCount = manualApplyUrls.length;
-
-        if (autoApplied > 0 && manualCount === 0 && failCount === 0) {
-          toast.success(`${autoApplied} application${autoApplied > 1 ? 's' : ''} submitted automatically!`);
-        } else if (autoApplied > 0 && manualCount > 0) {
-          toast.success(`${autoApplied} auto-submitted! ${manualCount} opened for manual apply.`);
-        } else if (manualCount > 0 && failCount === 0) {
-          toast(`${manualCount} listing${manualCount > 1 ? 's' : ''} opened in browser. Complete your application there.`, { icon: '\uD83D\uDD17', duration: 5000 });
-        } else if (successCount > 0 && failCount > 0) {
-          toast.success(`${successCount} processed, ${failCount} failed.`);
+        // ===== HONEST TOAST MESSAGES =====
+        if (autoAppliedCount > 0 && manualNeededCount === 0 && failCount === 0) {
+          toast.success(`${autoAppliedCount} application${autoAppliedCount > 1 ? 's' : ''} submitted automatically!`, { duration: 4000 });
+        } else if (autoAppliedCount > 0 && manualNeededCount > 0) {
+          toast.success(`${autoAppliedCount} auto-submitted! ${manualNeededCount} need manual apply — see links below.`, { duration: 5000 });
+        } else if (manualNeededCount > 0 && failCount === 0) {
+          // THIS IS THE CRITICAL CASE: method='direct' — nothing was auto-applied!
+          toast(`${manualNeededCount} listing${manualNeededCount > 1 ? 's' : ''} need manual apply. Click the links below to open them.`, { icon: '\uD83D\uDC47', duration: 6000 });
+        } else if (failCount > 0 && (autoAppliedCount + manualNeededCount) > 0) {
+          toast(`${autoAppliedCount} auto-applied, ${manualNeededCount} need manual, ${failCount} failed.`, { icon: '\u2139\uFE0F', duration: 5000 });
         } else if (failCount > 0) {
-          toast.error(`${failCount} application${failCount > 1 ? 's' : ''} failed. Try again or apply manually.`);
+          toast.error(`All ${failCount} applications failed. Please try again.`);
         } else if (results.length === 0) {
-          toast.error('No results returned from server. Please try again.');
-        } else {
-          toast('Applications processed.', { icon: '\u2139\uFE0F' });
+          toast.error('No results from server. Please try again.');
         }
       } else {
-        // API returned error or empty result
         completeBatch();
         hapticFeedback('medium');
         const errorMsg = batchResult?.error || 'Server error';
         toast.error(`${errorMsg}. Please try again.`);
       }
     } catch (err: any) {
-      // Unexpected error in the entire flow
+      try { toast.dismiss('batch-step'); } catch {}
       try { completeBatch(); } catch {}
       hapticFeedback('medium');
       toast.error('Unexpected error. Please try again.');
