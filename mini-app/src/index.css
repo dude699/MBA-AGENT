@@ -846,7 +846,7 @@
 @keyframes tab-slide-in {
   from {
     opacity: 0;
-    transform: translateX(12px);
+    transform: translateX(8px);
   }
   to {
     opacity: 1;
@@ -854,7 +854,8 @@
   }
 }
 .animate-tab-in {
-  animation: tab-slide-in 0.25s var(--ease-premium) forwards;
+  animation: tab-slide-in 0.2s var(--ease-premium) forwards;
+  will-change: opacity, transform;
 }
 
 /* Shine sweep for premium elements */

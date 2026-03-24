@@ -14,7 +14,7 @@ import {
   chatWithLLM,
 } from '@/services/api';
 import { applyFilters, applySorting, deduplicateInternships, hapticFeedback } from '@/utils/helpers';
-import { ITEMS_PER_PAGE } from '@/utils/constants';
+import { ITEMS_PER_PAGE, CREDENTIAL_REQUIREMENTS } from '@/utils/constants';
 import type { Internship, FilterState, SortField, InternshipSource } from '@/types';
 import toast from 'react-hot-toast';
 
@@ -144,8 +144,7 @@ export function useBatchApply() {
     }
 
     // Check if this source has credential requirements
-    const credReq = (await import('@/utils/constants')).CREDENTIAL_REQUIREMENTS;
-    const needsCreds = credReq.some((c: any) => (c.source || '').toLowerCase() === normalizedLockedSource);
+    const needsCreds = CREDENTIAL_REQUIREMENTS.some((c: any) => (c.source || '').toLowerCase() === normalizedLockedSource);
 
     // Get credentials if they exist (optional for some sources) — case-insensitive
     const cred = credentials.find((c) => (c.source || '').toLowerCase() === normalizedLockedSource);
@@ -202,17 +201,21 @@ export function useBatchApply() {
               markApplied(id, 'applied');
               successCount++;
               processedIds.push(id);
-            } else if (result?.success && result?.method === 'direct') {
-              // Backend recorded it — manual-only source
-              // Mark as queued, not applied
-              processedIds.push(id);
-              successCount++; // Count as success since server accepted it
             } else if (result?.success) {
-              // Any other success method
+              // Backend accepted it: could be 'direct', 'auto_apply_failed', or 'auto_apply_error'
+              // These are all counted as success because the job is recorded/queued
+              // and source_url is available for manual fallback
               processedIds.push(id);
               successCount++;
+              // If auto-apply failed but was recorded, mark as queued
+              if (result?.method === 'auto_apply_failed' || result?.method === 'auto_apply_error') {
+                // Don't mark as "applied" — it's queued for manual apply
+                // User can open source URL to complete application
+              } else {
+                // direct method — recorded successfully
+              }
             } else {
-              // Failure — any kind
+              // Failure — only truly broken items (invalid ID, not found)
               failCount++;
               failedIds.push(id);
               errors.push({
@@ -249,10 +252,19 @@ export function useBatchApply() {
         // Users can manually open links from job detail if needed
 
         // Show toast based on results
-        if (successCount > 0 && failCount === 0) {
-          toast.success(`${successCount} application${successCount > 1 ? 's' : ''} submitted!`);
+        const autoApplied = results.filter((r: any) => r?.method === 'auto_applied').length;
+        const manualFallback = results.filter((r: any) => 
+          r?.success && (r?.method === 'auto_apply_failed' || r?.method === 'auto_apply_error' || r?.method === 'direct')
+        ).length;
+
+        if (autoApplied > 0 && failCount === 0 && manualFallback === 0) {
+          toast.success(`${autoApplied} application${autoApplied > 1 ? 's' : ''} submitted automatically!`);
+        } else if (autoApplied > 0 && manualFallback > 0) {
+          toast.success(`${autoApplied} auto-submitted, ${manualFallback} queued for manual apply.`);
+        } else if (successCount > 0 && failCount === 0) {
+          toast.success(`${successCount} application${successCount > 1 ? 's' : ''} recorded! Open listings to complete manually.`);
         } else if (successCount > 0 && failCount > 0) {
-          toast.success(`${successCount} submitted, ${failCount} failed.`);
+          toast.success(`${successCount} recorded, ${failCount} failed.`);
         } else if (failCount > 0) {
           toast.error(`${failCount} application${failCount > 1 ? 's' : ''} failed. Try again or apply manually.`);
         } else if (results.length === 0) {

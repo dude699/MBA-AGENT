@@ -243,7 +243,12 @@ export async function batchApplyToInternships(
       method: 'POST',
       headers: getHeaders(),
       body: JSON.stringify({
-        listing_ids: listingIds.map(id => parseInt(id, 10) || id),
+        listing_ids: listingIds.map(id => {
+          // Keep sb_ prefixed IDs as strings, parse others to int
+          if (typeof id === 'string' && id.startsWith('sb_')) return id;
+          const parsed = parseInt(id, 10);
+          return isNaN(parsed) ? id : parsed;
+        }),
         credentials,
         source: (source || '').toLowerCase(),
       }),

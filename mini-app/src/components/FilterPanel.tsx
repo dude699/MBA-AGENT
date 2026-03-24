@@ -574,13 +574,15 @@ function FilterSection({
       {/* CSS transition instead of framer-motion — no glitch */}
       <div
         style={{
-          maxHeight: expanded ? '800px' : '0',
+          display: 'grid',
+          gridTemplateRows: expanded ? '1fr' : '0fr',
           opacity: expanded ? 1 : 0,
-          overflow: 'hidden',
-          transition: 'max-height 0.25s ease, opacity 0.2s ease',
+          transition: 'grid-template-rows 0.3s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.25s ease',
         }}
       >
-        <div className="px-5 pb-4" onClick={(e) => e.stopPropagation()}>{children}</div>
+        <div style={{ overflow: 'hidden' }}>
+          <div className="px-5 pb-4" onClick={(e) => e.stopPropagation()}>{children}</div>
+        </div>
       </div>
     </div>
   );
