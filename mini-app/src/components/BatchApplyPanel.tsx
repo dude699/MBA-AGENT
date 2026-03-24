@@ -9,10 +9,9 @@
 // ============================================================
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
 import {
   X, Play, Pause, CheckCircle2, AlertTriangle, Shield, Lock,
-  Clock, Zap, ChevronRight, AlertOctagon, Info, Loader2,
+  Clock, Zap, ChevronRight, AlertOctagon, Info,
   Eye, EyeOff, Key, ExternalLink, Send, RotateCcw, User,
   FileText, Phone, Mail, MapPin, GraduationCap, Briefcase
 } from 'lucide-react';
@@ -289,10 +288,8 @@ export default function BatchApplyPanel() {
               </p>
 
               {(showExtraInfo || (!extraInfoSaved && portalFields.some(f => f.required))) && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: 'auto' }}
-                  className="bg-surface-muted p-4 rounded-xl border border-surface-border"
+                <div
+                  className="bg-surface-muted p-4 rounded-xl border border-surface-border animate-fade-in"
                 >
                   <div className="flex items-center gap-2 mb-3">
                     <FileText className="w-4 h-4 text-accent" />
@@ -337,7 +334,7 @@ export default function BatchApplyPanel() {
                   >
                     Save & Continue
                   </button>
-                </motion.div>
+                </div>
               )}
             </div>
 
@@ -368,8 +365,9 @@ export default function BatchApplyPanel() {
                     <span className="text-[11px] font-bold text-emerald-700">Auto-Apply Ready</span>
                   </div>
                   <p className="text-[11px] text-emerald-600">
-                    PRISM will submit applications and generate cover letters automatically.
-                    {applyCount} application{applyCount > 1 ? 's' : ''} will be processed.
+                    PRISM will generate personalized cover letters and
+                    submit applications to {sourceConfig?.name || 'the portal'} automatically. Failed
+                    applications will fall back to manual apply.
                   </p>
                 </div>
               )}
@@ -396,10 +394,8 @@ export default function BatchApplyPanel() {
               )}
 
               {showCredForm && credReq && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: 'auto' }}
-                  className="bg-surface-muted p-4 rounded-xl border border-surface-border"
+                <div
+                  className="bg-surface-muted p-4 rounded-xl border border-surface-border animate-fade-in"
                 >
                   <p className="text-[11px] text-primary-500 mb-3">{credReq.notes}</p>
                   {credReq.fields.map((field) => (
@@ -437,7 +433,7 @@ export default function BatchApplyPanel() {
                       Cancel
                     </button>
                   </div>
-                </motion.div>
+                </div>
               )}
             </div>
 
@@ -471,18 +467,19 @@ export default function BatchApplyPanel() {
             {batch.status === 'running' && (
               <div className="mx-5 mt-4 p-4 bg-accent/5 rounded-xl border border-accent/20">
                 <div className="flex items-center gap-2 mb-2">
-                  <Loader2 className="w-4 h-4 text-accent animate-spin" />
+                  <div className="w-4 h-4 text-accent animate-smooth-spin" style={{borderRadius:'50%', border:'2px solid currentColor', borderTopColor:'transparent'}} />
                   <span className="text-xs font-bold text-accent">Applying...</span>
                   <span className="text-xs text-primary-500 ml-auto">
                     {batch.currentIndex + 1} / {batch.totalCount}
                   </span>
                 </div>
                 <div className="w-full h-2 bg-primary-100 rounded-full overflow-hidden">
-                  <motion.div
+                  <div
                     className="h-full bg-accent rounded-full"
-                    initial={{ width: 0 }}
-                    animate={{ width: `${progress}%` }}
-                    transition={{ duration: 0.5 }}
+                    style={{
+                      width: `${progress}%`,
+                      transition: 'width 0.5s ease',
+                    }}
                   />
                 </div>
                 <div className="flex justify-between mt-2 text-[10px] text-primary-500">

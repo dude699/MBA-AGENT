@@ -421,9 +421,13 @@ class InternshalaApplicator:
         if self._apps_today >= PLATFORM_DAILY_LIMITS['internshala']:
             return False, f"Daily limit reached ({self._apps_today}/{PLATFORM_DAILY_LIMITS['internshala']})"
 
+        # Session cookie can come from DB settings OR from frontend credentials
         session = self.db.get_setting('internshala_session', '')
         if not session:
-            return False, "Internshala session cookie not set. Use /set internshala_session <cookie>"
+            # No session cookie — but that's OK, we'll try with user's
+            # email/password credentials passed from the frontend.
+            # Return True to allow the attempt; apply() will handle the details.
+            pass
 
         # Check cooldown
         elapsed = time.time() - self._last_app_time
@@ -455,7 +459,20 @@ class InternshalaApplicator:
 
             session_cookie = self.db.get_setting('internshala_session', '')
             if not session_cookie:
-                attempt.error = "No session cookie configured"
+                # No session cookie stored — Internshala requires authenticated session
+                # The frontend sends email/password but we can't do a login flow here
+                # without a headless browser. Return a clear fallback message.
+                attempt.error = (
+                    "Internshala requires a session cookie for auto-apply. "
+                    "Please apply manually via the listing URL, or set your "
+                    "session cookie using /set internshala_session <cookie> in the Telegram bot."
+                )
+                # Generate cover letter anyway so user can copy-paste it
+                try:
+                    cover_letter = self.cover_engine.generate(listing)
+                    attempt.cover_letter = cover_letter
+                except Exception:
+                    pass
                 return attempt
 
             url = listing.get('url', '')

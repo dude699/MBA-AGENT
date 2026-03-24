@@ -3,7 +3,6 @@
 // ============================================================
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
 import { RefreshCw, ChevronUp, Clock, Archive, Database } from 'lucide-react';
 
 import Header from '@/components/Header';
@@ -134,15 +133,9 @@ export default function App() {
 
       {/* Main Content */}
       <main>
-        <AnimatePresence mode="wait">
+        {/* Removed AnimatePresence — causes mobile WebView lag. CSS transitions instead. */}
           {activeTab === 'browse' && (
-            <motion.div
-              key="browse"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.15 }}
-            >
+            <div className="animate-tab-in">
               {/* Browse Mode Tabs: Live | Latest (Supabase) | Archive (Supabase) */}
               <div className="px-4 pt-3 pb-1">
                 <div className="flex gap-1 rounded-xl p-1" style={{ background: '#f3f4f6' }}>
@@ -376,33 +369,20 @@ export default function App() {
                   </div>
                 </div>
               )}
-            </motion.div>
+            </div>
           )}
 
           {activeTab === 'analytics' && (
-            <motion.div
-              key="analytics"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              transition={{ duration: 0.2 }}
-            >
+            <div className="animate-tab-in">
               <AnalyticsDashboard />
-            </motion.div>
+            </div>
           )}
 
           {activeTab === 'settings' && (
-            <motion.div
-              key="settings"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              transition={{ duration: 0.2 }}
-            >
+            <div className="animate-tab-in">
               <SettingsPage />
-            </motion.div>
+            </div>
           )}
-        </AnimatePresence>
       </main>
 
       {/* Panels & Modals — z-index: Filter/Sort 50, LLM 60, Detail 50 */}
@@ -416,20 +396,15 @@ export default function App() {
       <BottomBar activeTab={activeTab} onTabChange={setActiveTab} />
 
       {/* Scroll to Top — stays above content but below bottom bar */}
-      <AnimatePresence>
-        {showScrollTop && (
-          <motion.button
-            initial={{ opacity: 0, scale: 0.8 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.8 }}
-            onClick={scrollToTop}
-            className="fixed right-4 z-30 w-10 h-10 rounded-full flex items-center justify-center transition-colors"
-            style={{ background: '#ffffff', border: '1px solid #e5e7eb', boxShadow: '0 4px 24px rgba(0,0,0,0.08)', bottom: 'calc(88px + env(safe-area-inset-bottom, 0px))' }}
-          >
-            <ChevronUp className="w-5 h-5" style={{color:'#4b5563'}} />
-          </motion.button>
-        )}
-      </AnimatePresence>
+      {showScrollTop && (
+        <button
+          onClick={scrollToTop}
+          className="fixed right-4 z-30 w-10 h-10 rounded-full flex items-center justify-center animate-fade-in"
+          style={{ background: '#ffffff', border: '1px solid #e5e7eb', boxShadow: '0 4px 24px rgba(0,0,0,0.08)', bottom: 'calc(88px + env(safe-area-inset-bottom, 0px))' }}
+        >
+          <ChevronUp className="w-5 h-5" style={{color:'#4b5563'}} />
+        </button>
+      )}
     </div>
   );
 }
