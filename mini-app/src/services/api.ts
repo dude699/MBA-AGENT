@@ -43,6 +43,8 @@ function getHeaders(): Record<string, string> {
 
 // ===== SORT FIELD MAPPING (frontend -> backend) =====
 // Backend sort_map supports: 'stipend', 'ppo', 'date', 'duration', 'applicants'
+// CRITICAL: Client-side sorting is AUTHORITATIVE (useFilteredInternships does the real sort).
+// Backend sort only matters for initial data ordering — client re-sorts locally.
 function mapSortField(sort: SortField): string {
   const map: Record<string, string> = {
     stipend_high: 'stipend',

@@ -189,6 +189,8 @@ export function useBatchApply() {
         const processedIds: string[] = [];
         const failedIds: string[] = [];
         const errors: Array<{ internshipId: string; error: string; timestamp: string; retryable: boolean }> = [];
+        // Track URLs that need manual apply
+        const manualApplyUrls: string[] = [];
 
         for (let i = 0; i < results.length; i++) {
           const result = results[i];
@@ -202,20 +204,15 @@ export function useBatchApply() {
               successCount++;
               processedIds.push(id);
             } else if (result?.success) {
-              // Backend accepted it: could be 'direct', 'auto_apply_failed', or 'auto_apply_error'
-              // These are all counted as success because the job is recorded/queued
-              // and source_url is available for manual fallback
+              // Backend recorded it but auto-apply failed or not supported
+              // CRITICAL FIX: collect source URLs for manual apply
               processedIds.push(id);
               successCount++;
-              // If auto-apply failed but was recorded, mark as queued
-              if (result?.method === 'auto_apply_failed' || result?.method === 'auto_apply_error') {
-                // Don't mark as "applied" — it's queued for manual apply
-                // User can open source URL to complete application
-              } else {
-                // direct method — recorded successfully
+              const sourceUrl = result?.source_url || '';
+              if (sourceUrl && (result?.method === 'auto_apply_failed' || result?.method === 'auto_apply_error' || result?.method === 'direct')) {
+                manualApplyUrls.push(sourceUrl);
               }
             } else {
-              // Failure — only truly broken items (invalid ID, not found)
               failCount++;
               failedIds.push(id);
               errors.push({
@@ -226,12 +223,10 @@ export function useBatchApply() {
               });
             }
           } catch (itemErr) {
-            // Single item processing error — don't crash the loop
             failCount++;
             failedIds.push(id);
           }
 
-          // Small delay between UI updates for visual progress
           if (i < results.length - 1) {
             await new Promise((r) => setTimeout(r, 150));
           }
@@ -248,23 +243,35 @@ export function useBatchApply() {
         completeBatch();
         hapticFeedback('heavy');
 
-        // NO window.open — all applications are handled server-side
-        // Users can manually open links from job detail if needed
+        // CRITICAL FIX: Open source URLs for jobs that need manual apply
+        // This is what was missing — users were told to "apply manually"
+        // but had NO way to actually reach the listing URL!
+        if (manualApplyUrls.length > 0) {
+          // Open first URL immediately, queue rest with small delays
+          for (let i = 0; i < Math.min(manualApplyUrls.length, 5); i++) {
+            const url = manualApplyUrls[i];
+            if (url) {
+              if (i === 0) {
+                window.open(url, '_blank');
+              } else {
+                setTimeout(() => window.open(url, '_blank'), i * 800);
+              }
+            }
+          }
+        }
 
-        // Show toast based on results
+        // Show clear toast based on results
         const autoApplied = results.filter((r: any) => r?.method === 'auto_applied').length;
-        const manualFallback = results.filter((r: any) => 
-          r?.success && (r?.method === 'auto_apply_failed' || r?.method === 'auto_apply_error' || r?.method === 'direct')
-        ).length;
+        const manualCount = manualApplyUrls.length;
 
-        if (autoApplied > 0 && failCount === 0 && manualFallback === 0) {
+        if (autoApplied > 0 && manualCount === 0 && failCount === 0) {
           toast.success(`${autoApplied} application${autoApplied > 1 ? 's' : ''} submitted automatically!`);
-        } else if (autoApplied > 0 && manualFallback > 0) {
-          toast.success(`${autoApplied} auto-submitted, ${manualFallback} queued for manual apply.`);
-        } else if (successCount > 0 && failCount === 0) {
-          toast.success(`${successCount} application${successCount > 1 ? 's' : ''} recorded! Open listings to complete manually.`);
+        } else if (autoApplied > 0 && manualCount > 0) {
+          toast.success(`${autoApplied} auto-submitted! ${manualCount} opened for manual apply.`);
+        } else if (manualCount > 0 && failCount === 0) {
+          toast(`${manualCount} listing${manualCount > 1 ? 's' : ''} opened in browser. Complete your application there.`, { icon: '\uD83D\uDD17', duration: 5000 });
         } else if (successCount > 0 && failCount > 0) {
-          toast.success(`${successCount} recorded, ${failCount} failed.`);
+          toast.success(`${successCount} processed, ${failCount} failed.`);
         } else if (failCount > 0) {
           toast.error(`${failCount} application${failCount > 1 ? 's' : ''} failed. Try again or apply manually.`);
         } else if (results.length === 0) {

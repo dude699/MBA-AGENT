@@ -934,3 +934,44 @@
   0%, 60%, 100% { transform: translateY(0); opacity: 0.3; }
   30% { transform: translateY(-8px); opacity: 1; }
 }
+
+/* ===== PERFORMANCE OPTIMIZATIONS ===== */
+
+/* GPU-accelerate panels and modals */
+.fixed {
+  will-change: transform, opacity;
+}
+
+/* Reduce layout thrashing on filter/sort panels */
+.overflow-y-auto {
+  contain: layout style;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Content visibility for off-screen card lists */
+.space-y-3 > *:nth-child(n+20) {
+  content-visibility: auto;
+  contain-intrinsic-size: 0 120px;
+}
+
+/* Smooth all transitions globally */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Eliminate filter panel lag: hardware-accelerate transforms */
+[style*="translateY"] {
+  will-change: transform;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+/* Faster sort/filter re-render */
+.animate-fade-in {
+  animation: fade-scale-in 0.2s ease-out forwards;
+}
+
+/* Reduce paint on scrolling lists */
+.flex-1.overflow-y-auto {
+  contain: layout paint;
+}
