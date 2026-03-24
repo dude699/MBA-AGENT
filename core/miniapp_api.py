@@ -289,7 +289,8 @@ async def handle_apply(request: web.Request) -> web.Response:
         apply_result = {'method': 'direct', 'source_url': source_url}
 
         # For credential-based sources, attempt real application via A-13
-        if credentials and source in ('internshala', 'naukri', 'greenhouse', 'lever', 'ashby', 'smartrecruiters'):
+        AUTO_APPLY_SINGLE = {'internshala', 'naukri', 'greenhouse', 'lever', 'ashby', 'ashbyhq', 'smartrecruiters', 'smart_recruiters'}
+        if credentials and source in AUTO_APPLY_SINGLE:
             try:
                 from agents.a13_auto_apply import get_auto_apply_orchestrator
                 orchestrator = get_auto_apply_orchestrator()
@@ -408,7 +409,7 @@ async def handle_batch_apply(request: web.Request) -> web.Response:
         # Cap at 10 per batch for safety
         listing_ids = listing_ids[:10]
 
-        # PRISM v0.3: Sources that support auto-apply via A-13 platform applicators
+        # PRISM v0.4: Sources that support auto-apply via A-13 platform applicators
         # Each source maps to its applicator class in A-13
         AUTO_APPLY_SOURCES = {
             'internshala': 'internshala',
@@ -420,6 +421,10 @@ async def handle_batch_apply(request: web.Request) -> web.Response:
             'smartrecruiters': 'smartrecruiters',
             'smart_recruiters': 'smartrecruiters',
         }
+        # Sources where we ALWAYS open the URL for the user (no auto-apply possible)
+        # For these: generate cover letter + return source_url for manual apply
+        MANUAL_WITH_URL_SOURCES = ('linkedin', 'indeed', 'iimjobs', 'wellfound',
+                                    'unstop', 'glassdoor', 'instahyre', 'careerpage')
         # Sources that CANNOT be auto-applied (require manual login/CAPTCHA)
         MANUAL_ONLY_SOURCES = ('workday',)
 
@@ -523,15 +528,18 @@ async def handle_batch_apply(request: web.Request) -> web.Response:
 
             # Route 2: (removed — internshala now handled by Route 1 via AUTO_APPLY_SOURCES)
 
-            # Route 3: Manual-only sources — record and provide URL for user
+            # Route 3: Manual-only sources (Workday etc.) — record and provide URL
             elif lst_source in MANUAL_ONLY_SOURCES:
                 apply_method = 'direct'
-                apply_error = f'{lst_source.title()} requires manual application'
+                apply_error = f'{lst_source.title()} requires manual application (CAPTCHA protected)'
 
-            # Route 4: LinkedIn — special handling (record + provide URL)
-            elif lst_source == 'linkedin':
+            # Route 4: Manual-with-URL sources (LinkedIn, Indeed, etc.)
+            # These generate a cover letter and ALWAYS return source_url
+            # The frontend MUST open source_url so the user can apply
+            elif lst_source in MANUAL_WITH_URL_SOURCES or True:
+                # This catches ALL remaining sources including unknown ones
                 apply_method = 'direct'
-                # Generate cover letter for LinkedIn manual apply
+                # Generate cover letter for the user to copy-paste
                 if orchestrator and orchestrator.cover_engine:
                     try:
                         cover_letter = orchestrator.cover_engine.generate({
@@ -543,10 +551,6 @@ async def handle_batch_apply(request: web.Request) -> web.Response:
                         })
                     except Exception:
                         pass
-
-            # Route 4: Unknown sources — record and provide URL
-            else:
-                apply_method = 'direct'
 
             # Record outcome in database — ONLY mark as 'applied' if truly auto-applied
             try:

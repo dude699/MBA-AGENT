@@ -3491,6 +3491,17 @@ class PrimaryScraper:
         self.ashby = AshbyDirectScraper(self.stealth, self.db)
         self.smartrecruiters = SmartRecruitersScraper(self.stealth, self.db)
 
+        # PRISM v0.2: JobSpy integration (robust open-source multi-portal scraper)
+        # Provides LinkedIn, Naukri, Indeed, Glassdoor via python-jobspy library
+        # Used as PRIMARY for LinkedIn/Naukri (replaces flaky custom scrapers)
+        self._jobspy = None
+        try:
+            from agents.jobspy_scraper import get_jobspy_scraper
+            self._jobspy = get_jobspy_scraper()
+            logger.info(f"[{AGENT_ID}] JobSpy integration ENABLED (LinkedIn, Naukri, Indeed, Glassdoor)")
+        except Exception as e:
+            logger.warning(f"[{AGENT_ID}] JobSpy not available: {e}. Using legacy scrapers.")
+
         # v6.0 compatibility: Day-routed portal control
         self._active_portals: Optional[list] = None
         self._proxy_pool_indices: Optional[list] = None
@@ -3633,16 +3644,30 @@ class PrimaryScraper:
         pre_count = self.db.count_raw_listings()
         self.db.update_agent_heartbeat(AGENT_ID, "running")
 
-        # LinkedIn DDG dorks
+        # LinkedIn — PRISM v0.2: Use JobSpy as PRIMARY, DDG dorks as fallback
         if self._should_scrape_portal('linkedin'):
             try:
-                listings = self.linkedin.search_jobs(max_dorks=5)
-                results['source']['linkedin'] = len(listings)
-                results['total'] += len(listings)
-                self._record_portal_result('linkedin', True, len(listings))
+                if self._jobspy:
+                    listings = self._jobspy.scrape_linkedin(max_results=50)
+                    results['source']['linkedin'] = len(listings)
+                    results['total'] += len(listings)
+                    self._record_portal_result('linkedin', True, len(listings))
+                    logger.info(f"[{AGENT_ID}] LinkedIn via JobSpy: {len(listings)} listings")
+                else:
+                    listings = self.linkedin.search_jobs(max_dorks=5)
+                    results['source']['linkedin'] = len(listings)
+                    results['total'] += len(listings)
+                    self._record_portal_result('linkedin', True, len(listings))
             except Exception as e:
-                results['errors'].append(f"LinkedIn: {str(e)}")
-                self._record_portal_result('linkedin', False)
+                # Fallback to DDG dorks if JobSpy fails
+                try:
+                    listings = self.linkedin.search_jobs(max_dorks=5)
+                    results['source']['linkedin'] = len(listings)
+                    results['total'] += len(listings)
+                    self._record_portal_result('linkedin', True, len(listings))
+                except Exception as e2:
+                    results['errors'].append(f"LinkedIn: {str(e)} / fallback: {str(e2)}")
+                    self._record_portal_result('linkedin', False)
 
         # Career Pages
         if self._should_scrape_portal('career_page'):
