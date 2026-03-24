@@ -408,10 +408,11 @@ async def handle_batch_apply(request: web.Request) -> web.Response:
         # Cap at 10 per batch for safety
         listing_ids = listing_ids[:10]
 
-        # PRISM v0.2: Sources that support auto-apply via A-13 platform applicators
+        # PRISM v0.3: Sources that support auto-apply via A-13 platform applicators
         # Each source maps to its applicator class in A-13
         AUTO_APPLY_SOURCES = {
             'internshala': 'internshala',
+            'naukri': 'naukri',
             'greenhouse': 'greenhouse',
             'lever': 'lever',
             'ashby': 'ashby',
@@ -420,7 +421,7 @@ async def handle_batch_apply(request: web.Request) -> web.Response:
             'smart_recruiters': 'smartrecruiters',
         }
         # Sources that CANNOT be auto-applied (require manual login/CAPTCHA)
-        MANUAL_ONLY_SOURCES = ('naukri', 'workday', 'linkedin')
+        MANUAL_ONLY_SOURCES = ('workday',)
 
         results = []
         success_count = 0
@@ -526,6 +527,22 @@ async def handle_batch_apply(request: web.Request) -> web.Response:
             elif lst_source in MANUAL_ONLY_SOURCES:
                 apply_method = 'direct'
                 apply_error = f'{lst_source.title()} requires manual application'
+
+            # Route 4: LinkedIn — special handling (record + provide URL)
+            elif lst_source == 'linkedin':
+                apply_method = 'direct'
+                # Generate cover letter for LinkedIn manual apply
+                if orchestrator and orchestrator.cover_engine:
+                    try:
+                        cover_letter = orchestrator.cover_engine.generate({
+                            'title': listing.get('title', ''),
+                            'company': listing.get('company', ''),
+                            'description_text': listing.get('description_text', ''),
+                            'location': listing.get('location', ''),
+                            'category': listing.get('category', ''),
+                        })
+                    except Exception:
+                        pass
 
             # Route 4: Unknown sources — record and provide URL
             else:

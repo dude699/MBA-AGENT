@@ -437,12 +437,15 @@ class InternshalaApplicator:
 
         return True, "Ready"
 
-    def apply(self, listing: Dict) -> ApplicationAttempt:
+    def apply(self, listing: Dict, cover_letter: str = '',
+              resume_path: str = '') -> ApplicationAttempt:
         """
         Apply to an Internshala listing.
         
         Args:
             listing: Clean listing dict with url, title, company, etc.
+            cover_letter: Pre-generated cover letter (optional)
+            resume_path: Path to resume file (optional)
         
         Returns:
             ApplicationAttempt with success/failure details
@@ -904,26 +907,111 @@ class LeverApplicator:
 
 class NaukriApplicator:
     """
-    PRISM v0.1: Naukri application handler.
+    PRISM v0.3: Naukri application handler.
 
-    Strategy: MANUAL ONLY — Naukri has aggressive login detection.
-    Queues the listing for the mini-app "Apply Manually" button.
-    The user clicks through to apply on naukri.com directly.
+    Strategy: Naukri Quick Apply API (requires session cookie).
+    If no session cookie, generates cover letter and queues for manual.
+    The user can provide their Naukri session cookie via:
+      /set naukri_session <cookie> in Telegram bot
     """
+
+    def __init__(self, cover_engine=None, db=None):
+        self.cover_engine = cover_engine
+        self.db = db
 
     def apply(self, listing: Dict, cover_letter: str = '',
               resume_path: str = '') -> ApplicationAttempt:
         attempt = ApplicationAttempt(
             listing_id=listing.get('id', 0),
             platform='naukri',
-            method='manual',
+            method='quick_apply',
         )
-        # Naukri requires manual application due to aggressive bot detection
-        attempt.error = (
-            "Naukri requires manual application. "
-            "Use the mini-app 'Apply Manually' button to open the listing."
-        )
-        attempt.success = False
+
+        try:
+            import requests
+
+            # Check for Naukri session cookie
+            session_cookie = ''
+            if self.db:
+                session_cookie = self.db.get_setting('naukri_session', '')
+
+            source_url = listing.get('url', '') or listing.get('source_url', '')
+
+            if not session_cookie:
+                # No session — generate cover letter for manual apply
+                if not cover_letter and self.cover_engine:
+                    try:
+                        cover_letter = self.cover_engine.generate(listing)
+                    except Exception:
+                        pass
+                attempt.cover_letter = cover_letter or ''
+                attempt.error = (
+                    "Naukri session cookie not configured. "
+                    "Application queued — please apply via the listing URL. "
+                    "Set your cookie using /set naukri_session <cookie> in Telegram."
+                )
+                attempt.success = False
+                return attempt
+
+            # Try Naukri Quick Apply API
+            job_id_match = re.search(r'-(\d+)/?(?:\?|$)', source_url)
+            if not job_id_match:
+                job_id_match = re.search(r'jid=(\d+)', source_url)
+            if not job_id_match:
+                attempt.error = "Could not extract Naukri job ID from URL"
+                attempt.success = False
+                return attempt
+
+            job_id = job_id_match.group(1)
+
+            # Generate cover letter if not provided
+            if not cover_letter and self.cover_engine:
+                try:
+                    cover_letter = self.cover_engine.generate(listing)
+                except Exception:
+                    pass
+            attempt.cover_letter = cover_letter or ''
+
+            # Quick apply endpoint
+            apply_url = f"https://www.naukri.com/central-loginservice/v1/login/quickApply"
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'Cookie': session_cookie,
+                'Referer': source_url,
+                'Origin': 'https://www.naukri.com',
+                'appid': '109',
+                'systemid': 'Naukri',
+            }
+
+            payload = {
+                'jobId': job_id,
+                'coverLetter': cover_letter[:2000] if cover_letter else '',
+            }
+
+            time.sleep(random.uniform(3, 8))
+            resp = requests.post(apply_url, json=payload, headers=headers, timeout=25)
+
+            if resp.status_code == 200:
+                resp_data = resp.json() if resp.headers.get('content-type', '').startswith('application/json') else {}
+                if resp_data.get('status') == 'SUCCESS' or 'success' in resp.text.lower():
+                    attempt.success = True
+                    attempt.external_app_id = job_id
+                    logger.info(f"[{AGENT_ID}] Naukri Quick Apply SUCCESS: {listing.get('title', '')}")
+                else:
+                    attempt.error = f"Naukri response: {resp.text[:200]}"
+            elif resp.status_code == 401:
+                attempt.error = "Naukri session expired. Please update cookie via /set naukri_session"
+            else:
+                attempt.error = f"Naukri Quick Apply HTTP {resp.status_code}"
+
+        except ImportError:
+            attempt.error = "requests library not available"
+        except Exception as e:
+            attempt.error = f"Naukri apply error: {str(e)[:200]}"
+            logger.error(f"[{AGENT_ID}] Naukri apply error: {e}")
+
         return attempt
 
 
@@ -1362,7 +1450,7 @@ class AutoApplyOrchestrator:
         self.internshala = InternshalaApplicator(self.db, self.cover_engine)
         self.greenhouse = GreenhouseApplicator(self.cover_engine, self.db)
         self.lever = LeverApplicator(self.cover_engine, self.db)
-        self.naukri = NaukriApplicator()
+        self.naukri = NaukriApplicator(self.cover_engine, self.db)
         self.workday = WorkdayApplicator()
         self.ashby = AshbyApplicator(self.cover_engine, self.db)
         self.smartrecruiters = SmartRecruitersApplicator(self.cover_engine, self.db)

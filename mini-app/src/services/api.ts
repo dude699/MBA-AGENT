@@ -42,6 +42,7 @@ function getHeaders(): Record<string, string> {
 }
 
 // ===== SORT FIELD MAPPING (frontend -> backend) =====
+// Backend sort_map supports: 'stipend', 'ppo', 'date', 'duration', 'applicants'
 function mapSortField(sort: SortField): string {
   const map: Record<string, string> = {
     stipend_high: 'stipend',
@@ -59,9 +60,9 @@ function mapSortField(sort: SortField): string {
     ghost_score_low: 'ppo',
     company_rating: 'ppo',
     openings_high: 'ppo',
-    response_time: 'ppo',
+    response_time: 'date',
   };
-  return map[sort] || 'ppo';
+  return map[sort] || 'stipend';
 }
 
 // ===== DETERMINE BACKEND URL =====

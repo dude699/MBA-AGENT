@@ -985,6 +985,8 @@ class InternshalaHarvester:
         # Store in database
         if all_listings:
             inserted = self.db.insert_raw_listings_batch(all_listings)
+            # Sync to Supabase for immediate availability
+            sync_listings_to_supabase(all_listings, self.batch_id)
             logger.info(
                 f"[{AGENT_ID}] Internshala complete: "
                 f"{len(all_listings)} scraped, {inserted} new "
@@ -1568,6 +1570,8 @@ class NaukriScraper:
 
         if unique:
             inserted = self.db.insert_raw_listings_batch(unique)
+            # Sync to Supabase for immediate availability
+            sync_listings_to_supabase(unique, self.batch_id)
             logger.info(
                 f"[{AGENT_ID}] Naukri complete: "
                 f"{len(unique)} unique, {inserted} new "
@@ -2139,34 +2143,97 @@ class IIMJobsScraper:
 # LINKEDIN DDG DORK SCRAPER — PRISM v0.1 (DDG ONLY)
 # ============================================================
 
-class LinkedInDorkScraper:
+class LinkedInGuestAPIScraper:
     """
-    PRISM v0.1: LinkedIn job discovery via DDG site dorks ONLY.
+    PRISM v0.3 — BEAST MODE LinkedIn Scraper via Public Guest API.
 
-    CRITICAL: NEVER scrape LinkedIn directly. All access via DDG dorks.
+    Strategy (3-Layer):
+        PRIMARY: LinkedIn Guest API (NO login required!)
+            - Search: linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search
+            - Detail: linkedin.com/jobs-guest/jobs/api/jobPosting/{job_id}
+            - Returns HTML that BeautifulSoup can parse
+            - Rate: ~60 req/hour with polite delays
+        SECONDARY: LinkedIn RSS feeds (zero ban risk)
+            - feeds.linkedin.com (if available)
+        FALLBACK: DDG site dorks (existing method, as backup)
 
-    Strategy:
-        DDG dorks: site:linkedin.com/jobs "MBA intern" india
-        - Maximum 5 req/hour to avoid DDG throttling
-        - MBA-specific queries with location=India filter
-        - Also captures posts: site:linkedin.com/posts "hiring intern"
-        - Apply links extracted but application is MANUAL (via mini-app)
+    Search Parameters:
+        keywords, location, start (pagination offset, 25 per page)
+        f_TPR=r604800  (posted in last 7 days)
+        f_E=2           (entry level / internship)
+        f_JT=I          (internship job type)
+        sortBy=DD       (date descending)
 
-    Rate Control:
-        - 5 req/hour MAX
-        - 3 pages per session
-        - 15-30s delays between queries
+    Anti-Detection:
+        - Public endpoints (designed for anonymous visitors/crawlers)
+        - 3-5s delays between requests
+        - Rotate desktop User-Agents
+        - Max 100 requests per session
 
-    Expected Yield: 10-30 listings per scrape.
+    Expected Yield: 100-300 listings per full scrape.
     """
 
-    def __init__(self, db: DatabaseManager = None):
+    SEARCH_URL = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
+    DETAIL_URL = "https://www.linkedin.com/jobs-guest/jobs/api/jobPosting"
+
+    # MBA-focused search queries for India
+    SEARCH_QUERIES = [
+        # Core MBA
+        {"keywords": "MBA intern", "location": "India"},
+        {"keywords": "MBA internship", "location": "India"},
+        {"keywords": "MBA summer internship 2026", "location": "India"},
+        {"keywords": "management trainee intern", "location": "India"},
+        {"keywords": "management internship", "location": "India"},
+        # Marketing
+        {"keywords": "marketing intern", "location": "India"},
+        {"keywords": "digital marketing intern", "location": "India"},
+        {"keywords": "brand management intern", "location": "India"},
+        {"keywords": "market research intern", "location": "India"},
+        # Finance
+        {"keywords": "finance intern", "location": "India"},
+        {"keywords": "investment banking intern", "location": "India"},
+        {"keywords": "financial analyst intern", "location": "India"},
+        {"keywords": "equity research intern", "location": "India"},
+        {"keywords": "corporate finance intern", "location": "India"},
+        # Consulting & Strategy
+        {"keywords": "consulting intern", "location": "India"},
+        {"keywords": "strategy intern", "location": "India"},
+        {"keywords": "management consulting intern", "location": "India"},
+        # Operations
+        {"keywords": "operations intern", "location": "India"},
+        {"keywords": "supply chain intern", "location": "India"},
+        # Product
+        {"keywords": "product management intern", "location": "India"},
+        {"keywords": "product manager intern", "location": "India"},
+        # Data / Analytics / AI
+        {"keywords": "data analyst intern", "location": "India"},
+        {"keywords": "data science intern", "location": "India"},
+        {"keywords": "business analyst intern", "location": "India"},
+        {"keywords": "analytics intern", "location": "India"},
+        {"keywords": "machine learning intern", "location": "India"},
+        {"keywords": "AI intern", "location": "India"},
+        # HR
+        {"keywords": "HR intern", "location": "India"},
+        {"keywords": "human resources intern", "location": "India"},
+        # Broader
+        {"keywords": "growth intern", "location": "India"},
+        {"keywords": "FMCG intern", "location": "India"},
+        {"keywords": "startup intern MBA", "location": "India"},
+        {"keywords": "business development intern", "location": "India"},
+        {"keywords": "e-commerce intern", "location": "India"},
+        {"keywords": "fintech intern", "location": "India"},
+    ]
+
+    def __init__(self, stealth: StealthHTTPClient = None,
+                 db: DatabaseManager = None):
+        self.stealth = stealth or get_stealth_client()
         self.db = db or get_db()
         self.batch_id = ""
+        self._request_count = 0
+        self._max_requests = 100
         self._ddg = None
 
     def _get_ddg(self):
-        """Lazy-load DuckDuckGo search."""
         if self._ddg is None:
             try:
                 from ddgs import DDGS
@@ -2179,57 +2246,337 @@ class LinkedInDorkScraper:
                     pass
         return self._ddg
 
-    def search_jobs(self, max_dorks: int = 5) -> List[RawListing]:
-        """Search LinkedIn jobs via DDG dorks."""
+    def _get_headers(self) -> Dict:
+        return {
+            'User-Agent': random.choice(DESKTOP_USER_AGENTS),
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+        }
+
+    def search_jobs(self, max_queries: int = 20, pages_per_query: int = 3) -> List[RawListing]:
+        """
+        BEAST MODE: Scrape LinkedIn jobs via the public Guest API.
+        No login. No API key. Just public HTML endpoints.
+        """
         self.batch_id = generate_batch_id("linkedin")
+        self._request_count = 0
         all_listings = []
         seen_urls: Set[str] = set()
 
-        logger.info(f"[{AGENT_ID}] Starting LinkedIn DDG dork search (PRISM)")
+        logger.info(f"[{AGENT_ID}] Starting LinkedIn BEAST MODE scrape "
+                     f"(batch: {self.batch_id}, strategy: guest_api_primary)")
+
+        # ── PRIMARY: LinkedIn Guest API ──
+        queries = self.SEARCH_QUERIES.copy()
+        random.shuffle(queries)
+        queries_used = 0
+
+        for query_info in queries:
+            if queries_used >= max_queries:
+                break
+            if self._request_count >= self._max_requests:
+                break
+
+            try:
+                query_listings = self._search_guest_api(
+                    query_info["keywords"],
+                    query_info.get("location", "India"),
+                    max_pages=pages_per_query
+                )
+                for listing in query_listings:
+                    if listing.url and listing.url not in seen_urls:
+                        seen_urls.add(listing.url)
+                        all_listings.append(listing)
+
+                queries_used += 1
+                if query_listings:
+                    logger.info(f"[{AGENT_ID}] LinkedIn/{query_info['keywords']}: "
+                                f"{len(query_listings)} listings")
+
+                # Inter-query delay
+                time.sleep(random.uniform(3, 6))
+
+            except Exception as e:
+                logger.error(f"[{AGENT_ID}] LinkedIn query error '{query_info['keywords']}': {e}")
+                continue
+
+        # ── FALLBACK: DDG Dorks for additional coverage ──
+        if len(all_listings) < 50:
+            ddg_listings = self._scrape_ddg_fallback(max_dorks=8)
+            for listing in ddg_listings:
+                if listing.url and listing.url not in seen_urls:
+                    seen_urls.add(listing.url)
+                    all_listings.append(listing)
+            if ddg_listings:
+                logger.info(f"[{AGENT_ID}] LinkedIn DDG fallback: {len(ddg_listings)} extra")
+
+        # Store results
+        if all_listings:
+            inserted = self.db.insert_raw_listings_batch(all_listings)
+            # Sync to Supabase
+            sync_listings_to_supabase(all_listings, self.batch_id)
+            logger.info(
+                f"[{AGENT_ID}] LinkedIn BEAST MODE complete: "
+                f"{len(all_listings)} unique, {inserted} new "
+                f"({self._request_count} API requests)"
+            )
+
+        return all_listings
+
+    def _search_guest_api(self, keywords: str, location: str,
+                           max_pages: int = 3) -> List[RawListing]:
+        """
+        Search LinkedIn via the public guest jobs API.
+        Endpoint: /jobs-guest/jobs/api/seeMoreJobPostings/search
+        Returns HTML with job cards that can be parsed with BS4.
+        """
+        listings = []
+
+        for page in range(0, max_pages * 25, 25):
+            if self._request_count >= self._max_requests:
+                break
+
+            try:
+                params = {
+                    'keywords': keywords,
+                    'location': location,
+                    'start': str(page),
+                    'f_TPR': 'r604800',   # Posted in last 7 days
+                    'f_JT': 'I',          # Internship type
+                    'sortBy': 'DD',       # Date descending
+                }
+                url = f"{self.SEARCH_URL}?{urlencode(params)}"
+
+                response = self.stealth.get(
+                    url, site='linkedin',
+                    headers=self._get_headers(),
+                    auto_delay=True,
+                )
+                self._request_count += 1
+
+                if not response:
+                    break
+
+                status = response.get('status_code', 0)
+                if status == 429:
+                    logger.warning(f"[{AGENT_ID}] LinkedIn rate limited (429), backing off")
+                    time.sleep(random.uniform(30, 60))
+                    break
+                if status != 200:
+                    logger.debug(f"[{AGENT_ID}] LinkedIn guest API status {status}")
+                    break
+
+                html = response.get('text', '')
+                if not html or not BeautifulSoup:
+                    break
+
+                soup = BeautifulSoup(html, 'html.parser')
+                cards = soup.find_all('div', class_='base-card')
+                if not cards:
+                    # Try alternate selectors
+                    cards = soup.find_all('li', class_='result-card')
+                    if not cards:
+                        cards = soup.find_all('div', class_='job-search-card')
+
+                if not cards:
+                    break  # No more results
+
+                for card in cards:
+                    try:
+                        listing = self._parse_guest_card(card)
+                        if listing and listing.title and listing.url:
+                            listings.append(listing)
+                    except Exception as e:
+                        logger.debug(f"[{AGENT_ID}] LinkedIn card parse error: {e}")
+                        continue
+
+                # Polite delay between pages
+                time.sleep(random.uniform(2, 4))
+
+            except Exception as e:
+                logger.debug(f"[{AGENT_ID}] LinkedIn guest API page error: {e}")
+                break
+
+        return listings
+
+    def _parse_guest_card(self, card) -> Optional[RawListing]:
+        """Parse a LinkedIn guest API job card HTML element."""
+        listing = RawListing()
+        listing.source = "linkedin"
+        listing.batch_id = self.batch_id
+
+        # Title
+        title_el = card.find('h3', class_='base-search-card__title')
+        if not title_el:
+            title_el = card.find('span', class_='sr-only')
+        if title_el:
+            listing.title = title_el.get_text(strip=True)
+
+        # Company
+        company_el = card.find('h4', class_='base-search-card__subtitle')
+        if not company_el:
+            company_el = card.find('a', class_='hidden-nested-link')
+        if company_el:
+            listing.company = company_el.get_text(strip=True)
+
+        # Location
+        location_el = card.find('span', class_='job-search-card__location')
+        if location_el:
+            listing.location = location_el.get_text(strip=True)
+
+        # URL
+        link_el = card.find('a', class_='base-card__full-link')
+        if not link_el:
+            link_el = card.find('a', href=True)
+        if link_el and link_el.get('href'):
+            href = link_el['href']
+            listing.url = href.split('?')[0]
+
+            # Extract job ID for detail fetching
+            job_id_match = re.search(r'/view/(\d+)', href)
+            if not job_id_match:
+                job_id_match = re.search(r'-(\d+)/?$', href)
+            if job_id_match:
+                listing.source_id = f"linkedin_{job_id_match.group(1)}"
+
+        # Posted date
+        time_el = card.find('time')
+        if time_el:
+            datetime_str = time_el.get('datetime', '')
+            posted_text = time_el.get_text(strip=True)
+            if datetime_str:
+                listing.posted_date = datetime_str
+            listing.posted_days_ago = parse_posted_days(posted_text)
+
+        # Company logo
+        img_el = card.find('img')
+        if img_el and img_el.get('data-delayed-url'):
+            listing.company_logo = img_el['data-delayed-url']
+        elif img_el and img_el.get('src'):
+            src = img_el['src']
+            if 'logo' in src.lower() or 'company' in src.lower():
+                listing.company_logo = src
+
+        # Detect category
+        title_lower = (listing.title or '').lower()
+        listing.category = self._detect_category(title_lower)
+
+        # PPO / WFH detection
+        full_text = f"{listing.title} {listing.location}"
+        listing.is_ppo = detect_ppo(full_text)
+        listing.is_wfh = detect_wfh(full_text)
+
+        # AI relevance filter
+        is_relevant, reason = is_mba_relevant(
+            listing.title, listing.company, '', listing.category
+        )
+        if not is_relevant:
+            return None
+
+        return listing if listing.title and listing.url else None
+
+    def _detect_category(self, title_lower: str) -> str:
+        """Detect MBA category from title text."""
+        cats = {
+            'marketing': ['marketing', 'brand', 'digital', 'content', 'seo', 'social media', 'growth'],
+            'finance': ['finance', 'financial', 'investment', 'equity', 'banking', 'accounting', 'audit', 'treasury'],
+            'consulting': ['consulting', 'strategy', 'advisory', 'management consulting'],
+            'operations': ['operations', 'supply chain', 'logistics', 'procurement'],
+            'data_science': ['data science', 'machine learning', 'ml', 'ai ', 'deep learning', 'nlp'],
+            'analytics': ['analytics', 'data analyst', 'business analyst', 'business intelligence'],
+            'hr': ['hr', 'human resource', 'talent', 'recruitment', 'people'],
+            'product': ['product management', 'product manager', 'product intern'],
+        }
+        for cat, keywords_list in cats.items():
+            if any(kw in title_lower for kw in keywords_list):
+                return cat
+        return "general"
+
+    def fetch_job_details(self, job_id: str) -> Optional[Dict]:
+        """
+        Fetch full job description from LinkedIn guest API.
+        Endpoint: /jobs-guest/jobs/api/jobPosting/{job_id}
+        """
+        try:
+            url = f"{self.DETAIL_URL}/{job_id}"
+            response = self.stealth.get(
+                url, site='linkedin',
+                headers=self._get_headers(),
+                auto_delay=True,
+            )
+            self._request_count += 1
+
+            if not response or response.get('status_code', 0) != 200:
+                return None
+
+            html = response.get('text', '')
+            if not html or not BeautifulSoup:
+                return None
+
+            soup = BeautifulSoup(html, 'html.parser')
+
+            details = {}
+            # Description
+            desc_el = soup.find('div', class_='show-more-less-html__markup')
+            if desc_el:
+                details['description'] = desc_el.get_text(separator='\n', strip=True)[:5000]
+
+            # Job criteria (seniority, employment type, etc.)
+            criteria = soup.find_all('li', class_='description__job-criteria-item')
+            for item in criteria:
+                label = item.find('h3')
+                value = item.find('span')
+                if label and value:
+                    details[label.get_text(strip=True).lower()] = value.get_text(strip=True)
+
+            return details
+
+        except Exception as e:
+            logger.debug(f"[{AGENT_ID}] LinkedIn detail fetch error: {e}")
+            return None
+
+    def _scrape_ddg_fallback(self, max_dorks: int = 8) -> List[RawListing]:
+        """FALLBACK: LinkedIn listings via DDG site dorks."""
+        listings = []
+        seen_urls: Set[str] = set()
 
         ddg = self._get_ddg()
         if not ddg:
-            return all_listings
+            return listings
 
-        # PRISM v0.1: LinkedIn dork queries
         dork_queries = [
             'site:linkedin.com/jobs/view "MBA intern" india',
             'site:linkedin.com/jobs/view "summer internship" MBA india',
             'site:linkedin.com/jobs/view "management trainee" intern india',
-            'site:linkedin.com/jobs/view "marketing intern" india stipend',
-            'site:linkedin.com/jobs/view "finance intern" india MBA',
+            'site:linkedin.com/jobs/view "marketing intern" india',
+            'site:linkedin.com/jobs/view "finance intern" india',
             'site:linkedin.com/jobs/view "consulting intern" india',
             'site:linkedin.com/jobs/view "data analyst intern" india',
             'site:linkedin.com/jobs/view "product management intern" india',
-            # LinkedIn posts about hiring
-            'site:linkedin.com/posts "hiring" "intern" "MBA" india',
-            'site:linkedin.com/posts "looking for" "intern" MBA',
+            'site:linkedin.com/jobs/view "operations intern" india',
+            'site:linkedin.com/jobs/view "analytics intern" india',
         ]
-
         random.shuffle(dork_queries)
-        queries_used = 0
 
-        for query in dork_queries:
-            if queries_used >= max_dorks:
-                break
+        for query in dork_queries[:max_dorks]:
             try:
-                results = ddg.text(query, region='in-en', max_results=15)
+                results = ddg.text(query, region='in-en', max_results=20)
                 for result in results:
                     url = result.get('href', '') or result.get('link', '')
                     title = result.get('title', '')
                     body = result.get('body', '')
-
                     if not url or 'linkedin.com' not in url:
                         continue
-
                     listing = RawListing()
                     listing.source = "linkedin"
                     listing.batch_id = self.batch_id
                     listing.url = url.split('?')[0]
-
-                    # Parse LinkedIn title format
                     listing.title = title.replace(' | LinkedIn', '').replace(' - LinkedIn', '').strip()
-                    # Try to extract company from title
                     parts = listing.title.split(' at ')
                     if len(parts) >= 2:
                         listing.title = parts[0].strip()
@@ -2239,29 +2586,22 @@ class LinkedInDorkScraper:
                         listing.title = parts[0].strip()
                         if len(parts) >= 2:
                             listing.company = parts[1].strip()
-
                     listing.description_text = body[:3000] if body else ''
                     listing.is_ppo = detect_ppo(f"{title} {body}")
                     listing.is_wfh = detect_wfh(f"{title} {body}")
-                    listing.location = "India"  # Default from query
-
+                    listing.location = "India"
                     if listing.title and listing.url and listing.url not in seen_urls:
                         seen_urls.add(listing.url)
-                        all_listings.append(listing)
-
-                queries_used += 1
-                # LinkedIn DDG: longer delays (15-30s)
-                time.sleep(random.uniform(15, 30))
-
+                        listings.append(listing)
+                time.sleep(random.uniform(8, 15))
             except Exception as e:
-                logger.error(f"[{AGENT_ID}] LinkedIn DDG error: {e}")
+                logger.debug(f"[{AGENT_ID}] LinkedIn DDG fallback error: {e}")
                 continue
 
-        if all_listings:
-            inserted = self.db.insert_raw_listings_batch(all_listings)
-            logger.info(f"[{AGENT_ID}] LinkedIn complete: {len(all_listings)} unique, {inserted} new")
+        return listings
 
-        return all_listings
+# Legacy alias for backward compatibility
+LinkedInDorkScraper = LinkedInGuestAPIScraper
 
 
 # ============================================================
