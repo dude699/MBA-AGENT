@@ -397,16 +397,21 @@ class CoverLetterEngine:
 
 class InternshalaApplicator:
     """
-    Applies to internships on Internshala using session-based
-    form submission. Requires user's Internshala session cookie.
+    PRISM v2.0: Applies to internships on Internshala.
     
-    Flow:
-        1. Load session cookie from DB settings
-        2. GET internship detail page
-        3. Extract CSRF token and form fields
-        4. Fill cover letter + assessment answers
-        5. POST application form
-        6. Verify success from response
+    TWO login strategies:
+        Strategy A (Preferred): User provides email + password from frontend.
+                    We log in via Internshala's login API to get a session,
+                    then apply using that session.
+        Strategy B (Fallback): Pre-stored session cookie from DB settings.
+                    User sets via /set internshala_session <cookie> in Telegram.
+    
+    Apply Flow:
+        1. Authenticate (login with email/password OR use stored session)
+        2. GET internship detail page → extract CSRF + form fields
+        3. Fill cover letter + assessment answers
+        4. POST application form
+        5. Verify success from response
     """
 
     def __init__(self, db: DatabaseManager, cover_engine: CoverLetterEngine):
@@ -415,21 +420,13 @@ class InternshalaApplicator:
         self._session_cookie = None
         self._apps_today = 0
         self._last_app_time = 0
+        self._cached_session = None  # requests.Session object
 
     def can_apply(self) -> Tuple[bool, str]:
         """Check if we can apply on Internshala today."""
         if self._apps_today >= PLATFORM_DAILY_LIMITS['internshala']:
             return False, f"Daily limit reached ({self._apps_today}/{PLATFORM_DAILY_LIMITS['internshala']})"
 
-        # Session cookie can come from DB settings OR from frontend credentials
-        session = self.db.get_setting('internshala_session', '')
-        if not session:
-            # No session cookie — but that's OK, we'll try with user's
-            # email/password credentials passed from the frontend.
-            # Return True to allow the attempt; apply() will handle the details.
-            pass
-
-        # Check cooldown
         elapsed = time.time() - self._last_app_time
         if elapsed < DELAY_BETWEEN_APPS[0]:
             remaining = int(DELAY_BETWEEN_APPS[0] - elapsed)
@@ -437,13 +434,114 @@ class InternshalaApplicator:
 
         return True, "Ready"
 
+    def _login_with_credentials(self, email: str, password: str) -> Optional[Any]:
+        """
+        Log in to Internshala using email + password.
+        Returns a requests.Session with authenticated cookies, or None on failure.
+        """
+        import requests
+
+        session = requests.Session()
+        session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 '
+                          '(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'en-IN,en-GB;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Origin': 'https://internshala.com',
+            'Referer': 'https://internshala.com/login',
+        })
+
+        try:
+            # Step 1: GET login page to get CSRF token and initial cookies
+            login_page = session.get('https://internshala.com/login', timeout=15)
+            csrf_token = ''
+            csrf_match = re.search(
+                r'name="(?:csrf[_-]token|_token)"\s+(?:value|content)="([^"]+)"',
+                login_page.text
+            )
+            if csrf_match:
+                csrf_token = csrf_match.group(1)
+
+            # Also try meta tag
+            if not csrf_token:
+                meta_match = re.search(
+                    r'<meta\s+name="csrf[_-]token"\s+content="([^"]+)"',
+                    login_page.text
+                )
+                if meta_match:
+                    csrf_token = meta_match.group(1)
+
+            # Step 2: POST login
+            login_data = {
+                'email': email,
+                'password': password,
+            }
+            if csrf_token:
+                login_data['_token'] = csrf_token
+
+            login_headers = {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-Requested-With': 'XMLHttpRequest',
+                'Referer': 'https://internshala.com/login',
+            }
+
+            login_resp = session.post(
+                'https://internshala.com/login/verify_login/verify',
+                data=login_data,
+                headers=login_headers,
+                timeout=20,
+                allow_redirects=True,
+            )
+
+            # Check login success — multiple signals
+            if login_resp.status_code == 200:
+                resp_text = login_resp.text.lower()
+                # Success indicators
+                if ('success' in resp_text or 'dashboard' in resp_text
+                        or '"status":1' in resp_text or '"success":true' in resp_text
+                        or login_resp.url and 'student/dashboard' in login_resp.url):
+                    logger.info(f"[{AGENT_ID}] Internshala login SUCCESS for {email}")
+                    # Cache the session for reuse within this batch
+                    self._cached_session = session
+                    return session
+                # Failure indicators
+                elif 'incorrect' in resp_text or 'invalid' in resp_text or 'error' in resp_text:
+                    logger.warning(f"[{AGENT_ID}] Internshala login FAILED: invalid credentials")
+                    return None
+            
+            # Try alternate login endpoint
+            login_resp2 = session.post(
+                'https://internshala.com/login/verify_login',
+                data=login_data,
+                headers=login_headers,
+                timeout=20,
+                allow_redirects=True,
+            )
+            if login_resp2.status_code in (200, 302):
+                # Check if we got session cookies
+                cookies = session.cookies.get_dict()
+                if any(k for k in cookies if 'session' in k.lower() or 'laravel' in k.lower()):
+                    logger.info(f"[{AGENT_ID}] Internshala login SUCCESS (alt endpoint) for {email}")
+                    self._cached_session = session
+                    return session
+
+            logger.warning(f"[{AGENT_ID}] Internshala login failed: HTTP {login_resp.status_code}")
+            return None
+
+        except Exception as e:
+            logger.error(f"[{AGENT_ID}] Internshala login error: {e}")
+            return None
+
     def apply(self, listing: Dict, cover_letter: str = '',
               resume_path: str = '') -> ApplicationAttempt:
         """
         Apply to an Internshala listing.
         
+        PRISM v2.0: Now reads email/password from listing dict (passed by frontend)
+        and does a REAL login. No more "session cookie required" cop-out.
+        
         Args:
-            listing: Clean listing dict with url, title, company, etc.
+            listing: Dict with url, title, company, email, password, etc.
             cover_letter: Pre-generated cover letter (optional)
             resume_path: Path to resume file (optional)
         
@@ -460,17 +558,55 @@ class InternshalaApplicator:
         try:
             import requests
 
-            session_cookie = self.db.get_setting('internshala_session', '')
-            if not session_cookie:
-                # No session cookie stored — Internshala requires authenticated session
-                # The frontend sends email/password but we can't do a login flow here
-                # without a headless browser. Return a clear fallback message.
+            # ===== STRATEGY A: Login with user-provided email + password =====
+            user_email = listing.get('email', '').strip()
+            user_password = listing.get('password', '').strip()
+            session = None
+
+            if user_email and user_password:
+                # User gave credentials from the frontend — use them!
+                if self._cached_session:
+                    # Reuse cached session from previous apply in same batch
+                    session = self._cached_session
+                    logger.info(f"[{AGENT_ID}] Reusing cached Internshala session")
+                else:
+                    session = self._login_with_credentials(user_email, user_password)
+                    if not session:
+                        attempt.error = (
+                            "Internshala login failed. Please check your email/password. "
+                            "Make sure you can log in to internshala.com manually with these credentials."
+                        )
+                        # Still generate cover letter for manual use
+                        try:
+                            cover_letter = self.cover_engine.generate(listing)
+                            attempt.cover_letter = cover_letter
+                        except Exception:
+                            pass
+                        return attempt
+
+            # ===== STRATEGY B: Fallback to stored session cookie =====
+            if not session:
+                stored_cookie = self.db.get_setting('internshala_session', '')
+                if stored_cookie:
+                    session = requests.Session()
+                    session.headers.update({
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                        'Accept': 'text/html,application/xhtml+xml',
+                    })
+                    # Parse and set cookies
+                    for cookie_str in stored_cookie.split(';'):
+                        cookie_str = cookie_str.strip()
+                        if '=' in cookie_str:
+                            k, v = cookie_str.split('=', 1)
+                            session.cookies.set(k.strip(), v.strip(), domain='internshala.com')
+
+            # ===== NO AUTH AVAILABLE =====
+            if not session:
                 attempt.error = (
-                    "Internshala requires a session cookie for auto-apply. "
-                    "Please apply manually via the listing URL, or set your "
-                    "session cookie using /set internshala_session <cookie> in the Telegram bot."
+                    "No Internshala credentials provided. "
+                    "Please enter your Internshala email and password in the "
+                    "Portal Credentials section, then try again."
                 )
-                # Generate cover letter anyway so user can copy-paste it
                 try:
                     cover_letter = self.cover_engine.generate(listing)
                     attempt.cover_letter = cover_letter
@@ -478,52 +614,70 @@ class InternshalaApplicator:
                     pass
                 return attempt
 
-            url = listing.get('url', '')
+            # ===== WE HAVE A SESSION — PROCEED WITH APPLICATION =====
+            url = listing.get('url', '') or listing.get('source_url', '')
             if not url or 'internshala.com' not in url:
                 attempt.error = "Invalid Internshala URL"
                 return attempt
 
             # Generate cover letter
-            cover_letter = self.cover_engine.generate(listing)
+            if not cover_letter:
+                cover_letter = self.cover_engine.generate(listing)
             attempt.cover_letter = cover_letter
 
-            # Step 1: GET the internship detail page to extract form data
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Cookie': session_cookie,
-                'Accept': 'text/html,application/xhtml+xml',
+            # Step 1: GET the internship detail page
+            session.headers.update({
                 'Referer': 'https://internshala.com/internships/',
-            }
-
-            detail_resp = requests.get(url, headers=headers, timeout=20)
+            })
+            detail_resp = session.get(url, timeout=20)
             if detail_resp.status_code != 200:
-                attempt.error = f"Detail page HTTP {detail_resp.status_code}"
+                attempt.error = f"Detail page HTTP {detail_resp.status_code} — session may be expired"
                 return attempt
 
-            # Step 2: Extract form token and application URL
             html = detail_resp.text
-            csrf_match = re.search(
-                r'name="csrf[_-]token"\s+(?:value|content)="([^"]+)"', html
-            )
-            csrf_token = csrf_match.group(1) if csrf_match else ''
 
-            # Extract internship ID from URL
-            internship_id_match = re.search(r'/internship/detail/(\d+)', url)
-            if not internship_id_match:
-                internship_id_match = re.search(r'/(\d+)$', url)
-            
-            if not internship_id_match:
-                attempt.error = "Could not extract internship ID from URL"
+            # Check if we're actually logged in (redirected to login page = not logged in)
+            if '/login' in detail_resp.url and 'internship' not in detail_resp.url:
+                attempt.error = "Session expired or login failed. Please re-enter your credentials."
+                self._cached_session = None
                 return attempt
 
-            internship_id = internship_id_match.group(1)
-
-            # Step 3: Extract assessment questions if any
-            questions = []
-            question_matches = re.findall(
-                r'class="assessment_question[^"]*"[^>]*>([^<]+)', html
+            # Step 2: Extract CSRF token
+            csrf_token = ''
+            csrf_match = re.search(
+                r'name="(?:csrf[_-]token|_token)"\s+(?:value|content)="([^"]+)"', html
             )
-            for q in question_matches:
+            if csrf_match:
+                csrf_token = csrf_match.group(1)
+            if not csrf_token:
+                meta_match = re.search(r'<meta\s+name="csrf[_-]token"\s+content="([^"]+)"', html)
+                if meta_match:
+                    csrf_token = meta_match.group(1)
+
+            # Step 3: Extract internship ID
+            internship_id = None
+            id_match = re.search(r'/internship/detail/(\d+)', url)
+            if not id_match:
+                id_match = re.search(r'/internship/[^/]+/(\d+)', url)
+            if not id_match:
+                id_match = re.search(r'/(\d+)(?:\?|$|/)', url)
+            if id_match:
+                internship_id = id_match.group(1)
+
+            if not internship_id:
+                # Try extracting from page HTML
+                id_html_match = re.search(r'data-internship-id="(\d+)"', html)
+                if id_html_match:
+                    internship_id = id_html_match.group(1)
+
+            if not internship_id:
+                attempt.error = "Could not extract internship ID from URL or page"
+                return attempt
+
+            # Step 4: Extract assessment questions
+            questions = []
+            q_matches = re.findall(r'class="assessment_question[^"]*"[^>]*>([^<]+)', html)
+            for q in q_matches:
                 q_clean = q.strip()
                 if q_clean and len(q_clean) > 10:
                     questions.append(q_clean)
@@ -534,15 +688,15 @@ class InternshalaApplicator:
                     questions, listing
                 )
 
-            # Step 4: Human-like delay before submission
-            delay = random.uniform(*DELAY_BETWEEN_APPS)
+            # Step 5: Human-like delay
+            delay = random.uniform(2, 6)
             logger.info(
-                f"[{AGENT_ID}] Internshala: waiting {delay:.0f}s before applying "
-                f"to '{listing.get('title', '')[:40]}'"
+                f"[{AGENT_ID}] Internshala: applying to '{listing.get('title', '')[:40]}' "
+                f"(waiting {delay:.1f}s)"
             )
-            time.sleep(min(delay, 10))  # Cap at 10s in practice
+            time.sleep(delay)
 
-            # Step 5: POST application
+            # Step 6: POST application
             apply_url = f"https://internshala.com/internship/apply/{internship_id}"
             form_data = {
                 'cover_letter': cover_letter,
@@ -553,41 +707,45 @@ class InternshalaApplicator:
             for i, answer in enumerate(assessment_answers):
                 form_data[f'assessment_answer[{i}]'] = answer
 
-            apply_headers = {
-                **headers,
+            session.headers.update({
                 'Content-Type': 'application/x-www-form-urlencoded',
                 'X-Requested-With': 'XMLHttpRequest',
                 'Referer': url,
-            }
+            })
 
-            apply_resp = requests.post(
-                apply_url, data=form_data, headers=apply_headers, timeout=20
-            )
+            apply_resp = session.post(apply_url, data=form_data, timeout=25)
 
-            # Step 6: Check result
+            # Step 7: Check result
             if apply_resp.status_code == 200:
                 resp_text = apply_resp.text.lower()
-                if 'success' in resp_text or 'applied' in resp_text:
+                if 'success' in resp_text or 'applied' in resp_text or '"status":1' in resp_text:
                     attempt.success = True
                     attempt.external_app_id = internship_id
                     self._apps_today += 1
                     self._last_app_time = time.time()
                     logger.info(
-                        f"[{AGENT_ID}] Applied to '{listing.get('title', '')[:40]}' "
+                        f"[{AGENT_ID}] APPLIED to '{listing.get('title', '')[:40]}' "
                         f"at {listing.get('company', '')} ({self._apps_today} today)"
                     )
-                elif 'already applied' in resp_text:
+                elif 'already applied' in resp_text or 'already_applied' in resp_text:
                     attempt.error = "Already applied to this internship"
-                    attempt.success = False
+                    attempt.success = True  # Count as success since goal is achieved
+                    attempt.external_app_id = internship_id
+                elif 'login' in resp_text and 'required' in resp_text:
+                    attempt.error = "Session expired during application. Please try again."
+                    self._cached_session = None
                 else:
-                    attempt.error = f"Unknown response: {resp_text[:200]}"
+                    attempt.error = f"Internshala response: {apply_resp.text[:300]}"
+            elif apply_resp.status_code in (401, 403):
+                attempt.error = "Internshala rejected the request. Session may be expired."
+                self._cached_session = None
             else:
-                attempt.error = f"Apply POST HTTP {apply_resp.status_code}"
+                attempt.error = f"Apply POST HTTP {apply_resp.status_code}: {apply_resp.text[:200]}"
 
         except ImportError:
             attempt.error = "requests library not available"
         except Exception as e:
-            attempt.error = str(e)
+            attempt.error = str(e)[:300]
             logger.error(f"[{AGENT_ID}] Internshala apply error: {e}")
 
         attempt.duration_sec = round(time.time() - start_time, 1)
@@ -907,17 +1065,107 @@ class LeverApplicator:
 
 class NaukriApplicator:
     """
-    PRISM v0.3: Naukri application handler.
+    PRISM v2.0: Naukri application handler.
 
-    Strategy: Naukri Quick Apply API (requires session cookie).
-    If no session cookie, generates cover letter and queues for manual.
-    The user can provide their Naukri session cookie via:
-      /set naukri_session <cookie> in Telegram bot
+    TWO login strategies (like Internshala):
+        Strategy A (Preferred): User provides email + password from frontend.
+                    We log in via Naukri's login API to get a session,
+                    then apply using Quick Apply API.
+        Strategy B (Fallback): Pre-stored session cookie from DB settings.
+                    User sets via /set naukri_session <cookie> in Telegram.
+
+    Apply Flow:
+        1. Authenticate (login with email/password OR use stored session cookie)
+        2. Extract job_id from listing URL
+        3. POST Quick Apply with cover letter
+        4. Verify success from response
     """
 
     def __init__(self, cover_engine=None, db=None):
         self.cover_engine = cover_engine
         self.db = db
+        self._cached_session = None  # requests.Session for reuse within batch
+
+    def _login_with_credentials(self, email: str, password: str) -> Optional[Any]:
+        """
+        Log in to Naukri using email + password.
+        Returns a requests.Session with authenticated cookies, or None on failure.
+        """
+        import requests
+
+        session = requests.Session()
+        session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                          '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'application/json',
+            'Accept-Language': 'en-IN,en;q=0.9',
+            'Origin': 'https://www.naukri.com',
+            'Referer': 'https://www.naukri.com/nlogin/login',
+        })
+
+        try:
+            # Step 1: GET login page for cookies
+            session.get('https://www.naukri.com/nlogin/login', timeout=15)
+
+            # Step 2: POST login credentials
+            login_payload = {
+                'username': email,
+                'password': password,
+            }
+            login_headers = {
+                'Content-Type': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+                'appid': '109',
+                'systemid': 'Naukri',
+            }
+
+            login_resp = session.post(
+                'https://www.naukri.com/central-loginservice/v1/login',
+                json=login_payload,
+                headers=login_headers,
+                timeout=20,
+                allow_redirects=True,
+            )
+
+            if login_resp.status_code == 200:
+                try:
+                    resp_json = login_resp.json()
+                except Exception:
+                    resp_json = {}
+
+                # Check for success
+                if (resp_json.get('status') == 'SUCCESS'
+                        or resp_json.get('redirectUrl')
+                        or 'success' in login_resp.text.lower()):
+                    logger.info(f"[{AGENT_ID}] Naukri login SUCCESS for {email}")
+                    self._cached_session = session
+                    return session
+
+                # Check for OTP required
+                if 'otp' in login_resp.text.lower() or resp_json.get('otpRequired'):
+                    logger.warning(f"[{AGENT_ID}] Naukri login requires OTP for {email}")
+                    return None
+
+                # Check for failure
+                if ('invalid' in login_resp.text.lower()
+                        or 'incorrect' in login_resp.text.lower()
+                        or resp_json.get('error')):
+                    logger.warning(f"[{AGENT_ID}] Naukri login FAILED: invalid credentials")
+                    return None
+
+            # Check cookies as fallback signal
+            cookies = session.cookies.get_dict()
+            if any(k for k in cookies if 'nauk' in k.lower() or 'session' in k.lower()):
+                logger.info(f"[{AGENT_ID}] Naukri login SUCCESS (cookie check) for {email}")
+                self._cached_session = session
+                return session
+
+            logger.warning(f"[{AGENT_ID}] Naukri login failed: HTTP {login_resp.status_code}")
+            return None
+
+        except Exception as e:
+            logger.error(f"[{AGENT_ID}] Naukri login error: {e}")
+            return None
 
     def apply(self, listing: Dict, cover_letter: str = '',
               resume_path: str = '') -> ApplicationAttempt:
@@ -930,15 +1178,51 @@ class NaukriApplicator:
         try:
             import requests
 
-            # Check for Naukri session cookie
-            session_cookie = ''
-            if self.db:
-                session_cookie = self.db.get_setting('naukri_session', '')
-
             source_url = listing.get('url', '') or listing.get('source_url', '')
 
-            if not session_cookie:
-                # No session — generate cover letter for manual apply
+            # ===== STRATEGY A: Login with user-provided email + password =====
+            user_email = listing.get('email', '').strip()
+            user_password = listing.get('password', '').strip()
+            session = None
+
+            if user_email and user_password:
+                if self._cached_session:
+                    session = self._cached_session
+                    logger.info(f"[{AGENT_ID}] Reusing cached Naukri session")
+                else:
+                    session = self._login_with_credentials(user_email, user_password)
+                    if not session:
+                        attempt.error = (
+                            "Naukri login failed. Please check your email/password. "
+                            "Naukri may require OTP verification — try logging in manually first, "
+                            "then retry auto-apply."
+                        )
+                        try:
+                            cover_letter = self.cover_engine.generate(listing)
+                            attempt.cover_letter = cover_letter
+                        except Exception:
+                            pass
+                        return attempt
+
+            # ===== STRATEGY B: Fallback to stored session cookie =====
+            if not session:
+                session_cookie = ''
+                if self.db:
+                    session_cookie = self.db.get_setting('naukri_session', '')
+                if session_cookie:
+                    session = requests.Session()
+                    session.headers.update({
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                        'Accept': 'application/json',
+                    })
+                    for cookie_str in session_cookie.split(';'):
+                        cookie_str = cookie_str.strip()
+                        if '=' in cookie_str:
+                            k, v = cookie_str.split('=', 1)
+                            session.cookies.set(k.strip(), v.strip(), domain='naukri.com')
+
+            # ===== NO AUTH AVAILABLE =====
+            if not session:
                 if not cover_letter and self.cover_engine:
                     try:
                         cover_letter = self.cover_engine.generate(listing)
@@ -946,17 +1230,20 @@ class NaukriApplicator:
                         pass
                 attempt.cover_letter = cover_letter or ''
                 attempt.error = (
-                    "Naukri session cookie not configured. "
-                    "Application queued — please apply via the listing URL. "
-                    "Set your cookie using /set naukri_session <cookie> in Telegram."
+                    "No Naukri credentials provided. "
+                    "Please enter your Naukri email and password in the "
+                    "Portal Credentials section, then try again."
                 )
                 attempt.success = False
                 return attempt
 
-            # Try Naukri Quick Apply API
+            # ===== WE HAVE A SESSION — PROCEED WITH APPLICATION =====
+            # Extract job ID from URL
             job_id_match = re.search(r'-(\d+)/?(?:\?|$)', source_url)
             if not job_id_match:
                 job_id_match = re.search(r'jid=(\d+)', source_url)
+            if not job_id_match:
+                job_id_match = re.search(r'/(\d+)(?:\?|$|/)', source_url)
             if not job_id_match:
                 attempt.error = "Could not extract Naukri job ID from URL"
                 attempt.success = False
@@ -972,39 +1259,58 @@ class NaukriApplicator:
                     pass
             attempt.cover_letter = cover_letter or ''
 
+            # Human-like delay
+            delay = random.uniform(3, 8)
+            logger.info(
+                f"[{AGENT_ID}] Naukri: applying to '{listing.get('title', '')[:40]}' "
+                f"(waiting {delay:.1f}s)"
+            )
+            time.sleep(delay)
+
             # Quick apply endpoint
-            apply_url = f"https://www.naukri.com/central-loginservice/v1/login/quickApply"
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Accept': 'application/json',
+            apply_headers = {
                 'Content-Type': 'application/json',
-                'Cookie': session_cookie,
+                'X-Requested-With': 'XMLHttpRequest',
                 'Referer': source_url,
                 'Origin': 'https://www.naukri.com',
                 'appid': '109',
                 'systemid': 'Naukri',
             }
+            session.headers.update(apply_headers)
 
             payload = {
                 'jobId': job_id,
                 'coverLetter': cover_letter[:2000] if cover_letter else '',
             }
 
-            time.sleep(random.uniform(3, 8))
-            resp = requests.post(apply_url, json=payload, headers=headers, timeout=25)
+            resp = session.post(
+                'https://www.naukri.com/central-loginservice/v1/login/quickApply',
+                json=payload,
+                timeout=25,
+            )
 
             if resp.status_code == 200:
-                resp_data = resp.json() if resp.headers.get('content-type', '').startswith('application/json') else {}
-                if resp_data.get('status') == 'SUCCESS' or 'success' in resp.text.lower():
+                try:
+                    resp_data = resp.json()
+                except Exception:
+                    resp_data = {}
+                if (resp_data.get('status') == 'SUCCESS'
+                        or 'success' in resp.text.lower()
+                        or 'applied' in resp.text.lower()):
                     attempt.success = True
                     attempt.external_app_id = job_id
                     logger.info(f"[{AGENT_ID}] Naukri Quick Apply SUCCESS: {listing.get('title', '')}")
+                elif 'already' in resp.text.lower():
+                    attempt.success = True  # Already applied counts as success
+                    attempt.external_app_id = job_id
+                    attempt.error = "Already applied to this job"
                 else:
                     attempt.error = f"Naukri response: {resp.text[:200]}"
             elif resp.status_code == 401:
-                attempt.error = "Naukri session expired. Please update cookie via /set naukri_session"
+                attempt.error = "Naukri session expired. Please re-enter credentials and try again."
+                self._cached_session = None
             else:
-                attempt.error = f"Naukri Quick Apply HTTP {resp.status_code}"
+                attempt.error = f"Naukri Quick Apply HTTP {resp.status_code}: {resp.text[:200]}"
 
         except ImportError:
             attempt.error = "requests library not available"
