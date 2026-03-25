@@ -446,166 +446,227 @@ async def handle_batch_apply(request: web.Request) -> web.Response:
             try:
                 # Handle string IDs like "sb_123" from Supabase
                 raw_str = str(lid_raw)
-                if raw_str.startswith('sb_'):
-                    # Supabase jobs — mark as direct apply (can't auto-apply cloud jobs)
-                    results.append({
-                        'id': lid_raw, 'success': True, 'method': 'direct',
-                        'source_url': '', 'external_id': '',
-                        'error': 'Cloud jobs require manual application',
-                    })
-                    success_count += 1
+                is_supabase_job = raw_str.startswith('sb_')
+                listing = None
+
+                if is_supabase_job:
+                    # ===== SUPABASE JOB: Fetch from cloud DB, then route normally =====
+                    sb_id_str = raw_str[3:]  # strip 'sb_' prefix
+                    try:
+                        sb_id = int(sb_id_str)
+                    except (ValueError, TypeError):
+                        results.append({'id': lid_raw, 'success': False, 'method': 'error',
+                                        'source_url': '', 'external_id': '', 'error': 'Invalid Supabase ID',
+                                        'steps': ['Invalid Supabase job ID']})
+                        fail_count += 1
+                        continue
+
+                    # Fetch job details from Supabase
+                    from core.supabase_db import SupabaseJobDB
+                    sb_job = SupabaseJobDB.get_job_by_id(sb_id, "all_jobs")
+                    if not sb_job:
+                        sb_job = SupabaseJobDB.get_job_by_id(sb_id, "latest_jobs")
+                    if not sb_job:
+                        results.append({'id': lid_raw, 'success': False, 'method': 'error',
+                                        'source_url': '', 'external_id': '', 'error': 'Job not found in Supabase',
+                                        'steps': ['Job not found in database']})
+                        fail_count += 1
+                        continue
+
+                    # Convert Supabase row to a listing dict compatible with the applicators
+                    listing = {
+                        'id': sb_id,
+                        'title': sb_job.get('title', ''),
+                        'company': sb_job.get('company', ''),
+                        'source': (sb_job.get('source', '') or '').lower().strip(),
+                        'source_url': sb_job.get('source_url', ''),
+                        'url': sb_job.get('source_url', ''),
+                        'description_text': sb_job.get('description', ''),
+                        'location': sb_job.get('location', ''),
+                        'category': sb_job.get('category', ''),
+                        'source_id': sb_job.get('source_id', ''),
+                        'ppo_score': sb_job.get('ppo_score', 0) or sb_job.get('match_score', 0) or 0,
+                        'company_id': sb_job.get('company_id'),
+                    }
+                    lid = sb_id  # Use the numeric Supabase ID for tracking
+
+                else:
+                    # ===== LOCAL DB JOB: Fetch from SQLite =====
+                    try:
+                        lid = int(raw_str)
+                    except (ValueError, TypeError):
+                        results.append({'id': lid_raw, 'success': False, 'method': 'error',
+                                        'source_url': '', 'external_id': '', 'error': 'Invalid ID',
+                                        'steps': ['Invalid job ID format']})
+                        fail_count += 1
+                        continue
+
+                    listing = db.get_clean_listing_by_id(lid)
+                    if listing:
+                        # Normalize field names for consistency
+                        listing.setdefault('source_url', listing.get('url', ''))
+                        listing.setdefault('description_text', listing.get('description_text', ''))
+
+                if not listing:
+                    results.append({'id': lid_raw, 'success': False, 'method': 'error',
+                                    'source_url': '', 'external_id': '', 'error': 'Not found',
+                                    'steps': ['Job not found in any database']})
+                    fail_count += 1
                     continue
-                lid = int(raw_str)
-            except (ValueError, TypeError):
-                results.append({'id': lid_raw, 'success': False, 'method': 'error', 'source_url': '', 'external_id': '', 'error': 'Invalid ID'})
-                fail_count += 1
-                continue
 
-            listing = db.get_clean_listing_by_id(lid)
-            if not listing:
-                results.append({'id': lid, 'success': False, 'method': 'error', 'source_url': '', 'external_id': '', 'error': 'Not found'})
-                fail_count += 1
-                continue
+                source_url = listing.get('source_url', '') or listing.get('url', '') or ''
+                lst_source = (listing.get('source', '') or '').lower()
 
-            source_url = listing.get('source_url', '') or listing.get('url', '') or ''
-            lst_source = (listing.get('source', '') or '').lower()
+                apply_method = 'direct'
+                apply_error = ''
+                external_id = ''
+                apply_steps = []  # Step log for frontend toast notifications
 
-            apply_method = 'direct'
-            apply_error = ''
-            external_id = ''
-            apply_steps = []  # Step log for frontend toast notifications
+                # ===== PRISM v0.2: Smart Portal Routing =====
+                # Route 1: Auto-apply via A-13 platform applicators (Greenhouse, Lever, Ashby, etc.)
+                if lst_source in AUTO_APPLY_SOURCES and orchestrator:
+                    applicator_key = AUTO_APPLY_SOURCES[lst_source]
+                    try:
+                        applicator = orchestrator._applicators.get(applicator_key)
+                        if applicator:
+                            # Build listing dict for the applicator
+                            listing_data = {
+                                'id': lid,
+                                'title': listing.get('title', ''),
+                                'company': listing.get('company', ''),
+                                'url': source_url,
+                                'source_url': source_url,
+                                'description_text': listing.get('description_text', ''),
+                                'source': lst_source,
+                                'location': listing.get('location', ''),
+                                'category': listing.get('category', ''),
+                                'source_id': listing.get('source_id', ''),
+                            }
 
-            # ===== PRISM v0.2: Smart Portal Routing =====
-            # Route 1: Auto-apply via A-13 platform applicators (Greenhouse, Lever, Ashby, etc.)
-            if lst_source in AUTO_APPLY_SOURCES and orchestrator:
-                applicator_key = AUTO_APPLY_SOURCES[lst_source]
-                try:
-                    applicator = orchestrator._applicators.get(applicator_key)
-                    if applicator:
-                        # Build listing dict for the applicator
-                        listing_data = {
-                            'id': lid,
-                            'title': listing.get('title', ''),
-                            'company': listing.get('company', ''),
-                            'url': source_url,
-                            'source_url': source_url,
-                            'description_text': listing.get('description_text', ''),
-                            'source': lst_source,
-                            'location': listing.get('location', ''),
-                            'category': listing.get('category', ''),
-                            'source_id': listing.get('source_id', ''),
-                        }
+                            # Generate cover letter via orchestrator's engine
+                            cover_letter = ''
+                            try:
+                                cover_letter = orchestrator.cover_engine.generate(listing_data)
+                            except Exception:
+                                pass
 
-                        # Generate cover letter via orchestrator's engine
-                        cover_letter = ''
+                            # Merge user-provided credentials/profile into the listing
+                            # CRITICAL: 'password' MUST be included — applicators need it for login!
+                            if credentials:
+                                listing_data.update({
+                                    k: v for k, v in credentials.items()
+                                    if k in ('full_name', 'email', 'password', 'phone', 'college',
+                                             'degree', 'graduation_year', 'cover_letter', 'availability',
+                                             'linkedin_profile', 'current_location', 'experience_years',
+                                             'resume_headline', 'resume')
+                                })
+
+                            # Execute the platform-specific applicator
+                            attempt = applicator.apply(listing_data, cover_letter=cover_letter)
+
+                            if attempt and attempt.success:
+                                apply_method = 'auto_applied'
+                                external_id = getattr(attempt, 'external_app_id', '') or ''
+                                # Capture step details for frontend toast notifications
+                                apply_steps = [
+                                    f'Logged in to {lst_source.title()}',
+                                    f'Submitted application',
+                                    f'Application confirmed (ID: {external_id[:20]})' if external_id else 'Application confirmed',
+                                ]
+                            else:
+                                apply_method = 'auto_apply_failed'
+                                apply_error = getattr(attempt, 'error', '') or 'Auto-apply attempt failed'
+                                apply_steps = [
+                                    f'Attempted {lst_source.title()} auto-apply',
+                                    f'Failed: {apply_error[:80]}',
+                                ]
+                        else:
+                            apply_method = 'auto_apply_failed'
+                            apply_error = f'No applicator configured for {lst_source}'
+                            apply_steps = [f'No auto-apply handler for {lst_source.title()}']
+                    except Exception as e:
+                        apply_method = 'auto_apply_error'
+                        apply_error = str(e)[:200]
+                        apply_steps = [f'Auto-apply error: {str(e)[:80]}']
+                        logger.warning(f"[{MODULE_ID}] A-13 auto-apply failed for {lid} ({lst_source}): {e}")
+
+                # Route 3: Manual-only sources (Workday etc.) — record and provide URL
+                elif lst_source in MANUAL_ONLY_SOURCES:
+                    apply_method = 'direct'
+                    apply_error = f'{lst_source.title()} requires manual application (CAPTCHA protected)'
+                    apply_steps = [f'{lst_source.title()} uses CAPTCHA — manual apply required']
+
+                # Route 4: Manual-with-URL sources (LinkedIn, Indeed, etc.)
+                # These generate a cover letter and ALWAYS return source_url
+                # The frontend MUST open source_url so the user can apply
+                elif lst_source in MANUAL_WITH_URL_SOURCES or True:
+                    # This catches ALL remaining sources including unknown ones
+                    apply_method = 'direct'
+                    apply_steps = [f'Generated cover letter for {lst_source.title()}', 'Manual apply — click link to open portal']
+                    # Generate cover letter for the user to copy-paste
+                    if orchestrator and orchestrator.cover_engine:
                         try:
-                            cover_letter = orchestrator.cover_engine.generate(listing_data)
+                            cover_letter = orchestrator.cover_engine.generate({
+                                'title': listing.get('title', ''),
+                                'company': listing.get('company', ''),
+                                'description_text': listing.get('description_text', ''),
+                                'location': listing.get('location', ''),
+                                'category': listing.get('category', ''),
+                            })
                         except Exception:
                             pass
 
-                        # Merge user-provided credentials/profile into the listing
-                        # CRITICAL: 'password' MUST be included — applicators need it for login!
-                        if credentials:
-                            listing_data.update({
-                                k: v for k, v in credentials.items()
-                                if k in ('full_name', 'email', 'password', 'phone', 'college',
-                                         'degree', 'graduation_year', 'cover_letter', 'availability',
-                                         'linkedin_profile', 'current_location', 'experience_years',
-                                         'resume_headline', 'resume')
-                            })
+                # Record outcome in database — ONLY mark as 'applied' if truly auto-applied
+                try:
+                    db_status = 'applied' if apply_method == 'auto_applied' else 'queued'
+                    outcome = Outcome(
+                        listing_id=lid,
+                        company_id=listing.get('company_id'),
+                        status=db_status,
+                        ppo_score_at_apply=listing.get('ppo_score', 0),
+                    )
+                    db.insert_outcome(outcome)
+                    # Only update listing status to 'applied' for real auto-applies
+                    if apply_method == 'auto_applied':
+                        db.update_clean_listing_scores(lid, status='applied')
+                except Exception as db_err:
+                    logger.warning(f"[{MODULE_ID}] Failed to record outcome for {lid}: {db_err}")
 
-                        # Execute the platform-specific applicator
-                        attempt = applicator.apply(listing_data, cover_letter=cover_letter)
-
-                        if attempt and attempt.success:
-                            apply_method = 'auto_applied'
-                            external_id = getattr(attempt, 'external_app_id', '') or ''
-                            # Capture step details for frontend toast notifications
-                            apply_steps = [
-                                f'Logged in to {lst_source.title()}',
-                                f'Submitted application',
-                                f'Application confirmed (ID: {external_id[:20]})' if external_id else 'Application confirmed',
-                            ]
-                        else:
-                            apply_method = 'auto_apply_failed'
-                            apply_error = getattr(attempt, 'error', '') or 'Auto-apply attempt failed'
-                            apply_steps = [
-                                f'Attempted {lst_source.title()} auto-apply',
-                                f'Failed: {apply_error[:80]}',
-                            ]
-                    else:
-                        apply_method = 'auto_apply_failed'
-                        apply_error = f'No applicator configured for {lst_source}'
-                        apply_steps = [f'No auto-apply handler for {lst_source.title()}']
-                except Exception as e:
-                    apply_method = 'auto_apply_error'
-                    apply_error = str(e)[:200]
-                    apply_steps = [f'Auto-apply error: {str(e)[:80]}']
-                    logger.warning(f"[{MODULE_ID}] A-13 auto-apply failed for {lid} ({lst_source}): {e}")
-
-            # Route 2: (removed — internshala now handled by Route 1 via AUTO_APPLY_SOURCES)
-
-            # Route 3: Manual-only sources (Workday etc.) — record and provide URL
-            elif lst_source in MANUAL_ONLY_SOURCES:
-                apply_method = 'direct'
-                apply_error = f'{lst_source.title()} requires manual application (CAPTCHA protected)'
-                apply_steps = [f'{lst_source.title()} uses CAPTCHA — manual apply required']
-
-            # Route 4: Manual-with-URL sources (LinkedIn, Indeed, etc.)
-            # These generate a cover letter and ALWAYS return source_url
-            # The frontend MUST open source_url so the user can apply
-            elif lst_source in MANUAL_WITH_URL_SOURCES or True:
-                # This catches ALL remaining sources including unknown ones
-                apply_method = 'direct'
-                apply_steps = [f'Generated cover letter for {lst_source.title()}', 'Manual apply — click link to open portal']
-                # Generate cover letter for the user to copy-paste
-                if orchestrator and orchestrator.cover_engine:
+                # Also mark as applied in Supabase if it was a Supabase job
+                if is_supabase_job and apply_method == 'auto_applied':
                     try:
-                        cover_letter = orchestrator.cover_engine.generate({
-                            'title': listing.get('title', ''),
-                            'company': listing.get('company', ''),
-                            'description_text': listing.get('description_text', ''),
-                            'location': listing.get('location', ''),
-                            'category': listing.get('category', ''),
-                        })
+                        from core.supabase_db import SupabaseJobDB
+                        SupabaseJobDB.mark_applied(job_id=lid, status='applied',
+                                                    notes=f'Auto-applied via PRISM A-13')
                     except Exception:
                         pass
 
-            # Record outcome in database — ONLY mark as 'applied' if truly auto-applied
-            try:
-                db_status = 'applied' if apply_method == 'auto_applied' else 'queued'
-                outcome = Outcome(
-                    listing_id=lid,
-                    company_id=listing.get('company_id'),
-                    status=db_status,
-                    ppo_score_at_apply=listing.get('ppo_score', 0),
-                )
-                db.insert_outcome(outcome)
-                # Only update listing status to 'applied' for real auto-applies
-                if apply_method == 'auto_applied':
-                    db.update_clean_listing_scores(lid, status='applied')
-            except Exception as db_err:
-                logger.warning(f"[{MODULE_ID}] Failed to record outcome for {lid}: {db_err}")
+                # PRISM v0.2: Success means EITHER auto-applied OR we recorded it for manual fallback
+                is_success = apply_method in ('auto_applied', 'direct', 'auto_apply_failed', 'auto_apply_error')
+                if is_success:
+                    success_count += 1
+                else:
+                    fail_count += 1
 
-            # PRISM v0.2: Success means EITHER auto-applied OR we recorded it for manual fallback
-            # Only true failures are 'error' method (invalid ID, not found, etc.)
-            # auto_apply_failed still counts as success because the job is queued and
-            # the user can apply manually via the source URL
-            is_success = apply_method in ('auto_applied', 'direct', 'auto_apply_failed', 'auto_apply_error')
-            if is_success:
-                success_count += 1
-            else:
+                results.append({
+                    'id': lid_raw,  # Return the original ID (sb_ prefix included) so frontend can match
+                    'success': is_success,
+                    'method': apply_method,
+                    'source_url': source_url,
+                    'external_id': external_id,
+                    'error': apply_error,
+                    'steps': apply_steps,
+                })
+
+            except Exception as loop_err:
+                logger.warning(f"[{MODULE_ID}] Batch apply error for {lid_raw}: {loop_err}")
+                results.append({
+                    'id': lid_raw, 'success': False, 'method': 'error',
+                    'source_url': '', 'external_id': '',
+                    'error': f'Processing error: {str(loop_err)[:150]}',
+                    'steps': [f'Error: {str(loop_err)[:80]}'],
+                })
                 fail_count += 1
-
-            results.append({
-                'id': lid,
-                'success': is_success,
-                'method': apply_method,
-                'source_url': source_url,
-                'external_id': external_id,
-                'error': apply_error,
-                'steps': apply_steps,
-            })
 
         return _json_response({
             "success": True,
