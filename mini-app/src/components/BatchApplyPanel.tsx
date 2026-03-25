@@ -385,10 +385,10 @@ export default function BatchApplyPanel() {
                 <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-xl mb-2">
                   <div className="flex items-center gap-2 mb-1">
                     <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                    <span className="text-[11px] font-bold text-emerald-700">Auto-Apply Ready</span>
+                    <span className="text-[11px] font-bold text-emerald-700">Credentials Saved</span>
                   </div>
                   <p className="text-[11px] text-emerald-600">
-                    PRISM will generate personalized cover letters and submit applications to {sourceConfig?.name || 'the portal'} automatically. Failed applications will fall back to manual apply.
+                    PRISM will log in to {sourceConfig?.name || 'the portal'} with your credentials, generate cover letters, and submit applications. If login or submission fails, you'll get a link to apply manually.
                   </p>
                 </div>
               )}
@@ -487,9 +487,12 @@ export default function BatchApplyPanel() {
                 <div className="mt-2 p-2 bg-white/60 rounded-lg">
                   <p className="text-[10px] text-primary-600 font-medium">
                     {batch.currentIndex < batch.totalCount
-                      ? `Processing job ${batch.currentIndex + 1}: Sending to ${sourceConfig?.name || 'portal'}...`
+                      ? `Logging in and submitting job ${batch.currentIndex + 1} to ${sourceConfig?.name || 'portal'}...`
                       : 'Finishing up...'
                     }
+                  </p>
+                  <p className="text-[9px] text-primary-400 mt-0.5">
+                    Each job: login → generate cover letter → submit → verify
                   </p>
                 </div>
                 <div className="flex justify-between mt-2 text-[10px] text-primary-500">
@@ -603,6 +606,23 @@ export default function BatchApplyPanel() {
                     <p className="text-[11px] text-emerald-700 font-medium text-center">
                       All {batch.successCount} applications were submitted automatically! No manual action needed.
                     </p>
+                  </div>
+                )}
+
+                {/* Error details for failed applications */}
+                {batch.errors && batch.errors.length > 0 && (
+                  <div className="p-3 bg-red-50 rounded-xl border border-red-200">
+                    <div className="flex items-center gap-2 mb-2">
+                      <AlertTriangle className="w-3.5 h-3.5 text-red-500" />
+                      <span className="text-[11px] font-bold text-red-700">Error Details</span>
+                    </div>
+                    <div className="space-y-1.5 max-h-[120px] overflow-y-auto">
+                      {batch.errors.map((err, idx) => (
+                        <p key={idx} className="text-[10px] text-red-600">
+                          {err.error || 'Unknown error'}
+                        </p>
+                      ))}
+                    </div>
                   </div>
                 )}
 

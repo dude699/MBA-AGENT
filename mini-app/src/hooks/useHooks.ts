@@ -211,13 +211,20 @@ export function useBatchApply() {
           // Step-by-step toast: show what's happening for each job
           toast.loading(`Processing ${i + 1}/${results.length}: ${jobTitle.slice(0, 40)}...`, { id: 'batch-step' });
 
+          // Show backend step logs as individual toasts (real-time feedback)
+          const steps: string[] = result?.steps || [];
+          for (const step of steps) {
+            toast.loading(`${i + 1}/${results.length}: ${step}`, { id: 'batch-step' });
+            await new Promise((r) => setTimeout(r, 400));
+          }
+
           try {
             if (result?.success && result?.method === 'auto_applied') {
               // ===== REAL AUTO-APPLY: Backend A-13 submitted the application =====
               markApplied(id, 'applied');
               autoAppliedCount++;
               processedIds.push(id);
-              toast.success(`Auto-applied: ${jobTitle.slice(0, 35)}`, { duration: 2000 });
+              toast.success(`\u2705 Auto-applied: ${jobTitle.slice(0, 35)}`, { duration: 3000 });
             } else if (result?.success) {
               // ===== NOT AUTO-APPLIED: Backend only RECORDED it =====
               // method is 'direct' or 'auto_apply_failed' or 'auto_apply_error'
@@ -231,7 +238,10 @@ export function useBatchApply() {
               // Do NOT call markApplied — the user hasn't actually applied!
               // Show honest toast about what happened
               if (result?.method === 'auto_apply_failed') {
-                toast(`Auto-apply failed for ${jobTitle.slice(0, 30)}. Manual apply needed.`, { icon: '\u26A0\uFE0F', duration: 2500 });
+                const reason = result?.error ? `: ${(result.error as string).slice(0, 60)}` : '';
+                toast(`\u26A0\uFE0F ${jobTitle.slice(0, 30)} — auto-apply failed${reason}`, { duration: 3500 });
+              } else {
+                toast(`\uD83D\uDC49 ${jobTitle.slice(0, 30)} — click link below to apply`, { duration: 2500 });
               }
             } else {
               failCount++;
@@ -242,7 +252,7 @@ export function useBatchApply() {
                 timestamp: new Date().toISOString(),
                 retryable: true,
               });
-              toast.error(`Failed: ${jobTitle.slice(0, 35)}`, { duration: 2000 });
+              toast.error(`\u274C Failed: ${jobTitle.slice(0, 35)} — ${(result?.error || '').slice(0, 50)}`, { duration: 3000 });
             }
           } catch (itemErr) {
             failCount++;

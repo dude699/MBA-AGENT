@@ -310,12 +310,14 @@ async def handle_apply(request: web.Request) -> web.Response:
                         'source_id': listing.get('source_id', ''),
                     }
                     # Merge user credentials into listing data
+                    # CRITICAL: 'password' MUST be included — applicators need it for login!
                     if credentials:
                         listing_data.update({
                             k: v for k, v in credentials.items()
-                            if k in ('full_name', 'email', 'phone', 'college', 'degree',
-                                     'graduation_year', 'cover_letter', 'availability',
-                                     'linkedin_profile', 'current_location')
+                            if k in ('full_name', 'email', 'password', 'phone', 'college',
+                                     'degree', 'graduation_year', 'cover_letter', 'availability',
+                                     'linkedin_profile', 'current_location', 'experience_years',
+                                     'resume_headline', 'resume')
                         })
                     # Generate cover letter
                     cover_letter = ''
@@ -471,6 +473,7 @@ async def handle_batch_apply(request: web.Request) -> web.Response:
             apply_method = 'direct'
             apply_error = ''
             external_id = ''
+            apply_steps = []  # Step log for frontend toast notifications
 
             # ===== PRISM v0.2: Smart Portal Routing =====
             # Route 1: Auto-apply via A-13 platform applicators (Greenhouse, Lever, Ashby, etc.)
@@ -501,12 +504,14 @@ async def handle_batch_apply(request: web.Request) -> web.Response:
                             pass
 
                         # Merge user-provided credentials/profile into the listing
+                        # CRITICAL: 'password' MUST be included — applicators need it for login!
                         if credentials:
                             listing_data.update({
                                 k: v for k, v in credentials.items()
-                                if k in ('full_name', 'email', 'phone', 'college', 'degree',
-                                         'graduation_year', 'cover_letter', 'availability',
-                                         'linkedin_profile', 'current_location')
+                                if k in ('full_name', 'email', 'password', 'phone', 'college',
+                                         'degree', 'graduation_year', 'cover_letter', 'availability',
+                                         'linkedin_profile', 'current_location', 'experience_years',
+                                         'resume_headline', 'resume')
                             })
 
                         # Execute the platform-specific applicator
@@ -515,15 +520,27 @@ async def handle_batch_apply(request: web.Request) -> web.Response:
                         if attempt and attempt.success:
                             apply_method = 'auto_applied'
                             external_id = getattr(attempt, 'external_app_id', '') or ''
+                            # Capture step details for frontend toast notifications
+                            apply_steps = [
+                                f'Logged in to {lst_source.title()}',
+                                f'Submitted application',
+                                f'Application confirmed (ID: {external_id[:20]})' if external_id else 'Application confirmed',
+                            ]
                         else:
                             apply_method = 'auto_apply_failed'
                             apply_error = getattr(attempt, 'error', '') or 'Auto-apply attempt failed'
+                            apply_steps = [
+                                f'Attempted {lst_source.title()} auto-apply',
+                                f'Failed: {apply_error[:80]}',
+                            ]
                     else:
                         apply_method = 'auto_apply_failed'
                         apply_error = f'No applicator configured for {lst_source}'
+                        apply_steps = [f'No auto-apply handler for {lst_source.title()}']
                 except Exception as e:
                     apply_method = 'auto_apply_error'
                     apply_error = str(e)[:200]
+                    apply_steps = [f'Auto-apply error: {str(e)[:80]}']
                     logger.warning(f"[{MODULE_ID}] A-13 auto-apply failed for {lid} ({lst_source}): {e}")
 
             # Route 2: (removed — internshala now handled by Route 1 via AUTO_APPLY_SOURCES)
@@ -532,6 +549,7 @@ async def handle_batch_apply(request: web.Request) -> web.Response:
             elif lst_source in MANUAL_ONLY_SOURCES:
                 apply_method = 'direct'
                 apply_error = f'{lst_source.title()} requires manual application (CAPTCHA protected)'
+                apply_steps = [f'{lst_source.title()} uses CAPTCHA — manual apply required']
 
             # Route 4: Manual-with-URL sources (LinkedIn, Indeed, etc.)
             # These generate a cover letter and ALWAYS return source_url
@@ -539,6 +557,7 @@ async def handle_batch_apply(request: web.Request) -> web.Response:
             elif lst_source in MANUAL_WITH_URL_SOURCES or True:
                 # This catches ALL remaining sources including unknown ones
                 apply_method = 'direct'
+                apply_steps = [f'Generated cover letter for {lst_source.title()}', 'Manual apply — click link to open portal']
                 # Generate cover letter for the user to copy-paste
                 if orchestrator and orchestrator.cover_engine:
                     try:
@@ -585,6 +604,7 @@ async def handle_batch_apply(request: web.Request) -> web.Response:
                 'source_url': source_url,
                 'external_id': external_id,
                 'error': apply_error,
+                'steps': apply_steps,
             })
 
         return _json_response({
