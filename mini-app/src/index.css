@@ -12,6 +12,7 @@
   --tg-theme-secondary-bg-color: #f8f9fa;
   --safe-area-top: env(safe-area-inset-top, 0px);
   --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+  --tg-header-height: 0px;
 
   /* Premium gradients — refined palette */
   --gradient-primary: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 100%);
@@ -79,7 +80,7 @@
     -webkit-overflow-scrolling: touch;
     overscroll-behavior-y: contain;
     touch-action: pan-y;
-    padding-top: var(--safe-area-top);
+    padding-top: calc(var(--safe-area-top) + var(--tg-header-height));
     min-height: 100vh;
     min-height: 100dvh;
     background: #ffffff;

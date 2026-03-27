@@ -58,6 +58,33 @@ try {
     setVH();
     tg.onEvent?.('viewportChanged', setVH);
     window.addEventListener('resize', setVH);
+
+    // PRISM FIX v3.0: Handle Telegram native header overlap
+    // Telegram Mini Apps have a native header bar (back/close buttons) that
+    // can overlap with app content. We need to account for this extra height.
+    const setTgSafeArea = () => {
+      // contentSafeAreaInset tells us how much the TG header covers content area
+      const csai = tg.contentSafeAreaInset || {};
+      const sai = tg.safeAreaInset || {};
+      const topInset = (csai.top || 0) + (sai.top || 0);
+      if (topInset > 0) {
+        document.documentElement.style.setProperty('--tg-header-height', `${topInset}px`);
+      } else {
+        // Fallback: if platform doesn't report insets, detect from isFullscreen
+        const isFullscreen = tg.isFullscreen === true;
+        if (!isFullscreen) {
+          // Not fullscreen means TG header is showing — add safe padding
+          // Typical TG header is ~56px on Android, ~44px on iOS
+          document.documentElement.style.setProperty('--tg-header-height', '0px');
+        } else {
+          document.documentElement.style.setProperty('--tg-header-height', '0px');
+        }
+      }
+    };
+    setTgSafeArea();
+    tg.onEvent?.('contentSafeAreaChanged', setTgSafeArea);
+    tg.onEvent?.('safeAreaChanged', setTgSafeArea);
+    tg.onEvent?.('fullscreenChanged', setTgSafeArea);
   }
 } catch (e) {
   console.log('Telegram WebApp SDK not available (running in browser)');

@@ -38,12 +38,12 @@ export default function Header() {
   }, []);
 
   return (
-    <header className="sticky top-0 z-40" style={{
+    <header className="sticky z-40" style={{
+      top: 'calc(env(safe-area-inset-top, 0px) + var(--tg-header-height, 0px))',
       background: 'rgba(5,5,8,0.97)',
       backdropFilter: 'blur(24px) saturate(180%)',
       WebkitBackdropFilter: 'blur(24px) saturate(180%)',
       borderBottom: '1px solid rgba(255,255,255,0.08)',
-      paddingTop: 'env(safe-area-inset-top, 0px)',
     }}>
       {/* Top Bar */}
       <div className="px-4 pt-3 pb-2">

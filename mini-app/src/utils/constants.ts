@@ -307,11 +307,10 @@ export const CREDENTIAL_REQUIREMENTS: CredentialRequirement[] = [
   {
     source: 'internshala',
     fields: [
-      { key: 'email', label: 'Email', type: 'email', required: true, placeholder: 'your@email.com', helpText: 'Registered Internshala email' },
-      { key: 'password', label: 'Password', type: 'password', required: true, placeholder: '••••••••' },
+      { key: 'password', label: 'Session Cookie', type: 'password', required: true, placeholder: 'Paste cookie string from browser...', helpText: 'Internshala blocks automated login (reCAPTCHA). Copy your session cookie from browser.' },
     ],
     loginUrl: 'https://internshala.com/login',
-    notes: 'Use your Internshala account. Ensure profile is 100% complete for best results.',
+    notes: 'How to get cookie: 1) Log in to internshala.com in browser  2) Press F12 → Application → Cookies → internshala.com  3) Copy all cookie values as "key=val; key2=val2" string  4) Paste here. Your session stays active for ~24 hours.',
   },
   {
     source: 'linkedin',
