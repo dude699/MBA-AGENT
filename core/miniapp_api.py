@@ -374,7 +374,7 @@ async def handle_apply(request: web.Request) -> web.Response:
 
         # Only mark as 'applied' in DB if auto-apply actually succeeded
         was_auto_applied = apply_result.get('method') == 'auto_applied'
-        db_status = 'applied' if was_auto_applied else 'queued'
+        db_status = 'applied' if was_auto_applied else 'pending'
         outcome = Outcome(
             listing_id=lid,
             company_id=listing.get('company_id'),
@@ -645,7 +645,7 @@ async def handle_batch_apply(request: web.Request) -> web.Response:
 
                 # Record outcome in database — ONLY mark as 'applied' if truly auto-applied
                 try:
-                    db_status = 'applied' if apply_method == 'auto_applied' else 'queued'
+                    db_status = 'applied' if apply_method == 'auto_applied' else 'pending'
                     outcome = Outcome(
                         listing_id=lid,
                         company_id=listing.get('company_id'),
