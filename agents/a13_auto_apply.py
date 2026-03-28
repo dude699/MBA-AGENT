@@ -572,9 +572,17 @@ class InternshalaApplicator:
 
             if cookie_string and self._cached_session:
                 # Reuse cached session from previous apply in same batch
-                session = self._cached_session
-                logger.info(f"[{AGENT_ID}] Reusing cached Internshala session")
-            elif cookie_string:
+                # But verify it's still valid first (might have expired mid-batch)
+                is_still_valid, _ = self._validate_session(self._cached_session)
+                if is_still_valid:
+                    session = self._cached_session
+                    logger.info(f"[{AGENT_ID}] Reusing cached Internshala session")
+                else:
+                    logger.warning(f"[{AGENT_ID}] Cached Internshala session expired, rebuilding")
+                    self._cached_session = None
+                    # Fall through to rebuild from cookie_string
+
+            if not session and cookie_string:
                 session = self._build_session_from_cookies(cookie_string)
                 if session:
                     # Validate the session works
@@ -603,6 +611,12 @@ class InternshalaApplicator:
                             logger.info(f"[{AGENT_ID}] Using stored Internshala session")
                         else:
                             session = None  # Invalid stored session
+                            # Clear the stale DB session so we don't retry it
+                            try:
+                                self.db.set_setting('internshala_session', '')
+                                logger.info(f"[{AGENT_ID}] Cleared stale stored Internshala session")
+                            except Exception:
+                                pass
 
             # ===== NO SESSION AVAILABLE =====
             if not session:
@@ -1159,7 +1173,7 @@ class NaukriApplicator:
         })
 
         try:
-            # Step 1: GET login page for cookies
+            # Step 1: GET login page for cookies + CSRF
             session.get('https://www.naukri.com/nlogin/login', timeout=15)
 
             # Step 2: POST login credentials
@@ -1170,6 +1184,7 @@ class NaukriApplicator:
             login_headers = {
                 'Content-Type': 'application/json',
                 'X-Requested-With': 'XMLHttpRequest',
+                'X-HTTP-Method-Override': 'POST',
                 'appid': '109',
                 'systemid': 'Naukri',
             }
@@ -1322,10 +1337,13 @@ class NaukriApplicator:
             )
             time.sleep(delay)
 
-            # Quick apply endpoint
+            # ===== NAUKRI QUICK APPLY — CORRECT ENDPOINT =====
+            # The real Naukri quick apply endpoint is /jobapply/applyjob
+            # NOT /central-loginservice/v1/login/quickApply (that's a login URL)
             apply_headers = {
                 'Content-Type': 'application/json',
                 'X-Requested-With': 'XMLHttpRequest',
+                'X-HTTP-Method-Override': 'POST',
                 'Referer': source_url,
                 'Origin': 'https://www.naukri.com',
                 'appid': '109',
@@ -1338,11 +1356,23 @@ class NaukriApplicator:
                 'coverLetter': cover_letter[:2000] if cover_letter else '',
             }
 
+            # Try the primary quick apply endpoint first
+            apply_url = f'https://www.naukri.com/jobapply/applyjob'
             resp = session.post(
-                'https://www.naukri.com/central-loginservice/v1/login/quickApply',
+                apply_url,
                 json=payload,
                 timeout=25,
             )
+
+            # If primary endpoint returns 404/405, try the alternate endpoint
+            if resp.status_code in (404, 405, 400):
+                logger.info(f"[{AGENT_ID}] Naukri primary apply endpoint returned {resp.status_code}, trying alternate")
+                alt_url = f'https://www.naukri.com/job-apply/apply/{job_id}'
+                resp = session.post(
+                    alt_url,
+                    json={'coverLetter': cover_letter[:2000] if cover_letter else ''},
+                    timeout=25,
+                )
 
             if resp.status_code == 200:
                 try:
@@ -1350,8 +1380,10 @@ class NaukriApplicator:
                 except Exception:
                     resp_data = {}
                 if (resp_data.get('status') == 'SUCCESS'
+                        or resp_data.get('applied') is True
                         or 'success' in resp.text.lower()
-                        or 'applied' in resp.text.lower()):
+                        or 'applied' in resp.text.lower()
+                        or resp_data.get('redirectUrl')):
                     attempt.success = True
                     attempt.external_app_id = job_id
                     logger.info(f"[{AGENT_ID}] Naukri Quick Apply SUCCESS: {listing.get('title', '')}")
@@ -1363,6 +1395,9 @@ class NaukriApplicator:
                     attempt.error = f"Naukri response: {resp.text[:200]}"
             elif resp.status_code == 401:
                 attempt.error = "Naukri session expired. Please re-enter credentials and try again."
+                self._cached_session = None
+            elif resp.status_code == 403:
+                attempt.error = "Naukri blocked this request (rate limited). Try again later."
                 self._cached_session = None
             else:
                 attempt.error = f"Naukri Quick Apply HTTP {resp.status_code}: {resp.text[:200]}"

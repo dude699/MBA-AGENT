@@ -98,15 +98,26 @@ async def handle_internships(request: web.Request) -> web.Response:
         offset = (page - 1) * per_page
 
         # Use the management internships query (excludes sales/BD)
+        # For multi-value filters, pass None to skip DB-level filtering
+        # and do it all in post-filtering for accuracy
+        db_source = source if len(sources) <= 1 else None
+        db_category = category if len(categories) <= 1 else None
+        db_location = location if len(locations) <= 1 else None
+        
+        # When multi-filtering, fetch more results since we'll post-filter
+        fetch_limit = per_page
+        if len(sources) > 1 or len(categories) > 1 or len(locations) > 1:
+            fetch_limit = per_page * 3  # Over-fetch to compensate for post-filtering
+        
         listings, total = db.get_management_internships(
-            limit=per_page,
+            limit=fetch_limit,
             offset=offset,
             max_duration_months=max_duration,
             sort_by=sort_by,
-            category=category,
-            source=source,
+            category=db_category,
+            source=db_source,
             min_stipend=min_stipend,
-            location=location,
+            location=db_location,
         )
 
         # Post-filter for multi-value filters the DB layer doesn't support natively
@@ -114,8 +125,15 @@ async def handle_internships(request: web.Request) -> web.Response:
             listings = [l for l in listings if (l.get('source', '') or '').lower() in sources]
         if len(categories) > 1:
             listings = [l for l in listings if (l.get('category', '') or '').lower() in categories]
-        if len(locations) > 1:
-            listings = [l for l in listings if (l.get('location', '') or '').lower() in locations]
+        # Location filter: use PARTIAL match (contains) not exact match
+        # Listings have "Mumbai, Maharashtra" but filter sends "mumbai"
+        if len(locations) == 1 and locations[0]:
+            loc_q = locations[0].lower()
+            listings = [l for l in listings if loc_q in (l.get('location', '') or '').lower()]
+        elif len(locations) > 1:
+            listings = [l for l in listings if any(
+                loc.lower() in (l.get('location', '') or '').lower() for loc in locations
+            )]
         if search:
             search_lower = search.lower()
             listings = [l for l in listings if
@@ -328,7 +346,7 @@ async def handle_apply(request: web.Request) -> web.Response:
                     attempt = applicator.apply(listing_data, cover_letter=cover_letter)
                     if attempt and attempt.success:
                         apply_result = {
-                            'method': 'auto_apply',
+                            'method': 'auto_applied',  # MUST match frontend check: result.method === 'auto_applied'
                             'external_id': getattr(attempt, 'external_app_id', '') or '',
                             'cover_letter': attempt.cover_letter[:500] if attempt.cover_letter else '',
                         }
@@ -355,7 +373,7 @@ async def handle_apply(request: web.Request) -> web.Response:
                 }
 
         # Only mark as 'applied' in DB if auto-apply actually succeeded
-        was_auto_applied = apply_result.get('method') == 'auto_apply'
+        was_auto_applied = apply_result.get('method') == 'auto_applied'
         db_status = 'applied' if was_auto_applied else 'queued'
         outcome = Outcome(
             listing_id=lid,
@@ -439,6 +457,15 @@ async def handle_batch_apply(request: web.Request) -> web.Response:
         try:
             from agents.a13_auto_apply import get_auto_apply_orchestrator
             orchestrator = get_auto_apply_orchestrator()
+            # CRITICAL: Reset circuit breaker for each new batch API call
+            # Otherwise 3 failures in a previous batch permanently blocks all future batches
+            if orchestrator and orchestrator.queue_manager:
+                orchestrator.queue_manager._consecutive_failures = 0
+            # Also reset cached sessions that may have expired between batches
+            if orchestrator and orchestrator.internshala:
+                orchestrator.internshala._cached_session = None
+            if orchestrator and orchestrator.naukri:
+                orchestrator.naukri._cached_session = None
         except Exception as orch_err:
             logger.warning(f"[{MODULE_ID}] A-13 orchestrator init failed: {orch_err}")
 
