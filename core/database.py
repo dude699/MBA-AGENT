@@ -2228,22 +2228,28 @@ class DatabaseManager:
     # ----------------------------------------------------------
 
     def insert_outcome(self, outcome: Outcome) -> Optional[int]:
-        """Record an application outcome."""
+        """Record an application outcome. Returns row ID or None if FK fails."""
         with self.get_cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO outcomes
-                (listing_id, company_id, status, applied_at,
-                 notes, ppo_score_at_apply)
-                VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
-                """,
-                (
-                    outcome.listing_id, outcome.company_id,
-                    outcome.status, outcome.notes,
-                    outcome.ppo_score_at_apply
+            try:
+                cur.execute(
+                    """
+                    INSERT INTO outcomes
+                    (listing_id, company_id, status, applied_at,
+                     notes, ppo_score_at_apply)
+                    VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
+                    """,
+                    (
+                        outcome.listing_id, outcome.company_id,
+                        outcome.status, outcome.notes,
+                        outcome.ppo_score_at_apply
+                    )
                 )
-            )
-            return cur.lastrowid
+                return cur.lastrowid
+            except Exception as e:
+                # FK constraint fails when listing_id doesn't exist in clean_listings
+                # (e.g., Supabase job IDs or deleted listings) — log and return None
+                logger.warning(f"insert_outcome failed for listing_id={outcome.listing_id}: {e}")
+                return None
 
     def update_outcome(self, outcome_id: int, status: str,
                         notes: str = ""):
