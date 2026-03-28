@@ -80,6 +80,17 @@ MBA_SEARCH_QUERIES = [
     "management consulting intern India",
     "FMCG management trainee India",
     "corporate strategy intern India",
+    # Additional high-volume queries for more coverage
+    "business intern India",
+    "summer intern MBA India",
+    "management trainee India",
+    "analyst intern India",
+    "research intern India",
+    "project management intern India",
+    "e-commerce intern India",
+    "growth intern India",
+    "corporate finance intern India",
+    "market research intern India",
 ]
 
 # Location variations for India
@@ -105,6 +116,13 @@ POSITIVE_KEYWORDS = {
     'brand', 'digital', 'supply chain', 'hr', 'human resources',
     'investment', 'banking', 'private equity', 'venture capital',
     'corporate', 'fmcg', 'e-commerce', 'startup',
+    # Additional terms to catch more MBA-relevant listings
+    'research', 'program', 'coordinator', 'planner', 'specialist',
+    'growth', 'project', 'category', 'procurement', 'logistics',
+    'ecommerce', 'commerce', 'advisory', 'risk', 'compliance',
+    'transformation', 'innovation', 'insights', 'intelligence',
+    'planning', 'manager', 'lead', 'head', 'director',
+    'summer', 'fellow', 'apprentice', 'campus',
 }
 
 NEGATIVE_KEYWORDS = {
@@ -195,7 +213,7 @@ class JobSpyScraper:
             return []
         
         self._reset_daily_if_needed()
-        queries = queries or MBA_SEARCH_QUERIES[:10]  # Use first 10 queries
+        queries = queries or MBA_SEARCH_QUERIES[:18]  # Use most queries for broad coverage
         all_listings = []
         seen_hashes = set()
         
@@ -212,7 +230,7 @@ class JobSpyScraper:
                     site_name=["linkedin"],
                     search_term=query,
                     location=location,
-                    results_wanted=min(max_results, 25),  # Cap per query
+                    results_wanted=min(max_results, 50),  # Doubled from 25 for more results
                     hours_old=hours_old,
                     linkedin_fetch_description=True,
                     verbose=0,
@@ -277,7 +295,7 @@ class JobSpyScraper:
             return []
         
         self._reset_daily_if_needed()
-        queries = queries or MBA_SEARCH_QUERIES[:8]
+        queries = queries or MBA_SEARCH_QUERIES[:15]  # Use more queries
         all_listings = []
         seen_hashes = set()
         
@@ -291,7 +309,7 @@ class JobSpyScraper:
                     site_name=["naukri"],
                     search_term=query,
                     location="India",
-                    results_wanted=min(max_results, 25),
+                    results_wanted=min(max_results, 50),  # Doubled from 25 for more results
                     hours_old=hours_old,
                     verbose=0,
                 )
@@ -627,15 +645,18 @@ class JobSpyScraper:
         """Detect internship category from title and description."""
         combined = f"{title} {description[:500]}".lower()
         
+        # NOTE: Order matters — more specific categories checked FIRST
+        # to prevent 'strategy' from matching 'business development' keyword
         category_keywords = {
-            'marketing': ['marketing', 'brand', 'digital marketing', 'seo', 'social media', 'content'],
-            'finance': ['finance', 'financial', 'accounting', 'investment', 'banking', 'equity', 'trading'],
             'consulting': ['consulting', 'consultant', 'advisory', 'strategy consulting'],
-            'operations': ['operations', 'supply chain', 'logistics', 'procurement', 'manufacturing'],
-            'data_analytics': ['data analyst', 'data science', 'analytics', 'machine learning', 'ai', 'tableau', 'power bi'],
-            'human_resources': ['hr', 'human resource', 'talent', 'recruitment', 'people ops'],
+            'investment_banking': ['investment banking', 'equity research', 'trading', 'ib analyst'],
             'product_management': ['product manager', 'product management', 'product owner'],
-            'strategy': ['strategy', 'strategic', 'corporate development', 'business development'],
+            'data_analytics': ['data analyst', 'data science', 'analytics', 'machine learning', 'ai', 'tableau', 'power bi'],
+            'strategy': ['strategy', 'strategic', 'corporate development'],
+            'marketing': ['marketing', 'brand', 'digital marketing', 'seo', 'social media', 'content marketing'],
+            'finance': ['finance', 'financial', 'accounting', 'banking', 'equity'],
+            'operations': ['operations', 'supply chain', 'logistics', 'procurement', 'manufacturing'],
+            'human_resources': ['hr', 'human resource', 'talent', 'recruitment', 'people ops'],
             'sales': ['sales', 'business development', 'account management'],
             'technology': ['software', 'developer', 'engineer', 'programming', 'full stack', 'backend', 'frontend'],
         }

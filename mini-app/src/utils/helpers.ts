@@ -82,10 +82,11 @@ export function applyFilters(internships: Internship[], filters: FilterState): I
       if (!filters.categories.some(c => c.toLowerCase() === itemCat)) return false;
     }
 
-    // Location filter — case-insensitive
+    // Location filter — case-insensitive PARTIAL match
+    // Listings have "Mumbai, Maharashtra" but user selects "Mumbai"
     if (filters.locations?.length > 0) {
       const itemLoc = (item.location || '').toLowerCase();
-      if (!filters.locations.some(l => l.toLowerCase() === itemLoc)) return false;
+      if (!filters.locations.some(l => itemLoc.includes(l.toLowerCase()) || l.toLowerCase().includes(itemLoc))) return false;
     }
 
     // Location type filter — case-insensitive
