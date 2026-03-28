@@ -242,7 +242,7 @@ class CoverLetterEngine:
         self.router = router
         self.db = db
 
-    def generate(self, listing: Dict, user_profile: Dict = None) -> str:
+    def generate(self, listing, user_profile=None) -> str:
         """
         Generate a cover letter for a specific listing.
         
@@ -253,6 +253,15 @@ class CoverLetterEngine:
         Returns:
             Clean cover letter text (no markdown, no AI artifacts)
         """
+        # Defensive: ensure listing is a dict (callers sometimes pass strings or None)
+        if not isinstance(listing, dict):
+            logger.warning(f"[{AGENT_ID}] CoverLetterEngine.generate got listing type={type(listing).__name__}, expected dict")
+            if isinstance(listing, str):
+                # If someone passed a title string instead of dict, wrap it
+                listing = {'title': listing}
+            else:
+                listing = {}
+
         title = listing.get('title', '')
         company = listing.get('company', '')
         description = listing.get('description_text', '')[:1500]
@@ -260,8 +269,8 @@ class CoverLetterEngine:
         category = listing.get('category', '')
         source = listing.get('source', '')
 
-        # Get user profile from settings
-        if not user_profile:
+        # Get user profile from settings — ensure it's always a dict
+        if not user_profile or not isinstance(user_profile, dict):
             user_profile = self._get_user_profile()
 
         college = user_profile.get('college', 'a top business school')

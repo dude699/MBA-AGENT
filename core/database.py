@@ -104,6 +104,7 @@ class ListingStatus(Enum):
 
 class OutcomeStatus(Enum):
     APPLIED = "applied"
+    PENDING = "pending"
     SHORTLISTED = "shortlisted"
     INTERVIEW = "interview"
     REJECTED = "rejected"
@@ -619,7 +620,7 @@ CREATE_TABLES_SQL: List[str] = [
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         listing_id INTEGER REFERENCES clean_listings(id) ON DELETE SET NULL,
         company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
-        status TEXT DEFAULT 'applied' CHECK(status IN ('applied','shortlisted','interview','rejected','offer','ppo','withdrawn')),
+        status TEXT DEFAULT 'applied' CHECK(status IN ('applied','pending','shortlisted','interview','rejected','offer','ppo','withdrawn')),
         applied_at DATETIME,
         outcome_at DATETIME,
         notes TEXT DEFAULT '',
@@ -669,7 +670,7 @@ CREATE_TABLES_SQL: List[str] = [
     CREATE TABLE IF NOT EXISTS auto_apply_queue (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         listing_id INTEGER NOT NULL REFERENCES clean_listings(id) ON DELETE CASCADE,
-        status TEXT DEFAULT 'queued' CHECK(status IN ('queued','in_progress','applied','failed','skipped')),
+        status TEXT DEFAULT 'queued' CHECK(status IN ('queued','in_progress','pre_checking','generating','applying','applied','failed','skipped')),
         platform TEXT DEFAULT '',
         apply_url TEXT DEFAULT '',
         notes TEXT DEFAULT '',
@@ -1126,7 +1127,7 @@ class DatabaseManager:
                     CREATE TABLE IF NOT EXISTS auto_apply_queue (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         listing_id INTEGER NOT NULL REFERENCES clean_listings(id) ON DELETE CASCADE,
-                        status TEXT DEFAULT 'queued' CHECK(status IN ('queued','in_progress','applied','failed','skipped')),
+                        status TEXT DEFAULT 'queued' CHECK(status IN ('queued','in_progress','pre_checking','generating','applying','applied','failed','skipped')),
                         platform TEXT DEFAULT '',
                         apply_url TEXT DEFAULT '',
                         notes TEXT DEFAULT '',
@@ -1296,6 +1297,79 @@ class DatabaseManager:
                 conn.commit()
                 logger.info("Migration v3 (PRISM v0.1) complete")
 
+            # ============================================================
+            # Migration v4: Fix CHECK constraints on auto_apply_queue + outcomes
+            # ============================================================
+            if current_version < 4:
+                logger.info("Running migration v4: Fix CHECK constraints (auto_apply_queue + outcomes)")
+
+                # SQLite doesn't support ALTER CHECK, so we recreate the tables
+                # ---- Fix auto_apply_queue ----
+                try:
+                    cursor.execute("ALTER TABLE auto_apply_queue RENAME TO _auto_apply_queue_old")
+                    cursor.execute("""
+                        CREATE TABLE IF NOT EXISTS auto_apply_queue (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            listing_id INTEGER NOT NULL REFERENCES clean_listings(id) ON DELETE CASCADE,
+                            status TEXT DEFAULT 'queued' CHECK(status IN ('queued','in_progress','pre_checking','generating','applying','applied','failed','skipped')),
+                            platform TEXT DEFAULT '',
+                            apply_url TEXT DEFAULT '',
+                            notes TEXT DEFAULT '',
+                            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                            updated_at DATETIME,
+                            UNIQUE(listing_id)
+                        )
+                    """)
+                    cursor.execute("""
+                        INSERT OR IGNORE INTO auto_apply_queue (id, listing_id, status, platform, apply_url, notes, created_at, updated_at)
+                        SELECT id, listing_id,
+                               CASE WHEN status IN ('queued','in_progress','applied','failed','skipped') THEN status ELSE 'queued' END,
+                               platform, apply_url, notes, created_at, updated_at
+                        FROM _auto_apply_queue_old
+                    """)
+                    cursor.execute("DROP TABLE _auto_apply_queue_old")
+                    cursor.execute("CREATE INDEX IF NOT EXISTS idx_auto_apply_status ON auto_apply_queue(status)")
+                    cursor.execute("CREATE INDEX IF NOT EXISTS idx_auto_apply_listing ON auto_apply_queue(listing_id)")
+                except Exception as e:
+                    logger.warning(f"Migration v4: auto_apply_queue rebuild skipped ({e})")
+
+                # ---- Fix outcomes ----
+                try:
+                    cursor.execute("ALTER TABLE outcomes RENAME TO _outcomes_old")
+                    cursor.execute("""
+                        CREATE TABLE IF NOT EXISTS outcomes (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            listing_id INTEGER REFERENCES clean_listings(id) ON DELETE SET NULL,
+                            company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+                            status TEXT DEFAULT 'applied' CHECK(status IN ('applied','pending','shortlisted','interview','rejected','offer','ppo','withdrawn')),
+                            applied_at DATETIME,
+                            outcome_at DATETIME,
+                            notes TEXT DEFAULT '',
+                            ppo_score_at_apply REAL DEFAULT 0.0,
+                            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                            followup_count INTEGER DEFAULT 0
+                        )
+                    """)
+                    # Migrate data — map any invalid status values to 'pending'
+                    cursor.execute("""
+                        INSERT OR IGNORE INTO outcomes (id, listing_id, company_id, status, applied_at, outcome_at, notes, ppo_score_at_apply, created_at)
+                        SELECT id, listing_id, company_id,
+                               CASE WHEN status IN ('applied','shortlisted','interview','rejected','offer','ppo','withdrawn') THEN status ELSE 'pending' END,
+                               applied_at, outcome_at, notes, ppo_score_at_apply, created_at
+                        FROM _outcomes_old
+                    """)
+                    cursor.execute("DROP TABLE _outcomes_old")
+                except Exception as e:
+                    logger.warning(f"Migration v4: outcomes rebuild skipped ({e})")
+
+                # Record migration
+                cursor.execute(
+                    "INSERT OR IGNORE INTO __schema_migrations (version, description) VALUES (?, ?)",
+                    (4, "v4: Fix CHECK constraints — auto_apply_queue (add pre_checking/generating/applying), outcomes (add pending)")
+                )
+                conn.commit()
+                logger.info("Migration v4 (CHECK constraint fix) complete")
+
         except Exception as e:
             logger.error(f"Migration error: {e}")
             conn.rollback()
@@ -1452,7 +1526,8 @@ class DatabaseManager:
             cur.execute(
                 """
                 SELECT q.*, c.title, c.company, c.url, c.source, c.category,
-                       c.stipend_monthly, c.is_ppo, c.location
+                       c.stipend_monthly, c.is_ppo, c.location,
+                       c.description_text
                 FROM auto_apply_queue q
                 JOIN clean_listings c ON c.id = q.listing_id
                 WHERE q.status = 'queued'
