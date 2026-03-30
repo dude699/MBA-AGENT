@@ -304,14 +304,9 @@ export const SOURCE_CONFIG: Record<string, {
 
 // ===== CREDENTIAL REQUIREMENTS =====
 export const CREDENTIAL_REQUIREMENTS: CredentialRequirement[] = [
-  {
-    source: 'internshala',
-    fields: [
-      { key: 'password', label: 'Session Cookie', type: 'password', required: true, placeholder: 'Paste cookie string from browser...', helpText: 'Internshala blocks automated login (reCAPTCHA). Copy your session cookie from browser.' },
-    ],
-    loginUrl: 'https://internshala.com/login',
-    notes: 'How to get cookie: 1) Log in to internshala.com in browser  2) Press F12 → Application → Cookies → internshala.com  3) Copy all cookie values as "key=val; key2=val2" string  4) Paste here. Your session stays active for ~24 hours.',
-  },
+  // PRISM v4.0: Internshala removed — no longer needs session cookie
+  // Internshala uses assisted-apply: AI generates cover letter, user clicks link to apply
+  // (HTTP-based auto-apply never worked due to browser-level anti-automation)
   {
     source: 'linkedin',
     fields: [

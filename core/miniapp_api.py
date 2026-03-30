@@ -350,6 +350,14 @@ async def handle_apply(request: web.Request) -> web.Response:
                             'external_id': getattr(attempt, 'external_app_id', '') or '',
                             'cover_letter': attempt.cover_letter[:500] if attempt.cover_letter else '',
                         }
+                    elif attempt and getattr(attempt, 'error', '') == 'assisted':
+                        # PRISM v4.0: Assisted-apply (Internshala)
+                        apply_url = getattr(attempt, 'external_app_id', '') or source_url
+                        apply_result = {
+                            'method': 'assisted',
+                            'source_url': apply_url if apply_url.startswith('http') else source_url,
+                            'cover_letter': attempt.cover_letter[:2000] if attempt.cover_letter else '',
+                        }
                     else:
                         error_msg = getattr(attempt, 'error', '') or 'Auto-apply not available'
                         apply_result = {
@@ -464,11 +472,6 @@ async def handle_batch_apply(request: web.Request) -> web.Response:
             # Otherwise 3 failures in a previous batch permanently blocks all future batches
             if orchestrator and orchestrator.queue_manager:
                 orchestrator.queue_manager._consecutive_failures = 0
-            # Also reset cached sessions that may have expired between batches
-            if orchestrator and orchestrator.internshala:
-                orchestrator.internshala._cached_session = None
-            if orchestrator and orchestrator.naukri:
-                orchestrator.naukri._cached_session = None
         except Exception as orch_err:
             logger.warning(f"[{MODULE_ID}] A-13 orchestrator init failed: {orch_err}")
 
@@ -552,8 +555,8 @@ async def handle_batch_apply(request: web.Request) -> web.Response:
                 external_id = ''
                 apply_steps = []  # Step log for frontend toast notifications
 
-                # ===== PRISM v0.2: Smart Portal Routing =====
-                # Route 1: Auto-apply via A-13 platform applicators (Greenhouse, Lever, Ashby, etc.)
+                # ===== PRISM v4.0: Smart Portal Routing =====
+                # Route 1: Auto-apply or Assisted-apply via A-13 platform applicators
                 if lst_source in AUTO_APPLY_SOURCES and orchestrator:
                     applicator_key = AUTO_APPLY_SOURCES[lst_source]
                     try:
@@ -581,7 +584,6 @@ async def handle_batch_apply(request: web.Request) -> web.Response:
                                 pass
 
                             # Merge user-provided credentials/profile into the listing
-                            # CRITICAL: 'password' MUST be included — applicators need it for login!
                             if credentials:
                                 listing_data.update({
                                     k: v for k, v in credentials.items()
@@ -595,13 +597,27 @@ async def handle_batch_apply(request: web.Request) -> web.Response:
                             attempt = applicator.apply(listing_data, cover_letter=cover_letter)
 
                             if attempt and attempt.success:
+                                # Real auto-apply succeeded (Greenhouse, Lever, etc.)
                                 apply_method = 'auto_applied'
                                 external_id = getattr(attempt, 'external_app_id', '') or ''
-                                # Capture step details for frontend toast notifications
                                 apply_steps = [
                                     f'Logged in to {lst_source.title()}',
                                     f'Submitted application',
                                     f'Application confirmed (ID: {external_id[:20]})' if external_id else 'Application confirmed',
+                                ]
+                            elif attempt and getattr(attempt, 'error', '') == 'assisted':
+                                # PRISM v4.0: Assisted-apply (Internshala)
+                                # Cover letter generated, user clicks link to apply manually
+                                apply_method = 'assisted'
+                                cover_letter = getattr(attempt, 'cover_letter', '') or cover_letter
+                                # external_app_id contains the direct apply URL for assisted mode
+                                apply_url = getattr(attempt, 'external_app_id', '') or source_url
+                                if apply_url and apply_url.startswith('http'):
+                                    source_url = apply_url  # Override source_url with deep link
+                                apply_steps = [
+                                    f'Generated AI cover letter for {lst_source.title()}',
+                                    'Cover letter ready to copy-paste',
+                                    'Click the link below to apply on Internshala',
                                 ]
                             else:
                                 apply_method = 'auto_apply_failed'
@@ -676,8 +692,8 @@ async def handle_batch_apply(request: web.Request) -> web.Response:
                     except Exception:
                         pass
 
-                # PRISM v0.2: Success means EITHER auto-applied OR we recorded it for manual fallback
-                is_success = apply_method in ('auto_applied', 'direct', 'auto_apply_failed', 'auto_apply_error')
+                # PRISM v4.0: Success means EITHER auto-applied, assisted, OR recorded for manual fallback
+                is_success = apply_method in ('auto_applied', 'assisted', 'direct', 'auto_apply_failed', 'auto_apply_error')
                 if is_success:
                     success_count += 1
                 else:
@@ -691,6 +707,7 @@ async def handle_batch_apply(request: web.Request) -> web.Response:
                     'external_id': external_id,
                     'error': apply_error,
                     'steps': apply_steps,
+                    'cover_letter': cover_letter[:2000] if (apply_method == 'assisted' and cover_letter) else '',
                 })
 
             except Exception as loop_err:
