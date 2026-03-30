@@ -298,8 +298,13 @@ class CoverLetterEngine:
         )
 
         try:
-            response = self.router.generate_cover_letter(
-                self.SYSTEM_PROMPT, user_prompt
+            # Use router.call() directly with our custom system+user prompts
+            # NOT router.generate_cover_letter() which expects (listing_dict, profile_dict)
+            response = self.router.call(
+                'cover_letter',
+                user_prompt,
+                system_prompt=self.SYSTEM_PROMPT,
+                use_cache=False,
             )
             if response.success:
                 letter = self._clean_cover_letter(response.content)
@@ -676,10 +681,17 @@ class InternshalaApplicator:
                 self._cached_session = None
                 return attempt
 
-            # Step 2: Extract CSRF token from cookie (Internshala uses csrf_cookie_name)
-            csrf_token = session.cookies.get('csrf_cookie_name', '')
+            # Step 2: Extract CSRF token — Internshala rotates CSRF on each request
+            # MUST use the CSRF from the LATEST response (detail page), not the initial session
+            # The detail page GET response may set a new csrf_cookie_name cookie
+            csrf_token = ''
+            # Priority 1: Cookie set by the detail page response (freshest)
+            for cookie in session.cookies:
+                if cookie.name == 'csrf_cookie_name':
+                    csrf_token = cookie.value
+                    break
+            # Priority 2: HTML hidden field (server-rendered token)
             if not csrf_token:
-                # Try from HTML hidden field
                 csrf_match = re.search(
                     r'name=["\']csrf_test_name["\'][^>]*value=["\']([^"\']+)["\']', html
                 )
@@ -692,8 +704,13 @@ class InternshalaApplicator:
                 )
                 if csrf_match:
                     csrf_token = csrf_match.group(1)
+            # Priority 3: Extract from any meta tag or JS variable
+            if not csrf_token:
+                csrf_match = re.search(r'csrf_hash\s*[=:]\s*["\']([^"\']+)["\']', html)
+                if csrf_match:
+                    csrf_token = csrf_match.group(1)
 
-            logger.info(f"[{AGENT_ID}] CSRF token: {'found' if csrf_token else 'MISSING'}")
+            logger.info(f"[{AGENT_ID}] CSRF token: {'found (' + csrf_token[:8] + '...)' if csrf_token else 'MISSING'}")
 
             # Step 3: Extract internship ID
             internship_id = self._extract_internship_id(url, html)
@@ -766,6 +783,7 @@ class InternshalaApplicator:
             )
 
             # Step 7: Parse JSON response
+            logger.info(f"[{AGENT_ID}] Internshala apply response: HTTP {apply_resp.status_code}, body={apply_resp.text[:200]}")
             if apply_resp.status_code == 200:
                 try:
                     resp_json = apply_resp.json()
@@ -786,8 +804,48 @@ class InternshalaApplicator:
                     attempt.external_app_id = internship_id
                     attempt.error = "Already applied to this internship"
                 elif resp_json.get('requireLogin'):
-                    attempt.error = "Session expired. Please log in again and update cookie."
-                    self._cached_session = None
+                    # CSRF mismatch or session write-protection triggered
+                    # Try ONE retry with a fresh CSRF token from the detail page
+                    logger.warning(f"[{AGENT_ID}] Internshala requireLogin — retrying with fresh CSRF")
+                    try:
+                        time.sleep(random.uniform(2, 4))
+                        retry_resp = session.get(url, timeout=20)
+                        if retry_resp.status_code == 200:
+                            retry_html = retry_resp.text
+                            # Re-extract fresh CSRF
+                            fresh_csrf = ''
+                            for ck in session.cookies:
+                                if ck.name == 'csrf_cookie_name':
+                                    fresh_csrf = ck.value
+                                    break
+                            if not fresh_csrf:
+                                m = re.search(r'name=["\']csrf_test_name["\'][^>]*value=["\']([^"\']+)["\']', retry_html)
+                                if m:
+                                    fresh_csrf = m.group(1)
+                            if fresh_csrf and fresh_csrf != csrf_token:
+                                form_data['csrf_test_name'] = fresh_csrf
+                                time.sleep(random.uniform(2, 4))
+                                retry_apply = session.post(apply_url, data=form_data, headers=apply_headers, timeout=25)
+                                logger.info(f"[{AGENT_ID}] CSRF retry response: HTTP {retry_apply.status_code}, body={retry_apply.text[:200]}")
+                                if retry_apply.status_code == 200:
+                                    retry_json = {}
+                                    try:
+                                        retry_json = retry_apply.json()
+                                    except Exception:
+                                        pass
+                                    if retry_json.get('success') is True:
+                                        attempt.success = True
+                                        attempt.external_app_id = internship_id
+                                        attempt.error = ''
+                                        self._apps_today += 1
+                                        self._last_app_time = time.time()
+                                        logger.info(f"[{AGENT_ID}] APPLIED on CSRF retry!")
+                    except Exception as retry_err:
+                        logger.warning(f"[{AGENT_ID}] CSRF retry failed: {retry_err}")
+
+                    if not attempt.success:
+                        attempt.error = "Session expired. Please log in again on internshala.com and update cookie."
+                        self._cached_session = None
                 else:
                     error_msg = resp_json.get('errorThrown', apply_resp.text[:300])
                     attempt.error = f"Internshala rejected: {error_msg}"

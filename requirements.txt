@@ -65,3 +65,6 @@ postgrest>=0.16            # PostgREST — ~3MB
 python-dotenv>=1.0         # Env var loading — ~1MB
 loguru>=0.7                # Structured logging — ~2MB
 psutil>=5.9                # System metrics (CPU/memory) — ~3MB
+
+# === Job Scraping ===
+python-jobspy>=1.1         # LinkedIn/Naukri/Indeed multi-portal scraper — ~5MB

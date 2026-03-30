@@ -375,15 +375,18 @@ async def handle_apply(request: web.Request) -> web.Response:
         # Only mark as 'applied' in DB if auto-apply actually succeeded
         was_auto_applied = apply_result.get('method') == 'auto_applied'
         db_status = 'applied' if was_auto_applied else 'pending'
-        outcome = Outcome(
-            listing_id=lid,
-            company_id=listing.get('company_id'),
-            status=db_status,
-            ppo_score_at_apply=listing.get('ppo_score', 0),
-        )
-        db.insert_outcome(outcome)
-        if was_auto_applied:
-            db.update_clean_listing_scores(lid, status='applied')
+        try:
+            outcome = Outcome(
+                listing_id=lid,
+                company_id=listing.get('company_id'),
+                status=db_status,
+                ppo_score_at_apply=listing.get('ppo_score', 0),
+            )
+            db.insert_outcome(outcome)
+            if was_auto_applied:
+                db.update_clean_listing_scores(lid, status='applied')
+        except Exception as db_err:
+            logger.warning(f"[{MODULE_ID}] Failed to record outcome for {lid}: {db_err}")
 
         return _json_response({
             "success": True,
@@ -644,18 +647,23 @@ async def handle_batch_apply(request: web.Request) -> web.Response:
                             pass
 
                 # Record outcome in database — ONLY mark as 'applied' if truly auto-applied
+                # Skip local outcome for Supabase jobs (listing_id doesn't exist in local clean_listings)
                 try:
-                    db_status = 'applied' if apply_method == 'auto_applied' else 'pending'
-                    outcome = Outcome(
-                        listing_id=lid,
-                        company_id=listing.get('company_id'),
-                        status=db_status,
-                        ppo_score_at_apply=listing.get('ppo_score', 0),
-                    )
-                    db.insert_outcome(outcome)
-                    # Only update listing status to 'applied' for real auto-applies
-                    if apply_method == 'auto_applied':
-                        db.update_clean_listing_scores(lid, status='applied')
+                    if not is_supabase_job:
+                        # Verify listing exists in local DB before outcome insert (FK constraint)
+                        local_listing = db.get_clean_listing_by_id(lid)
+                        if local_listing:
+                            db_status = 'applied' if apply_method == 'auto_applied' else 'pending'
+                            outcome = Outcome(
+                                listing_id=lid,
+                                company_id=listing.get('company_id'),
+                                status=db_status,
+                                ppo_score_at_apply=listing.get('ppo_score', 0),
+                            )
+                            db.insert_outcome(outcome)
+                            # Only update listing status to 'applied' for real auto-applies
+                            if apply_method == 'auto_applied':
+                                db.update_clean_listing_scores(lid, status='applied')
                 except Exception as db_err:
                     logger.warning(f"[{MODULE_ID}] Failed to record outcome for {lid}: {db_err}")
 
