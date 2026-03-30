@@ -199,6 +199,9 @@ export function useBatchApply() {
         const storeJobs = useAppStore.getState().internships;
         const allJobs = [...storeJobs, ...sbCache];
 
+        // PRISM v4.0: Track assisted-apply links with cover letters
+        const assistedApplyLinks: Array<{ id: string; url: string; title: string; company: string; coverLetter: string }> = [];
+
         for (let i = 0; i < results.length; i++) {
           const result = results[i];
           const id = String(result?.id || ids[i] || '');
@@ -225,6 +228,17 @@ export function useBatchApply() {
               autoAppliedCount++;
               processedIds.push(id);
               toast.success(`\u2705 Auto-applied: ${jobTitle.slice(0, 35)}`, { duration: 3000 });
+            } else if (result?.success && result?.method === 'assisted') {
+              // ===== ASSISTED-APPLY (v4.0): Cover letter generated, user clicks link =====
+              processedIds.push(id);
+              manualNeededCount++;
+              const sourceUrl = result?.source_url || job?.sourceUrl || '';
+              const coverLetter = result?.cover_letter || '';
+              if (sourceUrl) {
+                assistedApplyLinks.push({ id, url: sourceUrl, title: jobTitle, company: jobCompany, coverLetter });
+                manualApplyLinks.push({ id, url: sourceUrl, title: jobTitle, company: jobCompany });
+              }
+              toast.success(`\u2728 Cover letter ready for ${jobTitle.slice(0, 30)} \u2014 click link to apply`, { duration: 3500 });
             } else if (result?.success) {
               // ===== NOT AUTO-APPLIED: Backend only RECORDED it =====
               // method is 'direct' or 'auto_apply_failed' or 'auto_apply_error'
@@ -235,13 +249,12 @@ export function useBatchApply() {
               if (sourceUrl) {
                 manualApplyLinks.push({ id, url: sourceUrl, title: jobTitle, company: jobCompany });
               }
-              // Do NOT call markApplied — the user hasn't actually applied!
               // Show honest toast about what happened
               if (result?.method === 'auto_apply_failed') {
                 const reason = result?.error ? `: ${(result.error as string).slice(0, 60)}` : '';
-                toast(`\u26A0\uFE0F ${jobTitle.slice(0, 30)} — auto-apply failed${reason}`, { duration: 3500 });
+                toast(`\u26A0\uFE0F ${jobTitle.slice(0, 30)} \u2014 auto-apply failed${reason}`, { duration: 3500 });
               } else {
-                toast(`\uD83D\uDC49 ${jobTitle.slice(0, 30)} — click link below to apply`, { duration: 2500 });
+                toast(`\uD83D\uDC49 ${jobTitle.slice(0, 30)} \u2014 click link below to apply`, { duration: 2500 });
               }
             } else {
               failCount++;
@@ -252,7 +265,7 @@ export function useBatchApply() {
                 timestamp: new Date().toISOString(),
                 retryable: true,
               });
-              toast.error(`\u274C Failed: ${jobTitle.slice(0, 35)} — ${(result?.error || '').slice(0, 50)}`, { duration: 3000 });
+              toast.error(`\u274C Failed: ${jobTitle.slice(0, 35)} \u2014 ${(result?.error || '').slice(0, 50)}`, { duration: 3000 });
             }
           } catch (itemErr) {
             failCount++;
@@ -274,6 +287,7 @@ export function useBatchApply() {
           failCount,
           errors,
           manualApplyLinks: manualApplyLinks as any,
+          assistedApplyLinks: assistedApplyLinks as any,
           manualNeededCount,
         });
 
@@ -284,10 +298,14 @@ export function useBatchApply() {
         if (autoAppliedCount > 0 && manualNeededCount === 0 && failCount === 0) {
           toast.success(`${autoAppliedCount} application${autoAppliedCount > 1 ? 's' : ''} submitted automatically!`, { duration: 4000 });
         } else if (autoAppliedCount > 0 && manualNeededCount > 0) {
-          toast.success(`${autoAppliedCount} auto-submitted! ${manualNeededCount} need manual apply — see links below.`, { duration: 5000 });
+          toast.success(`${autoAppliedCount} auto-submitted! ${manualNeededCount} need manual apply \u2014 see links below.`, { duration: 5000 });
         } else if (manualNeededCount > 0 && failCount === 0) {
-          // THIS IS THE CRITICAL CASE: method='direct' — nothing was auto-applied!
-          toast(`${manualNeededCount} listing${manualNeededCount > 1 ? 's' : ''} need manual apply. Click the links below to open them.`, { icon: '\uD83D\uDC47', duration: 6000 });
+          // Cover letters generated, user clicks links to apply
+          if (assistedApplyLinks.length > 0) {
+            toast.success(`Cover letters ready for ${manualNeededCount} listing${manualNeededCount > 1 ? 's' : ''}! Click the links below to apply.`, { duration: 6000 });
+          } else {
+            toast(`${manualNeededCount} listing${manualNeededCount > 1 ? 's' : ''} need manual apply. Click the links below to open them.`, { icon: '\uD83D\uDC47', duration: 6000 });
+          }
         } else if (failCount > 0 && (autoAppliedCount + manualNeededCount) > 0) {
           toast(`${autoAppliedCount} auto-applied, ${manualNeededCount} need manual, ${failCount} failed.`, { icon: '\u2139\uFE0F', duration: 5000 });
         } else if (failCount > 0) {

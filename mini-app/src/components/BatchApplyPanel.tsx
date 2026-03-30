@@ -20,6 +20,7 @@ import { useBatchApply, useCountdown } from '@/hooks/useHooks';
 import { hapticFeedback, hapticNotification } from '@/utils/helpers';
 import { SOURCE_CONFIG, RISK_WARNINGS, CREDENTIAL_REQUIREMENTS } from '@/utils/constants';
 import type { InternshipSource } from '@/types';
+import toast from 'react-hot-toast';
 
 // Portal-specific additional fields that may be requested during application
 const PORTAL_EXTRA_FIELDS: Record<string, Array<{
@@ -362,12 +363,12 @@ export default function BatchApplyPanel() {
                 <div className="p-3 bg-blue-50 border border-blue-100 rounded-xl mb-2">
                   <div className="flex items-center gap-2 mb-1">
                     <ExternalLink className="w-3.5 h-3.5 text-blue-600" />
-                    <span className="text-[11px] font-bold text-blue-700">Manual Apply with AI Assist</span>
+                    <span className="text-[11px] font-bold text-blue-700">AI-Assisted Apply</span>
                   </div>
                   <p className="text-[11px] text-blue-600">
-                    PRISM will generate a personalized cover letter and provide
-                    direct links to apply on {sourceConfig?.name || 'the portal'}. You'll click
-                    the links to complete your application.
+                    PRISM will generate a personalized AI cover letter for each listing.
+                    You'll get the cover letter ready to copy-paste and a direct link to
+                    apply on {sourceConfig?.name || 'the portal'}. No login needed.
                   </p>
                 </div>
               )}
@@ -487,17 +488,17 @@ export default function BatchApplyPanel() {
                 <div className="mt-2 p-2 bg-white/60 rounded-lg">
                   <p className="text-[10px] text-primary-600 font-medium">
                     {batch.currentIndex < batch.totalCount
-                      ? `Logging in and submitting job ${batch.currentIndex + 1} to ${sourceConfig?.name || 'portal'}...`
+                      ? `Generating cover letter for job ${batch.currentIndex + 1}...`
                       : 'Finishing up...'
                     }
                   </p>
                   <p className="text-[9px] text-primary-400 mt-0.5">
-                    Each job: login → generate cover letter → submit → verify
+                    Each job: analyze listing → generate AI cover letter → prepare apply link
                   </p>
                 </div>
                 <div className="flex justify-between mt-2 text-[10px] text-primary-500">
                   <span className="text-status-success font-medium">{batch.successCount} auto-applied</span>
-                  <span className="text-blue-500 font-medium">{(batch as any).manualNeededCount || 0} manual needed</span>
+                  <span className="text-emerald-500 font-medium">{(batch as any).manualNeededCount || 0} assisted</span>
                   <span className="text-status-danger font-medium">{batch.failCount} failed</span>
                 </div>
               </div>
@@ -524,14 +525,14 @@ export default function BatchApplyPanel() {
               <div className="mx-5 mt-4 space-y-3">
                 {/* Summary */}
                 <div className={`p-4 rounded-xl border ${
-                  batch.successCount > 0
+                  batch.successCount > 0 || ((batch as any).assistedApplyLinks || []).length > 0
                     ? 'bg-status-success/5 border-status-success/20'
                     : (batch as any).manualNeededCount > 0
                       ? 'bg-blue-50 border-blue-200'
                       : 'bg-red-50 border-red-200'
                 }`}>
                   <div className="flex items-center gap-2 mb-2">
-                    {batch.successCount > 0 ? (
+                    {batch.successCount > 0 || ((batch as any).assistedApplyLinks || []).length > 0 ? (
                       <CheckCircle2 className="w-4 h-4 text-status-success" />
                     ) : (batch as any).manualNeededCount > 0 ? (
                       <ExternalLink className="w-4 h-4 text-blue-600" />
@@ -539,7 +540,7 @@ export default function BatchApplyPanel() {
                       <AlertTriangle className="w-4 h-4 text-red-500" />
                     )}
                     <span className={`text-xs font-bold ${
-                      batch.successCount > 0 ? 'text-status-success'
+                      batch.successCount > 0 || ((batch as any).assistedApplyLinks || []).length > 0 ? 'text-status-success'
                         : (batch as any).manualNeededCount > 0 ? 'text-blue-700'
                         : 'text-red-600'
                     }`}>
@@ -552,8 +553,8 @@ export default function BatchApplyPanel() {
                       <p className="text-[10px] text-primary-500">Auto-Applied</p>
                     </div>
                     <div>
-                      <p className="text-lg font-bold text-blue-600">{(batch as any).manualNeededCount || 0}</p>
-                      <p className="text-[10px] text-primary-500">Manual Needed</p>
+                      <p className="text-lg font-bold text-emerald-500">{((batch as any).assistedApplyLinks || []).length || 0}</p>
+                      <p className="text-[10px] text-primary-500">Cover Letters</p>
                     </div>
                     <div>
                       <p className="text-lg font-bold text-red-500">{batch.failCount}</p>
@@ -565,19 +566,82 @@ export default function BatchApplyPanel() {
                 {/* ===== CLICKABLE MANUAL APPLY LINKS ===== */}
                 {/* This is the FIX for "not opening on laptop/desktop" */}
                 {/* window.open() is BLOCKED by popup blockers. Instead render <a> links */}
-                {((batch as any).manualApplyLinks || []).length > 0 && (
+                {((batch as any).assistedApplyLinks || []).length > 0 && (
+                  <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-200">
+                    <div className="flex items-center gap-2 mb-2">
+                      <FileText className="w-4 h-4 text-emerald-600" />
+                      <span className="text-xs font-bold text-emerald-700">
+                        AI Cover Letters Ready ({((batch as any).assistedApplyLinks || []).length})
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-emerald-600 mb-3">
+                      Cover letters have been generated. Click each link, paste the cover letter, and submit:
+                    </p>
+                    <div className="space-y-3 max-h-[300px] overflow-y-auto">
+                      {((batch as any).assistedApplyLinks || []).map((link: { id: string; url: string; title: string; company: string; coverLetter: string }, idx: number) => (
+                        <div key={link.id || idx} className="bg-white rounded-lg border border-emerald-100 overflow-hidden">
+                          <a
+                            href={link.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-2 p-2.5 hover:bg-emerald-50 transition-all active:scale-[0.98]"
+                            onClick={() => hapticFeedback('light')}
+                          >
+                            <span className="w-5 h-5 bg-emerald-600 rounded-md flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0">
+                              {idx + 1}
+                            </span>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-semibold text-primary-800 line-clamp-1">{link.title}</p>
+                              {link.company && <p className="text-[10px] text-primary-500 line-clamp-1">{link.company}</p>}
+                            </div>
+                            <ExternalLink className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
+                          </a>
+                          {link.coverLetter && (
+                            <div className="px-2.5 pb-2.5">
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-[9px] font-bold text-emerald-600 uppercase">Cover Letter</span>
+                                <button
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(link.coverLetter);
+                                    hapticNotification('success');
+                                    toast.success('Cover letter copied!', { duration: 1500 });
+                                  }}
+                                  className="text-[10px] font-bold text-emerald-600 bg-emerald-100 px-2 py-0.5 rounded active:scale-95 transition-transform"
+                                >
+                                  Copy
+                                </button>
+                              </div>
+                              <div className="text-[10px] text-primary-600 bg-emerald-50 p-2 rounded max-h-[100px] overflow-y-auto whitespace-pre-wrap leading-relaxed">
+                                {link.coverLetter.slice(0, 500)}{link.coverLetter.length > 500 ? '...' : ''}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Manual apply links (non-assisted — failed auto-apply or direct sources) */}
+                {((batch as any).manualApplyLinks || []).filter((l: any) =>
+                  !((batch as any).assistedApplyLinks || []).some((a: any) => a.id === l.id)
+                ).length > 0 && (
                   <div className="p-4 bg-blue-50 rounded-xl border border-blue-200">
                     <div className="flex items-center gap-2 mb-2">
                       <ExternalLink className="w-4 h-4 text-blue-600" />
                       <span className="text-xs font-bold text-blue-700">
-                        Click to Apply Manually ({((batch as any).manualApplyLinks || []).length})
+                        Click to Apply Manually ({((batch as any).manualApplyLinks || []).filter((l: any) =>
+                          !((batch as any).assistedApplyLinks || []).some((a: any) => a.id === l.id)
+                        ).length})
                       </span>
                     </div>
                     <p className="text-[10px] text-blue-600 mb-3">
                       These jobs could not be auto-applied. Click each link to open the application page:
                     </p>
                     <div className="space-y-2 max-h-[200px] overflow-y-auto">
-                      {((batch as any).manualApplyLinks || []).map((link: { id: string; url: string; title: string; company: string }, idx: number) => (
+                      {((batch as any).manualApplyLinks || []).filter((l: any) =>
+                        !((batch as any).assistedApplyLinks || []).some((a: any) => a.id === l.id)
+                      ).map((link: { id: string; url: string; title: string; company: string }, idx: number) => (
                         <a
                           key={link.id || idx}
                           href={link.url}
@@ -600,11 +664,18 @@ export default function BatchApplyPanel() {
                   </div>
                 )}
 
-                {/* All auto-applied successfully */}
+                {/* All auto-applied or assisted successfully */}
                 {batch.successCount > 0 && ((batch as any).manualNeededCount || 0) === 0 && batch.failCount === 0 && (
                   <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-200">
                     <p className="text-[11px] text-emerald-700 font-medium text-center">
                       All {batch.successCount} applications were submitted automatically! No manual action needed.
+                    </p>
+                  </div>
+                )}
+                {((batch as any).assistedApplyLinks || []).length > 0 && batch.successCount === 0 && batch.failCount === 0 && (
+                  <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-200">
+                    <p className="text-[11px] text-emerald-700 font-medium text-center">
+                      Cover letters generated! Open each link above, paste your cover letter, and submit.
                     </p>
                   </div>
                 )}

@@ -191,6 +191,8 @@ export interface BatchState {
   // v4.0: Manual apply links (rendered as clickable <a> tags, not window.open)
   manualApplyLinks?: Array<{ id: string; url: string; title: string; company: string }>;
   manualNeededCount?: number;
+  // v4.0: Assisted apply links with AI-generated cover letters
+  assistedApplyLinks?: Array<{ id: string; url: string; title: string; company: string; coverLetter: string }>;
 }
 
 export interface BatchError {

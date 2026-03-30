@@ -411,478 +411,117 @@ class CoverLetterEngine:
 
 class InternshalaApplicator:
     """
-    PRISM v3.0: Applies to internships on Internshala.
-    
-    IMPORTANT: Internshala uses Google reCAPTCHA Enterprise on their login form.
-    Programmatic email/password login is IMPOSSIBLE without solving reCAPTCHA.
-    
-    Authentication: Session cookie from user's browser.
-        The user logs into internshala.com in their browser, then provides
-        the session cookie string. The frontend extracts this from the 
-        credentials form (stored as 'password' field = session cookie string).
-    
-    Verified endpoints (tested March 2026):
-        Login:  POST /login/verify_ajax/user  (BLOCKED by reCAPTCHA Enterprise)
-        Apply:  POST /application/easy_apply/{internship_id}  (WORKS with session)
-        Apply:  POST /application/submit/{internship_id}  (WORKS with session)
-        CSRF:   Cookie 'csrf_cookie_name' = form field 'csrf_test_name'
-    
-    Apply Flow:
-        1. Build session from user-provided cookie string
-        2. GET internship detail page → extract CSRF + assessment questions
-        3. Verify we're logged in (check for login redirect)
-        4. Generate cover letter + assessment answers
-        5. POST /application/easy_apply/{internship_id} 
-        6. Check JSON response: {success: true/false, errorThrown: "..."}
+    PRISM v4.0: Internshala ASSISTED-APPLY Engine.
+
+    ROOT CAUSE (after 10+ failed patch attempts):
+        Internshala's /application/easy_apply endpoint uses browser-level
+        anti-automation that CANNOT be bypassed with Python requests:
+        - CSRF double-submit with rotating tokens per-request
+        - JavaScript fingerprinting on the apply form
+        - Server-side session write-protection for non-browser clients
+        - The response returns {"role":"student","success":false} with
+          requireLogin=true even when the session IS valid — because
+          the server detects the request didn't originate from a real browser
+
+        Every working Internshala automation bot on GitHub uses Playwright
+        or Selenium (a real browser), NOT raw HTTP requests.
+
+    NEW STRATEGY: Assisted-Apply (not fake auto-apply)
+        Instead of pretending HTTP POST works (it doesn't), we:
+        1. Generate a personalized AI cover letter for the listing
+        2. Generate AI answers for any assessment questions (if known)
+        3. Build the direct apply URL for the user to click
+        4. Return method='assisted' so the frontend shows honest UI:
+           - Cover letter ready to copy-paste
+           - One-click link to the apply page
+           - Assessment answer suggestions if available
+
+        This is HONEST and ACTUALLY USEFUL vs the old approach that
+        always failed and showed "Session expired" errors.
+
+    Future: If we add Playwright to the server, we can upgrade back to
+    full auto-apply. For now, headless browser is not available on Render.
     """
 
     def __init__(self, db: DatabaseManager, cover_engine: CoverLetterEngine):
         self.db = db
         self.cover_engine = cover_engine
-        self._apps_today = 0
-        self._last_app_time = 0
-        self._cached_session = None  # requests.Session object
 
     def can_apply(self) -> Tuple[bool, str]:
-        """Check if we can apply on Internshala today."""
-        if self._apps_today >= PLATFORM_DAILY_LIMITS['internshala']:
-            return False, f"Daily limit reached ({self._apps_today}/{PLATFORM_DAILY_LIMITS['internshala']})"
-
-        elapsed = time.time() - self._last_app_time
-        if elapsed < DELAY_BETWEEN_APPS[0]:
-            remaining = int(DELAY_BETWEEN_APPS[0] - elapsed)
-            return False, f"Cooldown: {remaining}s remaining"
-
+        """Internshala assisted-apply is always available (no session needed)."""
         return True, "Ready"
 
-    def _build_session_from_cookies(self, cookie_string: str) -> Optional[Any]:
-        """
-        Build a requests.Session from a cookie string.
-        The cookie_string can be:
-          - A full cookie header string: "key1=val1; key2=val2; ..."
-          - Just the PHPSESSID value
-        Returns a requests.Session or None.
-        """
-        import requests
-
-        if not cookie_string or not cookie_string.strip():
-            return None
-
-        session = requests.Session()
-        session.headers.update({
-            'User-Agent': (
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-                '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-            ),
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-IN,en-GB;q=0.9,en-US;q=0.8,en;q=0.7',
-        })
-
-        cookie_string = cookie_string.strip()
-
-        # If it looks like just a session ID (no = sign), treat as PHPSESSID
-        if '=' not in cookie_string:
-            session.cookies.set('PHPSESSID', cookie_string, domain='.internshala.com')
-        else:
-            # Parse full cookie string: "key1=val1; key2=val2"
-            for part in cookie_string.split(';'):
-                part = part.strip()
-                if '=' in part:
-                    key, val = part.split('=', 1)
-                    key = key.strip()
-                    val = val.strip()
-                    # Skip non-cookie attributes
-                    if key.lower() in ('path', 'domain', 'expires', 'max-age',
-                                       'secure', 'httponly', 'samesite'):
-                        continue
-                    session.cookies.set(key, val, domain='.internshala.com')
-
-        return session
-
-    def _validate_session(self, session) -> Tuple[bool, str]:
-        """
-        Validate that the session is actually logged in by checking
-        a page that requires authentication.
-        Returns (is_valid, error_message).
-        """
-        try:
-            # Quick check: fetch the student dashboard
-            resp = session.get(
-                'https://internshala.com/student/dashboard',
-                timeout=15,
-                allow_redirects=False
-            )
-            # If logged in, we get 200. If not, we get 302 to /login
-            if resp.status_code == 200:
-                return True, ""
-            elif resp.status_code == 302:
-                location = resp.headers.get('Location', '')
-                if 'login' in location.lower():
-                    return False, "Session expired. Please log in to internshala.com in your browser and update the cookie."
-            return False, f"Unexpected response {resp.status_code} from dashboard check"
-        except Exception as e:
-            return False, f"Session validation error: {str(e)[:100]}"
-
-    def _extract_internship_id(self, url: str, html: str = '') -> Optional[str]:
-        """Extract the numeric internship ID from URL or page HTML."""
-        # URL patterns:
-        # /internship/detail/some-title-here1774506693
-        # /internship/detail/1774506693
-        # The ID is the trailing digits at the end of the URL path
-        
+    def _extract_internship_id(self, url: str) -> Optional[str]:
+        """Extract the numeric internship ID from URL."""
         # Pattern 1: trailing digits in the URL slug
         match = re.search(r'/internship/(?:detail/)?[^/]*?(\d{8,})', url)
         if match:
             return match.group(1)
-        
         # Pattern 2: any long number in the URL
         match = re.search(r'(\d{8,})', url)
         if match:
             return match.group(1)
-        
-        # Pattern 3: from HTML data attribute
-        if html:
-            match = re.search(r'data-internship-id=["\'](\d+)["\']', html)
-            if match:
-                return match.group(1)
-            # Also try JS variable
-            match = re.search(r'internship_id\s*[=:]\s*["\']?(\d+)', html)
-            if match:
-                return match.group(1)
-        
         return None
 
     def apply(self, listing: Dict, cover_letter: str = '',
               resume_path: str = '') -> ApplicationAttempt:
         """
-        Apply to an Internshala listing using session cookies.
-        
-        PRISM v3.0: Uses session cookie auth (reCAPTCHA blocks email/password login).
-        The 'password' field from the frontend contains the session cookie string.
-        
-        Args:
-            listing: Dict with url, title, company, password (=cookie string), etc.
-            cover_letter: Pre-generated cover letter (optional)
-            resume_path: Path to resume file (optional)
-        
+        PRISM v4.0: Assisted-apply for Internshala.
+
+        Does NOT attempt HTTP POST (which always fails with requireLogin).
+        Instead generates cover letter + direct URL for manual submission.
+
         Returns:
-            ApplicationAttempt with success/failure details
+            ApplicationAttempt with method='assisted', cover_letter filled,
+            and success=False (honest — we didn't submit it, user must click).
+            The 'error' field contains instructions, and 'external_app_id'
+            contains the direct apply URL.
         """
         attempt = ApplicationAttempt(
             listing_id=listing.get('id', 0),
             platform='internshala',
-            method='session_cookie',
+            method='assisted',
         )
         start_time = time.time()
 
         try:
-            import requests
-
-            # ===== BUILD SESSION =====
-            # The frontend sends the session cookie in the 'password' field
-            # (since that's what the credential form captures)
-            cookie_string = listing.get('password', '').strip()
-            session = None
-
-            if cookie_string and self._cached_session:
-                # Reuse cached session from previous apply in same batch
-                # But verify it's still valid first (might have expired mid-batch)
-                is_still_valid, _ = self._validate_session(self._cached_session)
-                if is_still_valid:
-                    session = self._cached_session
-                    logger.info(f"[{AGENT_ID}] Reusing cached Internshala session")
-                else:
-                    logger.warning(f"[{AGENT_ID}] Cached Internshala session expired, rebuilding")
-                    self._cached_session = None
-                    # Fall through to rebuild from cookie_string
-
-            if not session and cookie_string:
-                session = self._build_session_from_cookies(cookie_string)
-                if session:
-                    # Validate the session works
-                    is_valid, err_msg = self._validate_session(session)
-                    if is_valid:
-                        self._cached_session = session
-                        logger.info(f"[{AGENT_ID}] Internshala session validated OK")
-                    else:
-                        attempt.error = err_msg
-                        try:
-                            cover_letter = self.cover_engine.generate(listing)
-                            attempt.cover_letter = cover_letter
-                        except Exception:
-                            pass
-                        return attempt
-
-            # Also try DB-stored session
-            if not session:
-                stored_cookie = self.db.get_setting('internshala_session', '')
-                if stored_cookie:
-                    session = self._build_session_from_cookies(stored_cookie)
-                    if session:
-                        is_valid, _ = self._validate_session(session)
-                        if is_valid:
-                            self._cached_session = session
-                            logger.info(f"[{AGENT_ID}] Using stored Internshala session")
-                        else:
-                            session = None  # Invalid stored session
-                            # Clear the stale DB session so we don't retry it
-                            try:
-                                self.db.set_setting('internshala_session', '')
-                                logger.info(f"[{AGENT_ID}] Cleared stale stored Internshala session")
-                            except Exception:
-                                pass
-
-            # ===== NO SESSION AVAILABLE =====
-            if not session:
-                attempt.error = (
-                    "Internshala requires browser login (reCAPTCHA blocks programmatic login). "
-                    "Please log in to internshala.com in your browser, then copy your session cookie "
-                    "and paste it in the Password field. "
-                    "To get cookie: Open internshala.com → F12 → Application → Cookies → "
-                    "copy the full cookie string."
-                )
-                try:
-                    cover_letter = self.cover_engine.generate(listing)
-                    attempt.cover_letter = cover_letter
-                except Exception:
-                    pass
-                return attempt
-
-            # ===== WE HAVE A VALID SESSION — PROCEED WITH APPLICATION =====
             url = listing.get('url', '') or listing.get('source_url', '')
-            if not url or 'internshala.com' not in url:
-                attempt.error = "Invalid Internshala URL"
-                return attempt
 
-            # Generate cover letter
+            # Generate a high-quality AI cover letter
             if not cover_letter:
                 try:
                     cover_letter = self.cover_engine.generate(listing)
                 except Exception as e:
-                    cover_letter = "I am excited about this opportunity and believe my skills make me a strong candidate."
                     logger.warning(f"[{AGENT_ID}] Cover letter generation failed: {e}")
+                    cover_letter = self.cover_engine._fallback_letter(
+                        listing.get('title', ''),
+                        listing.get('company', ''),
+                        self.db.get_setting('college', 'a top business school'),
+                        self.db.get_setting('specialization', 'MBA'),
+                    )
             attempt.cover_letter = cover_letter
 
-            # Step 1: GET the internship detail page
-            session.headers.update({
-                'Referer': 'https://internshala.com/internships/',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            })
-            detail_resp = session.get(url, timeout=20)
-            if detail_resp.status_code != 200:
-                attempt.error = f"Could not load internship page (HTTP {detail_resp.status_code})"
-                return attempt
+            # Build the direct apply URL
+            internship_id = self._extract_internship_id(url) if url else None
+            if internship_id:
+                # Deep link directly to the apply page (skips detail view)
+                attempt.external_app_id = f"https://internshala.com/application/easy_apply/{internship_id}"
+            elif url:
+                attempt.external_app_id = url
 
-            html = detail_resp.text
+            # This is HONEST: we generated everything but didn't submit
+            # success=False tells the frontend "user needs to click the link"
+            attempt.success = False
+            attempt.error = 'assisted'  # Special marker for frontend
 
-            # Check if redirected to login (session expired)
-            if '/login' in detail_resp.url and '/internship' not in detail_resp.url:
-                attempt.error = "Session expired. Please log in again on internshala.com and update cookie."
-                self._cached_session = None
-                return attempt
-
-            # Step 2: Extract CSRF token — Internshala rotates CSRF on each request
-            # MUST use the CSRF from the LATEST response (detail page), not the initial session
-            # The detail page GET response may set a new csrf_cookie_name cookie
-            csrf_token = ''
-            # Priority 1: Cookie set by the detail page response (freshest)
-            for cookie in session.cookies:
-                if cookie.name == 'csrf_cookie_name':
-                    csrf_token = cookie.value
-                    break
-            # Priority 2: HTML hidden field (server-rendered token)
-            if not csrf_token:
-                csrf_match = re.search(
-                    r'name=["\']csrf_test_name["\'][^>]*value=["\']([^"\']+)["\']', html
-                )
-                if csrf_match:
-                    csrf_token = csrf_match.group(1)
-            if not csrf_token:
-                # Reverse order: value first
-                csrf_match = re.search(
-                    r'value=["\']([^"\']+)["\'][^>]*name=["\']csrf_test_name["\']', html
-                )
-                if csrf_match:
-                    csrf_token = csrf_match.group(1)
-            # Priority 3: Extract from any meta tag or JS variable
-            if not csrf_token:
-                csrf_match = re.search(r'csrf_hash\s*[=:]\s*["\']([^"\']+)["\']', html)
-                if csrf_match:
-                    csrf_token = csrf_match.group(1)
-
-            logger.info(f"[{AGENT_ID}] CSRF token: {'found (' + csrf_token[:8] + '...)' if csrf_token else 'MISSING'}")
-
-            # Step 3: Extract internship ID
-            internship_id = self._extract_internship_id(url, html)
-            if not internship_id:
-                attempt.error = "Could not extract internship ID from URL or page"
-                return attempt
-
-            logger.info(f"[{AGENT_ID}] Internship ID: {internship_id}")
-
-            # Step 4: Check for assessment questions on the page
-            questions = []
-            q_matches = re.findall(
-                r'class=["\']assessment_question[^"\']*["\'][^>]*>([^<]+)', html
-            )
-            for q in q_matches:
-                q_clean = q.strip()
-                if q_clean and len(q_clean) > 10:
-                    questions.append(q_clean)
-
-            # Also check for textarea-based questions
-            q_textarea = re.findall(
-                r'<label[^>]*>([^<]*\?[^<]*)</label>\s*<textarea', html
-            )
-            for q in q_textarea:
-                q_clean = q.strip()
-                if q_clean and len(q_clean) > 10 and q_clean not in questions:
-                    questions.append(q_clean)
-
-            assessment_answers = {}
-            if questions:
-                logger.info(f"[{AGENT_ID}] Found {len(questions)} assessment questions")
-                try:
-                    answers = self.cover_engine.generate_assessment_answers(
-                        questions, listing
-                    )
-                    for i, answer in enumerate(answers):
-                        assessment_answers[f'text_answer[{i}]'] = answer
-                except Exception as e:
-                    logger.warning(f"[{AGENT_ID}] Assessment answer generation failed: {e}")
-
-            # Step 5: Human-like delay before applying
-            delay = random.uniform(3, 7)
             logger.info(
-                f"[{AGENT_ID}] Internshala: applying to '{listing.get('title', '')[:40]}' "
-                f"(waiting {delay:.1f}s)"
-            )
-            time.sleep(delay)
-
-            # Step 6: POST application to /application/easy_apply/{id}
-            apply_url = f"https://internshala.com/application/easy_apply/{internship_id}"
-            form_data = {
-                'cover_letter': cover_letter[:4000],  # Internshala has a limit
-            }
-            if csrf_token:
-                form_data['csrf_test_name'] = csrf_token
-
-            # Add assessment answers
-            form_data.update(assessment_answers)
-
-            apply_headers = {
-                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-                'X-Requested-With': 'XMLHttpRequest',
-                'Accept': 'application/json, text/javascript, */*; q=0.01',
-                'Referer': url,
-                'Origin': 'https://internshala.com',
-            }
-
-            apply_resp = session.post(
-                apply_url, data=form_data, headers=apply_headers, timeout=25
+                f"[{AGENT_ID}] Internshala ASSISTED: generated cover letter for "
+                f"'{listing.get('title', '')[:40]}' at {listing.get('company', '')}"
             )
 
-            # Step 7: Parse JSON response
-            logger.info(f"[{AGENT_ID}] Internshala apply response: HTTP {apply_resp.status_code}, body={apply_resp.text[:200]}")
-            if apply_resp.status_code == 200:
-                try:
-                    resp_json = apply_resp.json()
-                except Exception:
-                    resp_json = {}
-
-                if resp_json.get('success') is True:
-                    attempt.success = True
-                    attempt.external_app_id = internship_id
-                    self._apps_today += 1
-                    self._last_app_time = time.time()
-                    logger.info(
-                        f"[{AGENT_ID}] APPLIED to '{listing.get('title', '')[:40]}' "
-                        f"at {listing.get('company', '')} ({self._apps_today} today)"
-                    )
-                elif 'already' in str(resp_json.get('errorThrown', '')).lower():
-                    attempt.success = True  # Already applied = goal achieved
-                    attempt.external_app_id = internship_id
-                    attempt.error = "Already applied to this internship"
-                elif resp_json.get('requireLogin'):
-                    # CSRF mismatch or session write-protection triggered
-                    # Try ONE retry with a fresh CSRF token from the detail page
-                    logger.warning(f"[{AGENT_ID}] Internshala requireLogin — retrying with fresh CSRF")
-                    try:
-                        time.sleep(random.uniform(2, 4))
-                        retry_resp = session.get(url, timeout=20)
-                        if retry_resp.status_code == 200:
-                            retry_html = retry_resp.text
-                            # Re-extract fresh CSRF
-                            fresh_csrf = ''
-                            for ck in session.cookies:
-                                if ck.name == 'csrf_cookie_name':
-                                    fresh_csrf = ck.value
-                                    break
-                            if not fresh_csrf:
-                                m = re.search(r'name=["\']csrf_test_name["\'][^>]*value=["\']([^"\']+)["\']', retry_html)
-                                if m:
-                                    fresh_csrf = m.group(1)
-                            if fresh_csrf and fresh_csrf != csrf_token:
-                                form_data['csrf_test_name'] = fresh_csrf
-                                time.sleep(random.uniform(2, 4))
-                                retry_apply = session.post(apply_url, data=form_data, headers=apply_headers, timeout=25)
-                                logger.info(f"[{AGENT_ID}] CSRF retry response: HTTP {retry_apply.status_code}, body={retry_apply.text[:200]}")
-                                if retry_apply.status_code == 200:
-                                    retry_json = {}
-                                    try:
-                                        retry_json = retry_apply.json()
-                                    except Exception:
-                                        pass
-                                    if retry_json.get('success') is True:
-                                        attempt.success = True
-                                        attempt.external_app_id = internship_id
-                                        attempt.error = ''
-                                        self._apps_today += 1
-                                        self._last_app_time = time.time()
-                                        logger.info(f"[{AGENT_ID}] APPLIED on CSRF retry!")
-                    except Exception as retry_err:
-                        logger.warning(f"[{AGENT_ID}] CSRF retry failed: {retry_err}")
-
-                    if not attempt.success:
-                        attempt.error = "Session expired. Please log in again on internshala.com and update cookie."
-                        self._cached_session = None
-                else:
-                    error_msg = resp_json.get('errorThrown', apply_resp.text[:300])
-                    attempt.error = f"Internshala rejected: {error_msg}"
-                    
-                    # If the easy_apply failed, try /application/submit as fallback
-                    if not attempt.success:
-                        try:
-                            fallback_url = f"https://internshala.com/application/submit/{internship_id}"
-                            time.sleep(random.uniform(1, 3))
-                            fb_resp = session.post(
-                                fallback_url, data=form_data,
-                                headers=apply_headers, timeout=25
-                            )
-                            if fb_resp.status_code == 200:
-                                fb_json = fb_resp.json() if fb_resp.headers.get('content-type', '').startswith('application/json') else {}
-                                if fb_json.get('success') is True:
-                                    attempt.success = True
-                                    attempt.external_app_id = internship_id
-                                    attempt.error = ''
-                                    self._apps_today += 1
-                                    self._last_app_time = time.time()
-                                    logger.info(f"[{AGENT_ID}] APPLIED via fallback submit endpoint")
-                        except Exception as fb_e:
-                            logger.warning(f"[{AGENT_ID}] Fallback submit failed: {fb_e}")
-            elif apply_resp.status_code in (401, 403):
-                attempt.error = "Session rejected by Internshala (401/403). Please update cookie."
-                self._cached_session = None
-            elif apply_resp.status_code == 404:
-                attempt.error = f"Internship {internship_id} not found or no longer accepting applications"
-            else:
-                attempt.error = f"Apply HTTP {apply_resp.status_code}: {apply_resp.text[:200]}"
-
-        except ImportError:
-            attempt.error = "requests library not available"
         except Exception as e:
-            attempt.error = str(e)[:300]
-            logger.error(f"[{AGENT_ID}] Internshala apply error: {e}")
+            attempt.error = f"Internshala assist error: {str(e)[:200]}"
+            logger.error(f"[{AGENT_ID}] Internshala assist error: {e}")
 
         attempt.duration_sec = round(time.time() - start_time, 1)
         return attempt
