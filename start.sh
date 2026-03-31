@@ -93,5 +93,18 @@ echo "========================================================"
 echo "[START] Starting Python backend..."
 echo "========================================================"
 
-# -- Step 2: Start the Python application ---------------------
+# -- Step 2: Ensure Playwright Chromium is installed ----------
+# Needed for automated Internshala login (reCAPTCHA v3 bypass)
+if python -c "from playwright.sync_api import sync_playwright" 2>/dev/null; then
+    if ! playwright install --dry-run chromium 2>/dev/null | grep -q "already"; then
+        echo "[START] Installing Playwright Chromium browser..."
+        playwright install chromium 2>&1 | tail -3 || echo "[START] Playwright install failed (non-fatal)"
+    else
+        echo "[START] Playwright Chromium already installed"
+    fi
+else
+    echo "[START] Playwright not available — Internshala login will use HTTP+captcha fallback"
+fi
+
+# -- Step 3: Start the Python application ---------------------
 exec python main.py
