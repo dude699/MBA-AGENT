@@ -238,7 +238,7 @@ export function useBatchApply() {
                 assistedApplyLinks.push({ id, url: sourceUrl, title: jobTitle, company: jobCompany, coverLetter });
                 manualApplyLinks.push({ id, url: sourceUrl, title: jobTitle, company: jobCompany });
               }
-              toast.success(`\u2728 Cover letter ready for ${jobTitle.slice(0, 30)} \u2014 click link to apply`, { duration: 3500 });
+              toast(`\u270D Cover letter ready for ${jobTitle.slice(0, 30)} \u2014 NOT yet applied, click link below`, { icon: '\u270D\uFE0F', duration: 4000 });
             } else if (result?.success) {
               // ===== NOT AUTO-APPLIED: Backend only RECORDED it =====
               // method is 'direct' or 'auto_apply_failed' or 'auto_apply_error'
@@ -302,7 +302,7 @@ export function useBatchApply() {
         } else if (manualNeededCount > 0 && failCount === 0) {
           // Cover letters generated, user clicks links to apply
           if (assistedApplyLinks.length > 0) {
-            toast.success(`Cover letters ready for ${manualNeededCount} listing${manualNeededCount > 1 ? 's' : ''}! Click the links below to apply.`, { duration: 6000 });
+            toast(`Cover letters ready for ${manualNeededCount} listing${manualNeededCount > 1 ? 's' : ''}. NOT applied yet \u2014 click links below to apply manually.`, { icon: '\u270D\uFE0F', duration: 6000 });
           } else {
             toast(`${manualNeededCount} listing${manualNeededCount > 1 ? 's' : ''} need manual apply. Click the links below to open them.`, { icon: '\uD83D\uDC47', duration: 6000 });
           }
