@@ -304,9 +304,18 @@ export const SOURCE_CONFIG: Record<string, {
 
 // ===== CREDENTIAL REQUIREMENTS =====
 export const CREDENTIAL_REQUIREMENTS: CredentialRequirement[] = [
-  // PRISM v4.0: Internshala removed — no longer needs session cookie
-  // Internshala uses assisted-apply: AI generates cover letter, user clicks link to apply
-  // (HTTP-based auto-apply never worked due to browser-level anti-automation)
+  // PRISM v5.0: Internshala auto-apply re-enabled via curl_cffi (Chrome TLS fingerprint)
+  // Tier 1: Login with email+password → auto-submit application
+  // Tier 2: Falls back to assisted mode if login/submit fails
+  {
+    source: 'internshala',
+    fields: [
+      { key: 'email', label: 'Internshala Email', type: 'email', required: true, placeholder: 'your@email.com' },
+      { key: 'password', label: 'Password', type: 'password', required: true, placeholder: '••••••••' },
+    ],
+    loginUrl: 'https://internshala.com/login',
+    notes: 'PRISM will login to Internshala, generate an AI cover letter, and submit your application automatically. If auto-apply fails, you\'ll get the cover letter + a direct link to apply manually.',
+  },
   {
     source: 'linkedin',
     fields: [

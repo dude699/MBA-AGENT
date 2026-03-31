@@ -360,15 +360,15 @@ export default function BatchApplyPanel() {
               </div>
 
               {isDirectApplySource && !hasCreds && (
-                <div className="p-3 bg-blue-50 border border-blue-100 rounded-xl mb-2">
+                <div className="p-3 bg-amber-50 border border-amber-100 rounded-xl mb-2">
                   <div className="flex items-center gap-2 mb-1">
-                    <ExternalLink className="w-3.5 h-3.5 text-blue-600" />
-                    <span className="text-[11px] font-bold text-blue-700">AI-Assisted Apply</span>
+                    <ExternalLink className="w-3.5 h-3.5 text-amber-600" />
+                    <span className="text-[11px] font-bold text-amber-700">Assisted Mode (No Auto-Submit)</span>
                   </div>
-                  <p className="text-[11px] text-blue-600">
-                    PRISM will generate a personalized AI cover letter for each listing.
-                    You'll get the cover letter ready to copy-paste and a direct link to
-                    apply on {sourceConfig?.name || 'the portal'}. No login needed.
+                  <p className="text-[11px] text-amber-600">
+                    Without credentials, PRISM will generate a personalized AI cover letter but
+                    will NOT submit the application. You'll need to click a link and apply manually
+                    on {sourceConfig?.name || 'the portal'}. Add credentials above for auto-apply.
                   </p>
                 </div>
               )}
@@ -498,7 +498,7 @@ export default function BatchApplyPanel() {
                 </div>
                 <div className="flex justify-between mt-2 text-[10px] text-primary-500">
                   <span className="text-status-success font-medium">{batch.successCount} auto-applied</span>
-                  <span className="text-emerald-500 font-medium">{(batch as any).manualNeededCount || 0} assisted</span>
+                  <span className="text-amber-500 font-medium">{(batch as any).manualNeededCount || 0} need manual</span>
                   <span className="text-status-danger font-medium">{batch.failCount} failed</span>
                 </div>
               </div>
@@ -553,8 +553,8 @@ export default function BatchApplyPanel() {
                       <p className="text-[10px] text-primary-500">Auto-Applied</p>
                     </div>
                     <div>
-                      <p className="text-lg font-bold text-emerald-500">{((batch as any).assistedApplyLinks || []).length || 0}</p>
-                      <p className="text-[10px] text-primary-500">Cover Letters</p>
+                      <p className="text-lg font-bold text-amber-500">{((batch as any).assistedApplyLinks || []).length || 0}</p>
+                      <p className="text-[10px] text-primary-500">Need Manual Apply</p>
                     </div>
                     <div>
                       <p className="text-lg font-bold text-red-500">{batch.failCount}</p>
@@ -567,15 +567,18 @@ export default function BatchApplyPanel() {
                 {/* This is the FIX for "not opening on laptop/desktop" */}
                 {/* window.open() is BLOCKED by popup blockers. Instead render <a> links */}
                 {((batch as any).assistedApplyLinks || []).length > 0 && (
-                  <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-200">
+                  <div className="p-4 bg-amber-50 rounded-xl border border-amber-200">
                     <div className="flex items-center gap-2 mb-2">
-                      <FileText className="w-4 h-4 text-emerald-600" />
-                      <span className="text-xs font-bold text-emerald-700">
-                        AI Cover Letters Ready ({((batch as any).assistedApplyLinks || []).length})
+                      <FileText className="w-4 h-4 text-amber-600" />
+                      <span className="text-xs font-bold text-amber-700">
+                        NOT Applied Yet — Cover Letters Ready ({((batch as any).assistedApplyLinks || []).length})
                       </span>
                     </div>
-                    <p className="text-[10px] text-emerald-600 mb-3">
-                      Cover letters have been generated. Click each link, paste the cover letter, and submit:
+                    <p className="text-[10px] text-amber-700 font-medium mb-1">
+                      Auto-apply could not submit these. You must apply manually:
+                    </p>
+                    <p className="text-[10px] text-amber-600 mb-3">
+                      Click each link, paste the cover letter on the portal, and submit yourself.
                     </p>
                     <div className="space-y-3 max-h-[300px] overflow-y-auto">
                       {((batch as any).assistedApplyLinks || []).map((link: { id: string; url: string; title: string; company: string; coverLetter: string }, idx: number) => (
@@ -673,9 +676,9 @@ export default function BatchApplyPanel() {
                   </div>
                 )}
                 {((batch as any).assistedApplyLinks || []).length > 0 && batch.successCount === 0 && batch.failCount === 0 && (
-                  <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-200">
-                    <p className="text-[11px] text-emerald-700 font-medium text-center">
-                      Cover letters generated! Open each link above, paste your cover letter, and submit.
+                  <div className="p-3 bg-amber-50 rounded-xl border border-amber-200">
+                    <p className="text-[11px] text-amber-700 font-medium text-center">
+                      Applications were NOT submitted automatically. Open each link above, paste your cover letter, and submit manually.
                     </p>
                   </div>
                 )}
