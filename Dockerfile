@@ -3,10 +3,20 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Install system dependencies including Node.js for mini-app build
+# Also install Playwright system deps for Chromium (reCAPTCHA bypass)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     curl \
+    # Playwright/Chromium system dependencies
+    libnss3 \
+    libatk-bridge2.0-0 \
+    libdrm2 \
+    libxkbcommon0 \
+    libgbm1 \
+    libasound2 \
+    libatspi2.0-0 \
+    libxshmfence1 \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
@@ -14,6 +24,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy requirements first for layer caching
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Install Playwright Chromium browser for automated login (reCAPTCHA v3 bypass)
+RUN playwright install chromium --with-deps 2>/dev/null || true
 
 # Download NLTK data (minimal)
 RUN python -c "import nltk; nltk.download('punkt_tab', quiet=True); nltk.download('stopwords', quiet=True)" || true
