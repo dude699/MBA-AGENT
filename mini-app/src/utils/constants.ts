@@ -304,17 +304,20 @@ export const SOURCE_CONFIG: Record<string, {
 
 // ===== CREDENTIAL REQUIREMENTS =====
 export const CREDENTIAL_REQUIREMENTS: CredentialRequirement[] = [
-  // PRISM v5.0: Internshala auto-apply re-enabled via curl_cffi (Chrome TLS fingerprint)
-  // Tier 1: Login with email+password → auto-submit application
-  // Tier 2: Falls back to assisted mode if login/submit fails
+  // PRISM v8.0: Internshala auto-apply with auto reCAPTCHA solving
+  // User just enters email + password. Optionally adds a captcha API key
+  // for fully automated login (capsolver.com ~$3/1000 solves).
+  // Once logged in, session is saved for weeks — zero manual work.
   {
     source: 'internshala',
     fields: [
       { key: 'email', label: 'Internshala Email', type: 'email', required: true, placeholder: 'your@email.com' },
       { key: 'password', label: 'Password', type: 'password', required: true, placeholder: '••••••••' },
+      { key: 'captcha_api_key', label: 'Captcha API Key (optional)', type: 'password', required: false, placeholder: 'CAP-xxx...', helpText: 'Get from capsolver.com (~$3/1000 solves). Enables fully automated login.' },
+      { key: 'session_cookie', label: 'Session Cookie (advanced)', type: 'textarea', required: false, placeholder: 'Paste cookies here (only if login fails)...', helpText: 'Fallback: paste cookies from browser DevTools if auto-login fails.' },
     ],
     loginUrl: 'https://internshala.com/login',
-    notes: 'PRISM will login to Internshala, generate an AI cover letter, and submit your application automatically. If auto-apply fails, you\'ll get the cover letter + a direct link to apply manually.',
+    notes: 'Enter your Internshala email & password. PRISM auto-handles CAPTCHA and submits applications. For 100% automation, add a capsolver.com API key (~$0.003 per login).',
   },
   {
     source: 'linkedin',

@@ -409,48 +409,206 @@ class CoverLetterEngine:
 # PLATFORM APPLICATORS
 # ============================================================
 
+class CaptchaSolver:
+    """
+    PRISM v8.0: Auto-solve reCAPTCHA Enterprise v3 tokens via third-party services.
+
+    Supported providers (in order of preference):
+        1. CapSolver (capsolver.com) — $0.8-1.5 per 1000 tokens
+        2. 2Captcha (2captcha.com) — $2.99 per 1000 tokens
+        3. Anti-Captcha (anti-captcha.com) — $2 per 1000 tokens
+
+    For Internshala login, we only need ONE token per session (~$0.001-0.003).
+    Sessions last weeks, so total cost is essentially zero.
+
+    Usage:
+        solver = CaptchaSolver(api_key="your-key", provider="capsolver")
+        token = solver.solve_recaptcha_enterprise(
+            site_key="6Lcqj0EsAAAAAL4K2T7--kNrAXT3_99tIuEQLZJF",
+            page_url="https://internshala.com/login/user",
+            action="login_submit"
+        )
+    """
+
+    PROVIDERS = {
+        'capsolver': {
+            'create_url': 'https://api.capsolver.com/createTask',
+            'result_url': 'https://api.capsolver.com/getTaskResult',
+            'task_type': 'ReCaptchaV3EnterpriseTaskProxyLess',
+        },
+        '2captcha': {
+            'create_url': 'https://api.2captcha.com/createTask',
+            'result_url': 'https://api.2captcha.com/getTaskResult',
+            'task_type': 'RecaptchaV3TaskProxyless',
+        },
+        'anticaptcha': {
+            'create_url': 'https://api.anti-captcha.com/createTask',
+            'result_url': 'https://api.anti-captcha.com/getTaskResult',
+            'task_type': 'RecaptchaV3TaskProxyless',
+        },
+    }
+
+    def __init__(self, api_key: str = '', provider: str = 'capsolver'):
+        self.api_key = api_key.strip()
+        self.provider = provider.lower().strip()
+        if self.provider not in self.PROVIDERS:
+            self.provider = 'capsolver'
+
+    @property
+    def is_configured(self) -> bool:
+        return bool(self.api_key)
+
+    def solve_recaptcha_enterprise(self, site_key: str, page_url: str,
+                                    action: str = 'login_submit',
+                                    timeout: int = 120) -> Optional[str]:
+        """
+        Solve reCAPTCHA Enterprise v3 and return the token.
+
+        Returns the g-recaptcha-response token string, or None on failure.
+        Typical solve time: 5-30 seconds.
+        """
+        if not self.api_key:
+            logger.warning(f"[{AGENT_ID}] CaptchaSolver: No API key configured")
+            return None
+
+        import requests
+        prov = self.PROVIDERS[self.provider]
+
+        try:
+            # Step 1: Create task
+            if self.provider == 'capsolver':
+                create_payload = {
+                    'clientKey': self.api_key,
+                    'task': {
+                        'type': 'ReCaptchaV3EnterpriseTaskProxyLess',
+                        'websiteURL': page_url,
+                        'websiteKey': site_key,
+                        'pageAction': action,
+                    }
+                }
+            else:
+                # 2captcha / anticaptcha format
+                create_payload = {
+                    'clientKey': self.api_key,
+                    'task': {
+                        'type': prov['task_type'],
+                        'websiteURL': page_url,
+                        'websiteKey': site_key,
+                        'action': action,
+                        'minScore': 0.7,
+                        'isEnterprise': True,
+                    }
+                }
+
+            logger.info(f"[{AGENT_ID}] CaptchaSolver: Creating {self.provider} task for {page_url}")
+            resp = requests.post(prov['create_url'], json=create_payload, timeout=30)
+            result = resp.json()
+
+            # CapSolver returns solution immediately for some tasks
+            if result.get('status') == 'ready' and result.get('solution', {}).get('gRecaptchaResponse'):
+                token = result['solution']['gRecaptchaResponse']
+                logger.info(f"[{AGENT_ID}] CaptchaSolver: Instant solve! Token length: {len(token)}")
+                return token
+
+            task_id = result.get('taskId')
+            if not task_id:
+                error_desc = result.get('errorDescription', '') or result.get('errorId', '')
+                logger.error(f"[{AGENT_ID}] CaptchaSolver: Failed to create task: {error_desc}")
+                return None
+
+            # Step 2: Poll for result
+            logger.info(f"[{AGENT_ID}] CaptchaSolver: Task {task_id} created, polling...")
+            start = time.time()
+            while time.time() - start < timeout:
+                time.sleep(5)  # Poll every 5 seconds
+
+                poll_payload = {
+                    'clientKey': self.api_key,
+                    'taskId': task_id,
+                }
+                poll_resp = requests.post(prov['result_url'], json=poll_payload, timeout=30)
+                poll_result = poll_resp.json()
+
+                status = poll_result.get('status', '')
+                if status == 'ready':
+                    token = (
+                        poll_result.get('solution', {}).get('gRecaptchaResponse')
+                        or poll_result.get('solution', {}).get('token')
+                    )
+                    if token:
+                        elapsed = time.time() - start
+                        logger.info(
+                            f"[{AGENT_ID}] CaptchaSolver: Solved in {elapsed:.1f}s! "
+                            f"Token length: {len(token)}"
+                        )
+                        return token
+                    logger.warning(f"[{AGENT_ID}] CaptchaSolver: Ready but no token in response")
+                    return None
+
+                elif status == 'failed' or poll_result.get('errorId'):
+                    error_desc = poll_result.get('errorDescription', 'Unknown error')
+                    logger.error(f"[{AGENT_ID}] CaptchaSolver: Task failed: {error_desc}")
+                    return None
+
+                # Still processing, continue polling
+
+            logger.warning(f"[{AGENT_ID}] CaptchaSolver: Timeout after {timeout}s")
+            return None
+
+        except Exception as e:
+            logger.error(f"[{AGENT_ID}] CaptchaSolver error: {e}")
+            return None
+
+
 class InternshalaApplicator:
     """
-    PRISM v5.0: Internshala AUTO-APPLY Engine with curl_cffi.
+    PRISM v8.0: Internshala FULLY AUTOMATED Single-Click Apply Engine.
 
-    Strategy (3-tier with automatic fallback):
-        Tier 1 (AUTO): Login with email+password via curl_cffi (Chrome TLS
-                fingerprint), then POST the application form with cover letter.
-                curl_cffi impersonates Chrome at the TLS level, which bypasses
-                Internshala's basic bot detection that blocks plain `requests`.
+    === KEY DISCOVERY (2026-03-31 investigation) ===
+    - Internshala does NOT use Cloudflare (uses Amazon CloudFront CDN + nginx)
+    - reCAPTCHA Enterprise v3 is required ONLY for LOGIN, NOT for applying
+    - The /application/easy_apply/{id} endpoint needs NO captcha at all
+    - Once logged in, session cookies work for weeks
 
-        Tier 2 (SESSION): If login fails but user provided _internshala_session
-                cookie, attempt direct form POST with that cookie.
+    === ARCHITECTURE ===
+    Tier 1 (CAPTCHA SERVICE — FULLY AUTOMATED):
+        User enters email + password + captcha API key (from capsolver.com ~$3/1000)
+        → Backend auto-solves reCAPTCHA Enterprise via API
+        → curl_cffi logs in with Chrome TLS fingerprint
+        → Session cookies saved to DB (reused for weeks)
+        → All applies via curl_cffi POST — ZERO manual intervention
 
-        Tier 3 (ASSISTED): If all HTTP attempts fail, fall back to generating
-                a cover letter + direct apply URL for the user to click manually.
-                This is clearly marked as NOT APPLIED in the response.
+    Tier 2 (STORED SESSION — SEMI-AUTOMATED):
+        If login fails or no captcha key, use previously stored session.
+        Sessions last weeks — user rarely needs to re-login.
 
-    The key insight is that curl_cffi with impersonate='chrome' sends the same
-    TLS fingerprint, HTTP/2 frames, and header order as real Chrome. This is
-    what the GitHub bots using Selenium/Playwright achieve, but without the
-    200MB+ memory cost of a headless browser.
+    Tier 3 (SESSION COOKIE — MANUAL ONE-TIME):
+        User can paste raw cookies from browser DevTools.
+        Fallback for when everything else fails.
 
-    Apply Flow (Tier 1):
-        1. GET /login → extract CSRF token from meta tag + cookies
-        2. POST /login with email, password, CSRF token → get session cookies
-        3. GET /internship/detail/{id} → extract apply form CSRF token
-        4. POST /application/easy_apply/{id} with cover letter + CSRF
-        5. Check response for success indicators
+    Tier 4 (ASSISTED — LAST RESORT):
+        Generate cover letter + return apply URL for manual click.
 
-    Safety Controls:
-        - Human-like delays (3-10s between steps)
-        - User-Agent matches curl_cffi's Chrome impersonation
-        - Referer chain maintained throughout flow
-        - Rate: max 15 apps/day (enforced by queue manager)
+    === APPLY ENDPOINT (confirmed via JS analysis) ===
+    POST /application/easy_apply/{internship_id}
+    Fields: cover_letter, csrf_test_name
+    NO reCAPTCHA required on apply form.
+
+    === SAFETY ===
+    - curl_cffi Chrome120 TLS fingerprint (indistinguishable from real browser)
+    - Human-like delays (2-7s between steps)
+    - 15 apps/day cap
     """
 
     INTERNSHALA_BASE = "https://internshala.com"
+    RECAPTCHA_SITE_KEY = "6Lcqj0EsAAAAAL4K2T7--kNrAXT3_99tIuEQLZJF"
 
     def __init__(self, db: DatabaseManager, cover_engine: CoverLetterEngine):
         self.db = db
         self.cover_engine = cover_engine
         self._session = None  # Reuse curl_cffi session within a batch
+        self._session_validated = False  # Track if current session is validated
+        self._captcha_solver = None  # Lazy-init captcha solver
 
     def can_apply(self) -> Tuple[bool, str]:
         """Always ready — will attempt auto-apply, falls back to assisted."""
@@ -480,33 +638,211 @@ class InternshalaApplicator:
             from curl_cffi.requests import Session
             if self._session is None:
                 self._session = Session(impersonate="chrome")
+                self._session_validated = False
             return self._session
         except ImportError:
             logger.warning(f"[{AGENT_ID}] curl_cffi not available, cannot auto-apply to Internshala")
             return None
 
+    def _build_session_from_cookies(self, cookie_string: str):
+        """
+        Build a curl_cffi session from a raw cookie string.
+
+        Accepts multiple formats:
+        1. Full cookie header: "name1=val1; name2=val2; ..."
+        2. JSON format: {"name1": "val1", "name2": "val2"}
+        3. Single cookie: "_internshala_session=abc123"
+
+        The critical cookies for Internshala session are:
+        - _internshala_session (or similar session identifier)
+        - csrf_cookie_name (CSRF double-submit)
+        - AWSALB / AWSALBCORS (load balancer affinity)
+        """
+        try:
+            from curl_cffi.requests import Session
+            session = Session(impersonate="chrome")
+
+            cookie_string = cookie_string.strip()
+            if not cookie_string:
+                return None
+
+            # Try JSON format first
+            cookie_pairs = {}
+            if cookie_string.startswith('{'):
+                try:
+                    cookie_pairs = json.loads(cookie_string)
+                except (json.JSONDecodeError, Exception):
+                    pass
+
+            # Otherwise parse as semicolon-separated key=value pairs
+            if not cookie_pairs:
+                for part in cookie_string.split(';'):
+                    part = part.strip()
+                    if '=' in part:
+                        k, v = part.split('=', 1)
+                        k = k.strip()
+                        v = v.strip()
+                        if k and v:
+                            cookie_pairs[k] = v
+
+            if not cookie_pairs:
+                logger.warning(f"[{AGENT_ID}] Could not parse any cookies from provided string")
+                return None
+
+            # Set cookies on session
+            for name, value in cookie_pairs.items():
+                session.cookies.set(name, value, domain='.internshala.com')
+                # Also set without dot prefix for compatibility
+                session.cookies.set(name, value, domain='internshala.com')
+
+            logger.info(
+                f"[{AGENT_ID}] Built session with {len(cookie_pairs)} cookies: "
+                f"{', '.join(list(cookie_pairs.keys())[:5])}{'...' if len(cookie_pairs) > 5 else ''}"
+            )
+            return session
+
+        except ImportError:
+            logger.warning(f"[{AGENT_ID}] curl_cffi not available")
+            return None
+        except Exception as e:
+            logger.error(f"[{AGENT_ID}] Error building session from cookies: {e}")
+            return None
+
+    def validate_session(self, cookie_string: str) -> Tuple[bool, str, str]:
+        """
+        Validate that a session cookie string gives us a logged-in Internshala session.
+
+        Tests by visiting /student/dashboard — if we get 200 and see student content,
+        the session is valid. If redirected to /login, the session is expired.
+
+        Returns: (valid: bool, message: str, username: str)
+        """
+        session = self._build_session_from_cookies(cookie_string)
+        if not session:
+            return False, 'Could not parse session cookies', ''
+
+        try:
+            time.sleep(random.uniform(0.5, 1.5))
+            resp = session.get(
+                f"{self.INTERNSHALA_BASE}/student/dashboard",
+                headers={
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Referer': f'{self.INTERNSHALA_BASE}/',
+                },
+                timeout=15,
+                allow_redirects=True,
+            )
+
+            if resp.status_code == 200:
+                html = resp.text.lower()
+                # Check for logged-in indicators
+                if any(indicator in html for indicator in [
+                    'student/dashboard', 'my applications', 'my_applications',
+                    'student_header', 'logout', 'log out', 'my-applications',
+                    'resume', 'profile', 'internship_matching',
+                ]):
+                    # Try to extract username
+                    username = ''
+                    name_match = re.search(r'class=["\'](?:user.?name|student.?name|profile.?name)["\'][^>]*>([^<]+)', resp.text, re.I)
+                    if name_match:
+                        username = name_match.group(1).strip()
+                    if not username:
+                        name_match = re.search(r'<span[^>]*class=["\']name["\'][^>]*>([^<]+)', resp.text, re.I)
+                        if name_match:
+                            username = name_match.group(1).strip()
+
+                    # Store the validated session
+                    self._session = session
+                    self._session_validated = True
+                    logger.info(f"[{AGENT_ID}] Session cookie VALID (user: {username or 'unknown'})")
+                    return True, 'Session is valid and logged in', username
+
+                # Page loaded but doesn't look like dashboard
+                if '/login' in resp.url:
+                    return False, 'Session expired — redirected to login page', ''
+
+                return False, 'Session may be expired — dashboard content not found', ''
+
+            elif resp.status_code == 302:
+                location = resp.headers.get('Location', '')
+                if '/login' in location:
+                    return False, 'Session expired — redirected to login', ''
+                return False, f'Unexpected redirect to: {location[:100]}', ''
+            else:
+                return False, f'Dashboard returned HTTP {resp.status_code}', ''
+
+        except Exception as e:
+            return False, f'Validation error: {str(e)[:150]}', ''
+
     def _extract_csrf_token(self, html: str) -> str:
-        """Extract CSRF token from HTML meta tag or hidden form field."""
-        # Meta tag: <meta name="csrf-token" content="...">
+        """Extract CSRF token from Internshala HTML page.
+        
+        Internshala uses a double-submit CSRF pattern:
+        - Hidden input: <input type="hidden" name="csrf_test_name" value="...">
+        - Cookie: csrf_cookie_name=<same_value>
+        
+        The hidden input field name is 'csrf_test_name' (NOT '_token' or 'csrf-token').
+        """
+        # PRIMARY: Internshala's actual CSRF field — csrf_test_name
+        match = re.search(r'name=["\']csrf_test_name["\'][^>]*value=["\']([^"\']+)["\']', html)
+        if match:
+            return match.group(1)
+        # Reverse attribute order
+        match = re.search(r'value=["\']([^"\']+)["\'][^>]*name=["\']csrf_test_name["\']', html)
+        if match:
+            return match.group(1)
+        # FALLBACK 1: Generic _token field (other platforms)
+        match = re.search(r'name=["\']_token["\']\s*value=["\']([^"\']+)["\']', html)
+        if match:
+            return match.group(1)
+        match = re.search(r'value=["\']([^"\']+)["\']\s*name=["\']_token["\']', html)
+        if match:
+            return match.group(1)
+        # FALLBACK 2: Meta tag csrf-token (not used by Internshala but other sites)
         match = re.search(r'<meta\s+name=["\']csrf-token["\']\s+content=["\']([^"\']+)["\']', html)
         if match:
             return match.group(1)
-        # Hidden input: <input type="hidden" name="_token" value="...">
-        match = re.search(r'<input[^>]+name=["\']_token["\']\s+value=["\']([^"\']+)["\']', html)
-        if match:
-            return match.group(1)
-        match = re.search(r'<input[^>]+value=["\']([^"\']+)["\']\s+name=["\']_token["\']', html)
-        if match:
-            return match.group(1)
-        # X-CSRF-TOKEN in script
+        # FALLBACK 3: csrfToken in JS variable
         match = re.search(r'csrfToken\s*[:=]\s*["\']([^"\']+)["\']', html)
         if match:
             return match.group(1)
         return ''
 
-    def _login_with_credentials(self, email: str, password: str) -> Tuple[bool, str]:
+    def _get_captcha_solver(self, captcha_api_key: str = '', captcha_provider: str = '') -> Optional[CaptchaSolver]:
+        """Get or create a CaptchaSolver instance."""
+        # Use provided key, or fall back to DB-stored key, or env var
+        api_key = captcha_api_key
+        if not api_key:
+            try:
+                api_key = self.db.get_setting('captcha_api_key', '')
+            except Exception:
+                pass
+        if not api_key:
+            api_key = os.environ.get('CAPTCHA_API_KEY', '') or os.environ.get('CAPSOLVER_API_KEY', '')
+
+        provider = captcha_provider
+        if not provider:
+            try:
+                provider = self.db.get_setting('captcha_provider', 'capsolver')
+            except Exception:
+                provider = 'capsolver'
+
+        if api_key:
+            self._captcha_solver = CaptchaSolver(api_key=api_key, provider=provider)
+            return self._captcha_solver
+        return None
+
+    def _login_with_credentials(self, email: str, password: str,
+                                 captcha_api_key: str = '',
+                                 captcha_provider: str = '') -> Tuple[bool, str]:
         """
-        Tier 1: Login to Internshala using curl_cffi with Chrome TLS fingerprint.
+        PRISM v8.0: Login to Internshala with AUTO reCAPTCHA solving.
+
+        Flow:
+            1. GET /login/user → CSRF token + cookies
+            2. Auto-solve reCAPTCHA Enterprise v3 via captcha service
+            3. POST /login/verify_ajax/user with email + password + captcha token
+            4. Save session cookies to DB for reuse
 
         Returns: (success: bool, error_message: str)
         """
@@ -515,10 +851,10 @@ class InternshalaApplicator:
             return False, "curl_cffi not available"
 
         try:
-            # Step 1: GET login page for CSRF token + initial cookies
-            time.sleep(random.uniform(1, 3))
+            # Step 1: GET /login/user for CSRF token + initial cookies
+            time.sleep(random.uniform(1, 2))
             login_page = session.get(
-                f"{self.INTERNSHALA_BASE}/login",
+                f"{self.INTERNSHALA_BASE}/login/user",
                 timeout=20,
             )
             if login_page.status_code != 200:
@@ -526,37 +862,58 @@ class InternshalaApplicator:
 
             csrf_token = self._extract_csrf_token(login_page.text)
             if not csrf_token:
-                logger.warning(f"[{AGENT_ID}] No CSRF token found on Internshala login page")
-                # Try without CSRF — some endpoints don't require it
+                # Fallback: get csrf from cookie
+                csrf_token = dict(session.cookies).get('csrf_cookie_name', '')
 
-            # Step 2: POST login with credentials
-            time.sleep(random.uniform(2, 5))
+            if not csrf_token:
+                return False, "Could not extract CSRF token from login page"
+
+            # Step 2: Solve reCAPTCHA Enterprise v3 via captcha service
+            recaptcha_token = None
+            solver = self._get_captcha_solver(captcha_api_key, captcha_provider)
+            if solver and solver.is_configured:
+                logger.info(f"[{AGENT_ID}] Solving reCAPTCHA Enterprise for Internshala login...")
+                recaptcha_token = solver.solve_recaptcha_enterprise(
+                    site_key=self.RECAPTCHA_SITE_KEY,
+                    page_url=f"{self.INTERNSHALA_BASE}/login/user",
+                    action='login_submit',
+                    timeout=120,
+                )
+                if recaptcha_token:
+                    logger.info(f"[{AGENT_ID}] reCAPTCHA solved successfully!")
+                else:
+                    logger.warning(f"[{AGENT_ID}] reCAPTCHA solve FAILED — will try login anyway")
+            else:
+                logger.info(f"[{AGENT_ID}] No captcha solver configured — trying login without token")
+
+            # Step 3: POST login with credentials + captcha token
+            time.sleep(random.uniform(1, 3))
             login_payload = {
                 'email': email,
                 'password': password,
+                'csrf_test_name': csrf_token,
             }
-            if csrf_token:
-                login_payload['_token'] = csrf_token
+            if recaptcha_token:
+                login_payload['g-recaptcha-response'] = recaptcha_token
+                login_payload['action'] = 'login_submit'
 
             login_headers = {
                 'Content-Type': 'application/x-www-form-urlencoded',
-                'Referer': f'{self.INTERNSHALA_BASE}/login',
+                'Referer': f'{self.INTERNSHALA_BASE}/login/user',
                 'Origin': self.INTERNSHALA_BASE,
                 'X-Requested-With': 'XMLHttpRequest',
                 'Accept': 'application/json, text/javascript, */*; q=0.01',
             }
-            if csrf_token:
-                login_headers['X-CSRF-TOKEN'] = csrf_token
 
             login_resp = session.post(
-                f"{self.INTERNSHALA_BASE}/login/verify_login",
+                f"{self.INTERNSHALA_BASE}/login/verify_ajax/user",
                 data=login_payload,
                 headers=login_headers,
                 timeout=20,
                 allow_redirects=True,
             )
 
-            # Check login success — multiple signals
+            # Parse response
             login_ok = False
             login_error = ''
 
@@ -567,33 +924,35 @@ class InternshalaApplicator:
                 except Exception:
                     resp_json = {}
 
-                # Success indicators
                 if (resp_json.get('success') is True
                         or resp_json.get('status') == 'success'
                         or 'dashboard' in login_resp.url
-                        or 'student/dashboard' in login_resp.url
-                        or login_resp.status_code == 302):
+                        or 'student/dashboard' in login_resp.url):
                     login_ok = True
-                # Failure indicators
-                elif ('invalid' in resp_text or 'incorrect' in resp_text
-                      or 'wrong' in resp_text):
-                    login_error = 'Invalid email or password'
-                elif 'otp' in resp_text or 'verify' in resp_text:
-                    login_error = 'Account requires OTP verification — please log in manually first'
                 elif 'captcha' in resp_text:
-                    login_error = 'CAPTCHA required — please log in manually first'
+                    if recaptcha_token:
+                        login_error = (
+                            'CAPTCHA token was rejected by Internshala. '
+                            'The captcha service may need a different approach. '
+                            'Try again or use session cookie method.'
+                        )
+                    else:
+                        login_error = (
+                            'Internshala requires reCAPTCHA. Add a captcha API key '
+                            '(capsolver.com ~$3/1000 solves) for fully automated login, '
+                            'or paste your session cookie from browser.'
+                        )
+                elif 'invalid' in resp_text or 'incorrect' in resp_text or 'wrong' in resp_text:
+                    login_error = 'Invalid email or password — check your Internshala credentials'
+                elif 'otp' in resp_text:
+                    login_error = 'Account requires OTP verification — log in on internshala.com first'
+                elif resp_json.get('success') is False:
+                    error_thrown = resp_json.get('errorThrown', '') or resp_json.get('error', '')
+                    login_error = f'Login rejected: {str(error_thrown)[:150]}'
                 else:
-                    # Check if we got session cookies as a success signal
-                    cookies = session.cookies.get_dict() if hasattr(session.cookies, 'get_dict') else {}
-                    if not cookies:
-                        try:
-                            cookies = {c.name: c.value for c in session.cookies}
-                        except Exception:
-                            cookies = {}
-                    has_session = any('internshala' in k.lower() or 'session' in k.lower()
-                                      or 'isloggedin' in k.lower() or 'XSRF' in k.upper()
-                                      for k in cookies)
-                    if has_session:
+                    # Check cookies for session indicators
+                    cookies = dict(session.cookies)
+                    if any('logged' in k.lower() or 'student' in k.lower() for k in cookies):
                         login_ok = True
                     else:
                         login_error = f'Login response unclear (HTTP {login_resp.status_code})'
@@ -602,6 +961,16 @@ class InternshalaApplicator:
 
             if login_ok:
                 logger.info(f"[{AGENT_ID}] Internshala login SUCCESS for {email}")
+                self._session_validated = True
+                # Save session cookies to DB for reuse across requests
+                try:
+                    cookie_str = '; '.join(f'{k}={v}' for k, v in dict(session.cookies).items())
+                    self.db.set_setting('internshala_session', cookie_str)
+                    self.db.set_setting('internshala_session_email', email)
+                    self.db.set_setting('internshala_session_time', str(int(time.time())))
+                    logger.info(f"[{AGENT_ID}] Internshala session saved to DB (reusable for weeks)")
+                except Exception as save_err:
+                    logger.warning(f"[{AGENT_ID}] Could not save session to DB: {save_err}")
             else:
                 logger.warning(f"[{AGENT_ID}] Internshala login FAILED: {login_error}")
 
@@ -613,11 +982,18 @@ class InternshalaApplicator:
     def _submit_application(self, internship_id: str, cover_letter: str,
                              listing: Dict) -> Tuple[bool, str]:
         """
-        Submit application to Internshala using the authenticated session.
+        PRISM v9.0: Submit application to Internshala using the authenticated session.
 
         Flow:
-            1. GET the internship detail page to get the apply form CSRF token
-            2. POST to /application/easy_apply/{id} with cover letter + CSRF
+            1. GET the internship detail page → extract CSRF + detect assessment questions
+            2. If assessment questions exist → auto-generate answers via AI
+            3. POST to /application/easy_apply/{id} via ajax-form-style form POST
+               Fields: cover_letter, csrf_test_name (+ any assessment answers)
+            4. Parse response for success/already-applied/error
+
+        The apply form is submitted by jQuery ajaxForm plugin in internship-details.js.
+        It POSTs to the form's action attribute which is /application/easy_apply/{id}.
+        No reCAPTCHA required on the apply endpoint.
 
         Returns: (success: bool, error_message: str)
         """
@@ -626,13 +1002,20 @@ class InternshalaApplicator:
             return False, "No session available"
 
         try:
-            # Step 1: Visit the internship detail page (sets up server-side state)
-            time.sleep(random.uniform(2, 5))
-            detail_url = f"{self.INTERNSHALA_BASE}/internship/detail/{internship_id}"
+            # Step 1: Visit the internship detail page
+            # This sets up server-side state + gives us CSRF token + assessment questions
+            time.sleep(random.uniform(1.5, 4))
+            original_url = listing.get('url', '') or listing.get('source_url', '')
+            if original_url and 'internshala.com' in original_url:
+                detail_url = original_url
+            else:
+                detail_url = f"{self.INTERNSHALA_BASE}/internship/detail/{internship_id}"
+
             detail_resp = session.get(
                 detail_url,
                 headers={
                     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language': 'en-IN,en;q=0.9,hi;q=0.8',
                     'Referer': f'{self.INTERNSHALA_BASE}/internships',
                 },
                 timeout=20,
@@ -642,22 +1025,85 @@ class InternshalaApplicator:
                 return False, f"Detail page returned HTTP {detail_resp.status_code}"
 
             # Check if we're still logged in
-            if '/login' in detail_resp.url and 'internship' not in detail_resp.url:
+            final_url = str(detail_resp.url)
+            if '/login' in final_url and 'internship' not in final_url:
                 return False, "Session expired — redirected to login"
 
-            # Extract CSRF token from the detail page
-            csrf_token = self._extract_csrf_token(detail_resp.text)
+            detail_html = detail_resp.text
+
+            # Extract CSRF token
+            csrf_token = self._extract_csrf_token(detail_html)
+            if not csrf_token:
+                # Fallback: get from cookie
+                try:
+                    cookies = {c.name: c.value for c in session.cookies}
+                    csrf_token = cookies.get('csrf_cookie_name', '')
+                except Exception:
+                    pass
+
+            # Detect assessment questions (custom questions on some internships)
+            assessment_answers = {}
+            assessment_patterns = re.findall(
+                r'name="(assessment_question_answer(?:_\d+|\[\d+\]))"',
+                detail_html
+            )
+            if assessment_patterns and self.cover_engine:
+                # Extract question text if visible
+                question_texts = re.findall(
+                    r'class="[^"]*assessment[^"]*"[^>]*>\s*([^<]+)',
+                    detail_html, re.I
+                )
+                logger.info(
+                    f"[{AGENT_ID}] Found {len(assessment_patterns)} assessment questions"
+                )
+                for i, field_name in enumerate(assessment_patterns):
+                    question = question_texts[i].strip() if i < len(question_texts) else ''
+                    if not question:
+                        question = f"Why are you interested in this {listing.get('title', 'role')} position?"
+                    try:
+                        answers = self.cover_engine.generate_assessment_answers(
+                            [question], listing
+                        )
+                        if answers and answers[0]:
+                            assessment_answers[field_name] = answers[0]
+                    except Exception:
+                        assessment_answers[field_name] = (
+                            f"I am excited about this opportunity at {listing.get('company', 'your company')}. "
+                            f"My background and skills align well with this role."
+                        )
+
+            # Check for "already applied" indicator on the page
+            if ('already_applied' in detail_html.lower()
+                    or 'you have already applied' in detail_html.lower()
+                    or 'application_submitted' in detail_html.lower()):
+                logger.info(f"[{AGENT_ID}] Already applied to internship {internship_id}")
+                return True, 'Already applied'
+
+            # Detect the actual form action URL (might differ from default)
+            form_action = f"/application/easy_apply/{internship_id}"
+            action_match = re.search(
+                r'id="application-form"[^>]*action="([^"]+)"', detail_html
+            )
+            if not action_match:
+                action_match = re.search(
+                    r'action="([^"]+)"[^>]*id="application-form"', detail_html
+                )
+            if action_match:
+                form_action = action_match.group(1)
+                logger.info(f"[{AGENT_ID}] Found form action: {form_action}")
+
+            apply_url = f"{self.INTERNSHALA_BASE}{form_action}"
 
             # Step 2: POST the application
-            time.sleep(random.uniform(3, 7))
-            apply_url = f"{self.INTERNSHALA_BASE}/application/easy_apply/{internship_id}"
+            time.sleep(random.uniform(2, 5))
 
             apply_payload = {
                 'cover_letter': cover_letter[:3000],
-                'internship_id': internship_id,
             }
             if csrf_token:
-                apply_payload['_token'] = csrf_token
+                apply_payload['csrf_test_name'] = csrf_token
+            # Add assessment answers
+            apply_payload.update(assessment_answers)
 
             apply_headers = {
                 'Content-Type': 'application/x-www-form-urlencoded',
@@ -666,8 +1112,6 @@ class InternshalaApplicator:
                 'X-Requested-With': 'XMLHttpRequest',
                 'Accept': 'application/json, text/javascript, */*; q=0.01',
             }
-            if csrf_token:
-                apply_headers['X-CSRF-TOKEN'] = csrf_token
 
             apply_resp = session.post(
                 apply_url,
@@ -676,48 +1120,68 @@ class InternshalaApplicator:
                 timeout=25,
             )
 
-            # Parse response
+            # Step 3: Parse response
             resp_text = apply_resp.text
+            resp_json = {}
             try:
-                resp_json = apply_resp.json() if resp_text.strip().startswith('{') else {}
+                stripped = resp_text.strip()
+                if stripped.startswith('{') or stripped.startswith('['):
+                    resp_json = json.loads(stripped) if stripped.startswith('{') else {}
             except Exception:
-                resp_json = {}
+                pass
 
-            # Success indicators
             if apply_resp.status_code == 200:
+                resp_lower = resp_text.lower()
+                # Success indicators
                 if (resp_json.get('success') is True
                         or resp_json.get('status') == 'success'
-                        or 'successfully' in resp_text.lower()
-                        or 'application_submitted' in resp_text.lower()
-                        or 'already applied' in resp_text.lower()
-                        or resp_json.get('applied') is True):
+                        or 'successfully' in resp_lower
+                        or 'application_submitted' in resp_lower
+                        or 'congratul' in resp_lower
+                        or resp_json.get('applied') is True
+                        or 'your application has been submitted' in resp_lower):
                     logger.info(f"[{AGENT_ID}] Internshala APPLY SUCCESS: internship {internship_id}")
                     return True, ''
 
-                # Check for "already applied"
-                if 'already' in resp_text.lower() and 'applied' in resp_text.lower():
+                # Already applied
+                if ('already' in resp_lower and 'applied' in resp_lower) or 'already applied' in resp_lower:
                     logger.info(f"[{AGENT_ID}] Internshala: already applied to {internship_id}")
                     return True, 'Already applied'
 
-                # Failure indicators
+                # Login required / session expired
                 if (resp_json.get('requireLogin') is True
-                        or 'requireLogin' in resp_text
-                        or resp_json.get('success') is False):
-                    error_msg = resp_json.get('message', '') or resp_json.get('error', '') or 'Server rejected application'
+                        or 'requirelogin' in resp_lower
+                        or 'not_logged_in' in resp_lower
+                        or 'please login' in resp_lower):
+                    return False, "Session expired — need to re-login"
+
+                # Explicit failure
+                if resp_json.get('success') is False:
+                    error_msg = (
+                        resp_json.get('errorThrown', '')
+                        or resp_json.get('message', '')
+                        or resp_json.get('error', '')
+                        or 'Application rejected by server'
+                    )
                     return False, f"Internshala rejected: {str(error_msg)[:200]}"
 
-                # Unclear response — check if it looks like a redirect to success
-                if apply_resp.status_code == 200 and len(resp_text) < 50:
-                    # Short 200 response might be success
+                # Some internships return HTML with success message
+                if 'application' in resp_lower and ('submitted' in resp_lower or 'received' in resp_lower):
                     return True, ''
 
-                return False, f"Unclear response: {resp_text[:200]}"
+                # Short 200 response often means success (form plugin returns minimal response)
+                if len(resp_text.strip()) < 100 and apply_resp.status_code == 200:
+                    logger.info(f"[{AGENT_ID}] Short 200 response — treating as success")
+                    return True, ''
+
+                return False, f"Unclear response ({len(resp_text)} bytes): {resp_text[:200]}"
 
             elif apply_resp.status_code == 302:
-                # Redirect could be success (to "application submitted" page)
                 redirect_url = apply_resp.headers.get('Location', '')
-                if 'success' in redirect_url or 'submitted' in redirect_url or 'application' in redirect_url:
+                if any(kw in redirect_url.lower() for kw in ('success', 'submitted', 'application', 'dashboard')):
                     return True, ''
+                if '/login' in redirect_url.lower():
+                    return False, "Session expired — redirected to login"
                 return False, f"Redirected to: {redirect_url[:200]}"
             else:
                 return False, f"Apply returned HTTP {apply_resp.status_code}: {resp_text[:200]}"
@@ -728,11 +1192,17 @@ class InternshalaApplicator:
     def apply(self, listing: Dict, cover_letter: str = '',
               resume_path: str = '') -> ApplicationAttempt:
         """
-        PRISM v5.0: 3-tier Internshala application with automatic fallback.
+        PRISM v9.0: FULLY AUTOMATED 4-tier Internshala application.
 
-        Tier 1: Login + auto-submit via curl_cffi (Chrome TLS fingerprint)
-        Tier 2: Session cookie + auto-submit via curl_cffi
-        Tier 3: Assisted mode (cover letter + link for manual apply)
+        The entire flow is zero-manual-intervention:
+        1. Try existing validated session (instant)
+        2. Try stored DB session cookies (from previous login)
+        3. Try email+password login with auto-captcha solving
+        4. Try raw session cookies from frontend
+        5. LAST RESORT: Assisted mode (cover letter + link)
+
+        The system remembers sessions across batches and across server restarts.
+        A single successful login lasts for weeks.
 
         Returns:
             - success=True, method='api' if auto-apply worked
@@ -763,13 +1233,14 @@ class InternshalaApplicator:
             attempt.cover_letter = cover_letter
 
             # Build apply URL for assisted fallback
-            if internship_id:
-                attempt.external_app_id = f"https://internshala.com/application/easy_apply/{internship_id}"
+            if url and 'internshala.com' in url:
+                attempt.external_app_id = url
+            elif internship_id:
+                attempt.external_app_id = f"https://internshala.com/internship/detail/{internship_id}"
             elif url:
                 attempt.external_app_id = url
 
             if not internship_id:
-                # Cannot auto-apply without internship ID — go straight to assisted
                 attempt.success = False
                 attempt.error = 'assisted'
                 attempt.method = 'assisted'
@@ -777,77 +1248,112 @@ class InternshalaApplicator:
                 attempt.duration_sec = round(time.time() - start_time, 1)
                 return attempt
 
-            # ===== TIER 1: Login with email + password =====
+            # Helper: attempt submission and return result
+            def _try_submit() -> Tuple[bool, str]:
+                return self._submit_application(internship_id, cover_letter, listing)
+
+            def _handle_submit_result(submit_ok, submit_error, method_label):
+                if submit_ok:
+                    attempt.success = True
+                    attempt.method = 'api'
+                    attempt.error = submit_error
+                    logger.info(
+                        f"[{AGENT_ID}] Internshala AUTO-APPLY SUCCESS ({method_label}): "
+                        f"'{listing.get('title', '')[:40]}' at {listing.get('company', '')}"
+                    )
+                    return True
+                elif 'expired' in (submit_error or '').lower() or 'login' in (submit_error or '').lower():
+                    self._session = None
+                    self._session_validated = False
+                    logger.info(f"[{AGENT_ID}] Session expired during {method_label}, will try next tier")
+                return False
+
+            # ===== TIER 1: Reuse validated session from this batch =====
+            if self._session and self._session_validated:
+                submit_ok, submit_error = _try_submit()
+                if _handle_submit_result(submit_ok, submit_error, 'reused session'):
+                    attempt.duration_sec = round(time.time() - start_time, 1)
+                    return attempt
+
+            # ===== TIER 2: Auto-use stored DB session (from previous login) =====
+            # This is the KEY innovation: sessions saved from /api/internshala-login
+            # are automatically reused. User logs in once, applies for weeks.
+            if not (self._session and self._session_validated):
+                try:
+                    stored_session = self.db.get_setting('internshala_session', '')
+                    session_time = self.db.get_setting('internshala_session_time', '0')
+                    session_age_hours = (time.time() - int(session_time)) / 3600 if session_time.isdigit() else 999
+
+                    if stored_session and session_age_hours < 336:  # < 14 days
+                        logger.info(
+                            f"[{AGENT_ID}] Found stored session ({session_age_hours:.0f}h old), trying..."
+                        )
+                        built_session = self._build_session_from_cookies(stored_session)
+                        if built_session:
+                            self._session = built_session
+                            self._session_validated = True
+                            submit_ok, submit_error = _try_submit()
+                            if _handle_submit_result(submit_ok, submit_error, 'stored DB session'):
+                                attempt.duration_sec = round(time.time() - start_time, 1)
+                                return attempt
+                except Exception as db_err:
+                    logger.debug(f"[{AGENT_ID}] DB session lookup error: {db_err}")
+
+            # ===== TIER 3: Login with email + password + auto-captcha =====
             user_email = listing.get('email', '').strip()
             user_password = listing.get('password', '').strip()
+            captcha_api_key = listing.get('captcha_api_key', '').strip()
+            captcha_provider = listing.get('captcha_provider', '').strip()
 
-            if user_email and user_password:
-                # Reset session for fresh login
-                self._session = None
-
-                login_ok, login_error = self._login_with_credentials(user_email, user_password)
-
-                if login_ok:
-                    # Attempt actual submission
-                    submit_ok, submit_error = self._submit_application(
-                        internship_id, cover_letter, listing
-                    )
-                    if submit_ok:
-                        attempt.success = True
-                        attempt.method = 'api'
-                        attempt.error = submit_error  # May contain "Already applied"
-                        logger.info(
-                            f"[{AGENT_ID}] Internshala AUTO-APPLY SUCCESS: "
-                            f"'{listing.get('title', '')[:40]}' at {listing.get('company', '')}"
-                        )
-                        attempt.duration_sec = round(time.time() - start_time, 1)
-                        return attempt
-                    else:
-                        logger.warning(
-                            f"[{AGENT_ID}] Internshala auto-apply FAILED after login: {submit_error}"
-                        )
-                        # Fall through to assisted mode
-                else:
-                    logger.warning(f"[{AGENT_ID}] Internshala login failed: {login_error}")
-                    # Fall through to assisted mode
-
-            # ===== TIER 2: Session cookie from DB settings =====
-            session_cookie = self.db.get_setting('internshala_session', '')
-            if session_cookie and internship_id:
+            # Also try credentials stored in DB (from previous /api/internshala-login)
+            if not user_email:
                 try:
-                    from curl_cffi.requests import Session
-                    self._session = Session(impersonate="chrome")
-                    # Set session cookie
-                    for cookie_str in session_cookie.split(';'):
-                        cookie_str = cookie_str.strip()
-                        if '=' in cookie_str:
-                            k, v = cookie_str.split('=', 1)
-                            self._session.cookies.set(k.strip(), v.strip(),
-                                                       domain='internshala.com')
+                    user_email = self.db.get_setting('internshala_email', '')
+                except Exception:
+                    pass
+            if not user_password:
+                try:
+                    user_password = self.db.get_setting('internshala_password', '')
+                except Exception:
+                    pass
+            if not captcha_api_key:
+                try:
+                    captcha_api_key = self.db.get_setting('captcha_api_key', '')
+                except Exception:
+                    pass
 
-                    submit_ok, submit_error = self._submit_application(
-                        internship_id, cover_letter, listing
-                    )
-                    if submit_ok:
-                        attempt.success = True
-                        attempt.method = 'api'
-                        attempt.error = submit_error
-                        logger.info(
-                            f"[{AGENT_ID}] Internshala AUTO-APPLY SUCCESS (session cookie): "
-                            f"'{listing.get('title', '')[:40]}'"
-                        )
+            if user_email and user_password and not (self._session and self._session_validated):
+                login_ok, login_error = self._login_with_credentials(
+                    user_email, user_password, captcha_api_key, captcha_provider
+                )
+                if login_ok:
+                    submit_ok, submit_error = _try_submit()
+                    if _handle_submit_result(submit_ok, submit_error, 'fresh login'):
                         attempt.duration_sec = round(time.time() - start_time, 1)
                         return attempt
                     else:
-                        logger.warning(
-                            f"[{AGENT_ID}] Internshala session cookie submit failed: {submit_error}"
-                        )
-                except ImportError:
-                    pass
-                except Exception as e:
-                    logger.warning(f"[{AGENT_ID}] Session cookie attempt error: {e}")
+                        logger.warning(f"[{AGENT_ID}] Apply failed after login: {submit_error}")
+                else:
+                    logger.warning(f"[{AGENT_ID}] Login failed: {login_error}")
+                    attempt.error = login_error
 
-            # ===== TIER 3: Assisted mode (fallback) =====
+            # ===== TIER 4: Raw session cookie from frontend =====
+            if not (self._session and self._session_validated):
+                session_cookie = (
+                    listing.get('session_cookie', '').strip()
+                    or listing.get('internshala_session', '').strip()
+                )
+                if session_cookie:
+                    built_session = self._build_session_from_cookies(session_cookie)
+                    if built_session:
+                        self._session = built_session
+                        self._session_validated = True
+                        submit_ok, submit_error = _try_submit()
+                        if _handle_submit_result(submit_ok, submit_error, 'frontend cookie'):
+                            attempt.duration_sec = round(time.time() - start_time, 1)
+                            return attempt
+
+            # ===== TIER 5: Assisted mode (fallback) =====
             attempt.success = False
             attempt.error = 'assisted'
             attempt.method = 'assisted'

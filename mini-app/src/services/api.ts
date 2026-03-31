@@ -364,6 +364,90 @@ export async function fetchSearchSuggestions(query: string): Promise<string[]> {
   return [];
 }
 
+// ===== SESSION COOKIE VALIDATION =====
+export async function validateSessionCookie(
+  source: string,
+  sessionCookie: string
+): Promise<APIResponse<{ valid: boolean; message: string; username: string }>> {
+  try {
+    const resp = await fetch(getApiUrl('/validate-session'), {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ source, session_cookie: sessionCookie }),
+    });
+
+    if (!resp.ok) {
+      throw new Error(`API error: ${resp.status}`);
+    }
+
+    const data = await resp.json();
+    return {
+      success: data.success,
+      data: {
+        valid: data.valid || false,
+        message: data.message || '',
+        username: data.username || '',
+      },
+      error: data.error,
+      timestamp: new Date().toISOString(),
+    };
+  } catch (error) {
+    console.warn('[API] validateSessionCookie failed:', error);
+    return {
+      success: false,
+      data: { valid: false, message: 'Connection error', username: '' },
+      error: 'Failed to validate session cookie',
+      timestamp: new Date().toISOString(),
+    };
+  }
+}
+
+// ===== INTERNSHALA AUTO-LOGIN =====
+export async function loginToInternshala(
+  email: string,
+  password: string,
+  captchaApiKey: string = '',
+  captchaProvider: string = 'capsolver',
+): Promise<APIResponse<{ session_valid: boolean; message: string; username: string; needs_captcha_key?: boolean }>> {
+  try {
+    const resp = await fetch(getApiUrl('/internshala-login'), {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({
+        email,
+        password,
+        captcha_api_key: captchaApiKey,
+        captcha_provider: captchaProvider,
+      }),
+    });
+
+    if (!resp.ok) {
+      throw new Error(`API error: ${resp.status}`);
+    }
+
+    const data = await resp.json();
+    return {
+      success: data.success,
+      data: {
+        session_valid: data.session_valid || false,
+        message: data.message || data.error || '',
+        username: data.username || '',
+        needs_captcha_key: data.needs_captcha_key || false,
+      },
+      error: data.error,
+      timestamp: new Date().toISOString(),
+    };
+  } catch (error) {
+    console.warn('[API] loginToInternshala failed:', error);
+    return {
+      success: false,
+      data: { session_valid: false, message: 'Connection error', username: '', needs_captcha_key: false },
+      error: 'Failed to connect to server',
+      timestamp: new Date().toISOString(),
+    };
+  }
+}
+
 // ===== SUPABASE PERSISTENT DATABASE API =====
 
 export async function fetchSupabaseLatestJobs(

@@ -335,7 +335,8 @@ async def handle_apply(request: web.Request) -> web.Response:
                             if k in ('full_name', 'email', 'password', 'phone', 'college',
                                      'degree', 'graduation_year', 'cover_letter', 'availability',
                                      'linkedin_profile', 'current_location', 'experience_years',
-                                     'resume_headline', 'resume')
+                                     'resume_headline', 'resume', 'session_cookie',
+                                     'internshala_session')
                         })
                     # Generate cover letter
                     cover_letter = ''
@@ -590,7 +591,8 @@ async def handle_batch_apply(request: web.Request) -> web.Response:
                                     if k in ('full_name', 'email', 'password', 'phone', 'college',
                                              'degree', 'graduation_year', 'cover_letter', 'availability',
                                              'linkedin_profile', 'current_location', 'experience_years',
-                                             'resume_headline', 'resume')
+                                             'resume_headline', 'resume', 'session_cookie',
+                                             'internshala_session', 'captcha_api_key', 'captcha_provider')
                                 })
 
                             # Execute the platform-specific applicator
@@ -606,8 +608,9 @@ async def handle_batch_apply(request: web.Request) -> web.Response:
                                     f'Application confirmed (ID: {external_id[:20]})' if external_id else 'Application confirmed',
                                 ]
                             elif attempt and getattr(attempt, 'error', '') == 'assisted':
-                                # PRISM v4.0: Assisted-apply (Internshala)
+                                # PRISM v6.0: Assisted-apply (Internshala)
                                 # Cover letter generated, user clicks link to apply manually
+                                # This happens because Internshala requires reCAPTCHA for login
                                 apply_method = 'assisted'
                                 cover_letter = getattr(attempt, 'cover_letter', '') or cover_letter
                                 # external_app_id contains the direct apply URL for assisted mode
@@ -616,8 +619,8 @@ async def handle_batch_apply(request: web.Request) -> web.Response:
                                     source_url = apply_url  # Override source_url with deep link
                                 apply_steps = [
                                     f'Generated AI cover letter for {lst_source.title()}',
-                                    'Cover letter ready to copy-paste',
-                                    'Click the link below to apply on Internshala',
+                                    'Auto-login blocked by Internshala CAPTCHA',
+                                    'Cover letter ready — click link below to apply manually',
                                 ]
                             else:
                                 apply_method = 'auto_apply_failed'
@@ -2255,6 +2258,188 @@ async def handle_admin_reset_db(request):
 
 
 # ============================================================
+# SESSION VALIDATION ENDPOINT
+# ============================================================
+
+async def handle_validate_session(request: web.Request) -> web.Response:
+    """
+    POST /api/validate-session
+    Body: {
+        "source": "internshala",
+        "session_cookie": "cookie1=val1; cookie2=val2; ..."
+    }
+
+    Validates that a session cookie string gives a logged-in session.
+    Also stores the validated cookie in DB for reuse across batches.
+
+    Returns: { success, valid, message, username }
+    """
+    try:
+        body = await request.json()
+        source = (body.get('source', '') or '').lower().strip()
+        session_cookie = (body.get('session_cookie', '') or '').strip()
+
+        if not session_cookie:
+            return _json_response({
+                "success": False,
+                "error": "No session cookie provided",
+            }, status=400)
+
+        if source == 'internshala':
+            try:
+                from agents.a13_auto_apply import get_auto_apply_orchestrator
+                orchestrator = get_auto_apply_orchestrator()
+                applicator = orchestrator.internshala
+
+                valid, message, username = applicator.validate_session(session_cookie)
+
+                # If valid, store in DB for reuse
+                if valid:
+                    try:
+                        from core.database import get_db
+                        db = get_db()
+                        db.set_setting('internshala_session', session_cookie)
+                        logger.info(f"[{MODULE_ID}] Stored validated Internshala session cookie in DB")
+                    except Exception as db_err:
+                        logger.warning(f"[{MODULE_ID}] Failed to store session cookie: {db_err}")
+
+                return _json_response({
+                    "success": True,
+                    "valid": valid,
+                    "message": message,
+                    "username": username,
+                    "source": source,
+                })
+            except Exception as e:
+                logger.error(f"[{MODULE_ID}] Session validation error: {e}")
+                return _json_response({
+                    "success": False,
+                    "error": f"Validation error: {str(e)[:200]}",
+                }, status=500)
+
+        elif source == 'naukri':
+            # Basic validation for Naukri session cookies
+            return _json_response({
+                "success": True,
+                "valid": bool(session_cookie),
+                "message": "Naukri session cookie stored (validation not yet implemented)",
+                "username": "",
+                "source": source,
+            })
+
+        else:
+            return _json_response({
+                "success": False,
+                "error": f"Session validation not supported for source: {source}",
+            }, status=400)
+
+    except Exception as e:
+        logger.error(f"[{MODULE_ID}] /api/validate-session error: {e}")
+        return _json_response({"success": False, "error": str(e)}, status=500)
+
+
+# ============================================================
+# INTERNSHALA AUTO-LOGIN ENDPOINT
+# ============================================================
+
+async def handle_internshala_login(request: web.Request) -> web.Response:
+    """
+    POST /api/internshala-login
+    Body: {
+        "email": "user@email.com",
+        "password": "password123",
+        "captcha_api_key": "CAP-xxx...",  (optional, from capsolver.com)
+        "captcha_provider": "capsolver"   (optional, default: capsolver)
+    }
+
+    Logs into Internshala using email+password with auto reCAPTCHA solving.
+    Stores session cookies in DB for reuse across batch-apply requests.
+    This only needs to be called ONCE — sessions last for weeks.
+
+    Returns: { success, message, session_valid }
+    """
+    try:
+        body = await request.json()
+        email = (body.get('email', '') or '').strip()
+        password = (body.get('password', '') or '').strip()
+        captcha_api_key = (body.get('captcha_api_key', '') or '').strip()
+        captcha_provider = (body.get('captcha_provider', '') or 'capsolver').strip()
+
+        if not email or not password:
+            return _json_response({
+                "success": False,
+                "error": "Email and password are required",
+            }, status=400)
+
+        # Store captcha API key in DB if provided (for reuse in batch-apply)
+        if captcha_api_key:
+            try:
+                from core.database import get_db
+                db = get_db()
+                db.set_setting('captcha_api_key', captcha_api_key)
+                db.set_setting('captcha_provider', captcha_provider)
+            except Exception:
+                pass
+
+        # PRISM v9.0: Store credentials for auto-reuse across batches
+        # This is the key to single-click: user logs in ONCE, we remember forever
+        try:
+            from core.database import get_db
+            db = get_db()
+            db.set_setting('internshala_email', email)
+            db.set_setting('internshala_password', password)
+        except Exception:
+            pass
+
+        # Attempt login via A-13 InternshalaApplicator
+        from agents.a13_auto_apply import get_auto_apply_orchestrator
+        orchestrator = get_auto_apply_orchestrator()
+        applicator = orchestrator.internshala
+
+        login_ok, login_error = applicator._login_with_credentials(
+            email, password, captcha_api_key, captcha_provider
+        )
+
+        if login_ok:
+            # Validate the session to confirm and extract username
+            try:
+                from core.database import get_db
+                db = get_db()
+                stored_cookie = db.get_setting('internshala_session', '')
+                if stored_cookie:
+                    valid, msg, username = applicator.validate_session(stored_cookie)
+                    return _json_response({
+                        "success": True,
+                        "message": f"Logged in successfully{' as ' + username if username else ''}! Session saved for auto-apply.",
+                        "session_valid": True,
+                        "username": username,
+                    })
+            except Exception:
+                pass
+
+            return _json_response({
+                "success": True,
+                "message": "Login successful! Session saved for auto-apply.",
+                "session_valid": True,
+                "username": "",
+            })
+        else:
+            return _json_response({
+                "success": False,
+                "error": login_error or "Login failed",
+                "session_valid": False,
+                "needs_captcha_key": 'captcha' in (login_error or '').lower(),
+            })
+
+    except Exception as e:
+        logger.error(f"[{MODULE_ID}] /api/internshala-login error: {e}")
+        return _json_response({
+            "success": False,
+            "error": f"Login error: {str(e)[:200]}",
+        }, status=500)
+
+
+# ============================================================
 # ROUTE REGISTRATION
 # ============================================================
 
@@ -2273,6 +2458,8 @@ def register_miniapp_routes(app):
     app.router.add_get('/api/analytics', handle_analytics)
     app.router.add_post('/api/apply/{id}', handle_apply)
     app.router.add_post('/api/batch-apply', handle_batch_apply)
+    app.router.add_post('/api/validate-session', handle_validate_session)
+    app.router.add_post('/api/internshala-login', handle_internshala_login)
     app.router.add_post('/api/llm/chat', handle_llm_chat)
     app.router.add_get('/api/sources', handle_sources)
     app.router.add_get('/api/filters', handle_filters)
