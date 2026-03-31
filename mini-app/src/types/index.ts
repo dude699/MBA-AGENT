@@ -165,7 +165,7 @@ export interface CredentialRequirement {
 export interface CredentialField {
   key: string;
   label: string;
-  type: 'text' | 'password' | 'email' | 'phone' | 'file';
+  type: 'text' | 'password' | 'email' | 'phone' | 'file' | 'textarea';
   required: boolean;
   placeholder: string;
   helpText?: string;
