@@ -278,9 +278,37 @@ class ProxyPoolManager:
             logger.error(f"Failed to load Webshare proxies: {e}")
 
     def _load_free_proxies(self):
-        """Load free proxy list from public sources."""
+        """Load free proxy list from public sources.
+
+        PRISM v10.1: Clear old dead proxies before loading new ones.
+        Previously this only appended, causing unbounded memory growth.
+        Also reduced max pool to 50 (was 200) — most die within minutes.
+        """
         try:
             import requests
+
+            # Clear dead proxies and their health entries to free memory
+            old_count = len(self._free_proxies)
+            dead_proxies = [
+                p for p in self._free_proxies
+                if not self._proxy_health.get(p, {}).get('alive', False)
+            ]
+            for dp in dead_proxies:
+                try:
+                    self._free_proxies.remove(dp)
+                except ValueError:
+                    pass
+                self._proxy_health.pop(dp, None)
+
+            if dead_proxies:
+                logger.info(f"Cleared {len(dead_proxies)} dead free proxies (was {old_count})")
+
+            # Only load new proxies if pool is small
+            max_pool = min(getattr(self.config.free_proxy, 'max_pool_size', 200), 50)
+            if len(self._free_proxies) >= max_pool:
+                logger.info(f"Free proxy pool already has {len(self._free_proxies)} alive proxies, skipping reload")
+                return
+
             for source_url in self.config.free_proxy.sources[:2]:
                 try:
                     resp = requests.get(source_url, timeout=10)
@@ -289,7 +317,7 @@ class ProxyPoolManager:
                             line = line.strip()
                             if line and ':' in line:
                                 proxy_url = f"http://{line}"
-                                if len(self._free_proxies) < self.config.free_proxy.max_pool_size:
+                                if proxy_url not in self._proxy_health and len(self._free_proxies) < max_pool:
                                     self._free_proxies.append(proxy_url)
                                     self._proxy_health[proxy_url] = {
                                         'type': 'free',
@@ -299,7 +327,7 @@ class ProxyPoolManager:
                                     }
                 except Exception:
                     continue
-            logger.info(f"Loaded {len(self._free_proxies)} free proxies")
+            logger.info(f"Loaded {len(self._free_proxies)} free proxies (pool capped at {max_pool})")
         except Exception as e:
             logger.error(f"Failed to load free proxies: {e}")
 

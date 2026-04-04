@@ -727,6 +727,33 @@ class Application:
                             linecache.clearcache()
                         except Exception:
                             pass
+                        # PRISM v10.1: Trim proxy pool to reduce memory
+                        try:
+                            from core.stealth_engine import get_stealth_client
+                            stealth = get_stealth_client()
+                            if hasattr(stealth, '_free_proxies') and len(stealth._free_proxies) > 30:
+                                # Remove dead proxies
+                                dead = [
+                                    p for p in stealth._free_proxies
+                                    if not stealth._proxy_health.get(p, {}).get('alive', False)
+                                ]
+                                for dp in dead:
+                                    try:
+                                        stealth._free_proxies.remove(dp)
+                                    except ValueError:
+                                        pass
+                                    stealth._proxy_health.pop(dp, None)
+                                if dead:
+                                    logger.info(f"[GC] Trimmed {len(dead)} dead proxies from pool")
+                        except Exception:
+                            pass
+                        # Clear requests session pools
+                        try:
+                            import requests
+                            if hasattr(requests, 'sessions'):
+                                pass  # Can't easily close global sessions
+                        except Exception:
+                            pass
                     elif collected > 50:
                         logger.debug(f"[GC] Collected {collected} objects, mem={mem_mb}MB")
                 except Exception:

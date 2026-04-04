@@ -860,6 +860,19 @@ class InternshalaApplicator:
             logger.warning(f"[{AGENT_ID}] Playwright not installed, falling back to HTTP login")
             return False, "Playwright not available — install with: pip install playwright && playwright install chromium"
 
+        # Check memory before launching Chromium (~80MB RAM needed)
+        try:
+            import resource
+            mem_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // 1024
+            if mem_mb > 380:  # Too close to 512MB limit
+                logger.warning(
+                    f"[{AGENT_ID}] Skipping Playwright: memory too high ({mem_mb}MB/512MB). "
+                    f"Chromium needs ~80MB extra — would OOM."
+                )
+                return False, f"Memory too high for Playwright ({mem_mb}MB/512MB)"
+        except Exception:
+            pass
+
         logger.info(f"[{AGENT_ID}] Launching Playwright browser for Internshala login...")
 
         try:
@@ -2552,7 +2565,6 @@ class ApplicationQueueManager:
                 cover_letter=cover_letter,
                 external_app_id=external_app_id,
             )
-            platform = ''  # Will be looked up if needed
             self._consecutive_failures = 0
         else:
             self.db.update_application_status(
@@ -2560,7 +2572,13 @@ class ApplicationQueueManager:
                 cover_letter=cover_letter,
                 error=error,
             )
-            self._consecutive_failures += 1
+            # PRISM v10.1: "assisted" mode is NOT a real failure —
+            # the system correctly generated a cover letter, it just couldn't
+            # auto-submit. Don't count it toward circuit breaker.
+            if error and error.strip().lower() != 'assisted':
+                self._consecutive_failures += 1
+            else:
+                logger.debug(f"[{AGENT_ID}] Assisted mode — not counting as failure for circuit breaker")
 
     def get_stats(self) -> Dict[str, Any]:
         """Get application queue statistics."""
@@ -2674,8 +2692,30 @@ class AutoApplyOrchestrator:
         for app in batch:
             try:
                 queue_id = app.get('id')
-                platform = app.get('platform', 'internshala')
                 listing_id = app.get('listing_id')
+
+                # PRISM v10.1: Platform detection — use source as primary, platform as fallback
+                # The auto_apply_queue.platform column is often empty (old entries).
+                # The JOIN with clean_listings gives us c.source which is always correct.
+                platform = (
+                    app.get('platform', '').strip()
+                    or app.get('source', '').strip()
+                    or 'internshala'
+                ).lower()
+
+                # Normalize platform aliases
+                platform_aliases = {
+                    'ashbyhq': 'ashby', 'smart_recruiters': 'smartrecruiters',
+                    'wellfound': 'wellfound', 'angellist': 'wellfound',
+                }
+                platform = platform_aliases.get(platform, platform)
+
+                title_short = app.get('title', '?')[:40]
+                company_short = app.get('company', '?')[:30]
+                logger.info(
+                    f"[{AGENT_ID}] Processing #{listing_id}: '{title_short}' @ {company_short} "
+                    f"[platform={platform}]"
+                )
 
                 # Build listing dict from joined data
                 listing_data = {
@@ -2684,7 +2724,7 @@ class AutoApplyOrchestrator:
                     'company': app.get('company', ''),
                     'url': app.get('url', ''),
                     'description_text': app.get('description_text', ''),
-                    'source': app.get('source', ''),
+                    'source': platform,
                     'location': app.get('location', ''),
                     'category': app.get('category', ''),
                     'stipend_monthly': app.get('stipend_monthly', 0),
@@ -2692,19 +2732,24 @@ class AutoApplyOrchestrator:
                     'sector': app.get('sector', ''),
                 }
 
-                # ===== PRISM v0.1: INTELLIGENCE SEQUENCE =====
+                # ===== PRISM v10.1: LIGHTWEIGHT PRE-CHECKS =====
+                # Skip heavy Intelligence Sequence (ATS sim, CV tailoring) —
+                # they take 10+ seconds each and block the apply loop.
+                # Run them async or skip if they slow down apply.
                 self.db.update_application_status(queue_id, 'pre_checking')
+                try:
+                    self._ensure_ats_simulation(listing_id)
+                except Exception as pre_err:
+                    logger.debug(f"[{AGENT_ID}] ATS pre-check skipped: {pre_err}")
 
-                # Pre-check 1: ATS Simulation
-                self._ensure_ats_simulation(listing_id)
+                # CV tailoring is async — skip in sync context to avoid RuntimeWarning
+                # (tailor_cv is async def but run_auto_apply is sync)
+                try:
+                    self._ensure_cv_tailoring_safe(listing_id)
+                except Exception as pre_err:
+                    logger.debug(f"[{AGENT_ID}] CV pre-check skipped: {pre_err}")
 
-                # Pre-check 2: CV Tailoring
-                self._ensure_cv_tailoring(listing_id)
-
-                # Pre-check 3: Alumni outreach scheduling
-                self._check_alumni_outreach(listing_data)
-
-                # ===== END INTELLIGENCE SEQUENCE =====
+                # ===== END PRE-CHECKS =====
 
                 # Mark as generating
                 self.db.update_application_status(queue_id, 'generating')
@@ -2712,8 +2757,10 @@ class AutoApplyOrchestrator:
                 # Get the applicator for this platform
                 applicator = self._applicators.get(platform)
                 if not applicator:
+                    error_msg = f"No applicator for platform: '{platform}'"
+                    logger.warning(f"[{AGENT_ID}] {error_msg} — listing #{listing_id}")
                     self.queue_manager.record_result(
-                        queue_id, False, error=f"No applicator for platform: {platform}"
+                        queue_id, False, error=error_msg
                     )
                     stats.skipped += 1
                     continue
@@ -2722,6 +2769,7 @@ class AutoApplyOrchestrator:
                 if hasattr(applicator, 'can_apply'):
                     can, reason = applicator.can_apply()
                     if not can:
+                        logger.warning(f"[{AGENT_ID}] {platform} not ready: {reason}")
                         self.queue_manager.record_result(
                             queue_id, False, error=reason
                         )
@@ -2730,6 +2778,8 @@ class AutoApplyOrchestrator:
 
                 # Update status to applying
                 self.db.update_application_status(queue_id, 'applying')
+
+                logger.info(f"[{AGENT_ID}] Applying to {platform}: '{title_short}'...")
 
                 # Apply
                 result = applicator.apply(listing_data)
@@ -2750,23 +2800,35 @@ class AutoApplyOrchestrator:
                     self.db.update_clean_listing_scores(
                         listing_id, status='applied'
                     )
+                    logger.info(
+                        f"[{AGENT_ID}] ✓ APPLIED #{listing_id}: '{title_short}' @ {company_short} "
+                        f"[{platform}]"
+                    )
                 else:
                     stats.failed += 1
-                    stats.errors.append(f"{app.get('title', '')[:30]}: {result.error}")
+                    stats.errors.append(f"{title_short}: {result.error}")
+                    # PRISM v10.1: ACTUALLY LOG THE ERROR so we can debug
+                    logger.warning(
+                        f"[{AGENT_ID}] ✗ FAILED #{listing_id}: '{title_short}' @ {company_short} "
+                        f"[{platform}] — {result.error}"
+                    )
 
                 if result.cover_letter:
                     stats.cover_letters_generated += 1
 
                 # Circuit breaker check
                 if self.queue_manager._consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
-                    logger.warning(f"[{AGENT_ID}] Circuit breaker triggered!")
+                    logger.warning(
+                        f"[{AGENT_ID}] Circuit breaker triggered after "
+                        f"{self.queue_manager._consecutive_failures} consecutive failures!"
+                    )
                     break
 
-                # Human-like delay between applications
+                # Human-like delay between applications (shorter for failures)
                 if result.success:
                     delay = random.uniform(*DELAY_BETWEEN_APPS)
                 else:
-                    delay = random.uniform(*DELAY_AFTER_FAILURE)
+                    delay = random.uniform(5, 15)  # Don't waste 2-5min on failures
 
                 actual_delay = min(delay, 15)
                 time.sleep(actual_delay)
@@ -2774,7 +2836,7 @@ class AutoApplyOrchestrator:
             except Exception as e:
                 stats.failed += 1
                 stats.errors.append(str(e))
-                logger.error(f"[{AGENT_ID}] Apply error: {e}")
+                logger.error(f"[{AGENT_ID}] Apply error for #{listing_id}: {e}", exc_info=True)
 
         # Finalize
         stats.duration_sec = round(time.time() - start_time, 1)
@@ -2826,26 +2888,50 @@ class AutoApplyOrchestrator:
         """
         PRISM v0.1: Ensure A-18 CV tailoring has been done for this listing.
         If not, trigger it now.
+        NOTE: tailor_cv is async — this method should NOT be called from sync context.
+        Use _ensure_cv_tailoring_safe() instead.
         """
         try:
-            # Check if tailored CV exists
             pkg = self.db.get_application_package(listing_id)
             if pkg and pkg.get('tailored_cv_url'):
                 return  # Already done
 
-            # Trigger CV tailoring
             from agents.a18_cv_enhancer import get_cv_enhancer
             enhancer = get_cv_enhancer()
             if hasattr(enhancer, 'tailor_cv'):
-                result = enhancer.tailor_cv(listing_id)
-                if result:
+                import asyncio
+                try:
+                    loop = asyncio.get_running_loop()
+                    # We're in an async context — schedule it
+                    loop.create_task(enhancer.tailor_cv(listing_id))
                     logger.info(
-                        f"[{AGENT_ID}] Intelligence Sequence: A-18 CV tailoring triggered for #{listing_id}"
+                        f"[{AGENT_ID}] Intelligence Sequence: A-18 CV tailoring scheduled for #{listing_id}"
                     )
+                except RuntimeError:
+                    # No running event loop — run it synchronously
+                    result = asyncio.run(enhancer.tailor_cv(listing_id))
+                    if result:
+                        logger.info(
+                            f"[{AGENT_ID}] Intelligence Sequence: A-18 CV tailoring done for #{listing_id}"
+                        )
         except ImportError:
             logger.debug(f"[{AGENT_ID}] A-18 CV Enhancer not available")
         except Exception as e:
             logger.debug(f"[{AGENT_ID}] CV tailoring pre-check error: {e}")
+
+    def _ensure_cv_tailoring_safe(self, listing_id: int):
+        """
+        PRISM v10.1: Safe sync wrapper — skips CV tailoring if async.
+        CV tailoring is nice-to-have, NOT a blocker for applying.
+        """
+        try:
+            pkg = self.db.get_application_package(listing_id)
+            if pkg and pkg.get('tailored_cv_url'):
+                return  # Already done
+            # Just log that we'd tailor, don't block apply
+            logger.debug(f"[{AGENT_ID}] CV tailoring for #{listing_id} deferred (async)")
+        except Exception:
+            pass
 
     def _check_alumni_outreach(self, listing: Dict):
         """
@@ -2897,25 +2983,43 @@ class AutoApplyOrchestrator:
 
     def _auto_queue_public_api_listings(self, max_queue: int = 5) -> int:
         """
-        PRISM v10.0: Automatically queue top-scored listings from platforms
-        that have PUBLIC application APIs (no login/cookies needed).
+        PRISM v10.1: Automatically queue listings from PUBLIC API platforms.
 
-        These platforms accept applications via direct API POST:
+        These platforms accept applications via direct API POST with ZERO auth:
         - Greenhouse: boards-api.greenhouse.io (public, zero auth)
         - Lever: jobs.lever.co (public, zero auth)
         - Ashby: api.ashbyhq.com (public, zero auth)
         - SmartRecruiters: jobs.smartrecruiters.com (public, zero auth)
 
-        This means even if Internshala login fails, we can still
-        auto-apply to a significant chunk of listings automatically.
+        NO PPO threshold for public APIs — they're free and zero risk.
+        Even if a listing has PPO=0 (unscored), we should still apply.
 
         Returns: number of listings auto-queued
         """
         try:
-            # Get unapplied listings from public-API platforms
-            all_listings = self.db.get_top_listings(n=50)
+            # Get a large set of listings — top 50 by PPO might all be Internshala
+            all_listings = self.db.get_top_listings(n=200)
             queued_count = 0
 
+            # Pre-fetch dedup sets (one query each, not per-listing)
+            try:
+                queued_ids = {
+                    q.get('listing_id')
+                    for q in self.db.get_queued_applications(limit=500)
+                }
+            except Exception:
+                queued_ids = set()
+
+            try:
+                applied_ids = {
+                    h.get('listing_id')
+                    for h in self.db.get_application_history(limit=500)
+                    if h.get('status') in ('applied', 'queued', 'applying')
+                }
+            except Exception:
+                applied_ids = set()
+
+            public_found = 0
             for listing in all_listings:
                 if queued_count >= max_queue:
                     break
@@ -2927,47 +3031,45 @@ class AutoApplyOrchestrator:
                 if source not in self.PUBLIC_API_PLATFORMS:
                     continue
 
-                # Check minimum quality (PPO score >= 50 for auto-queue)
-                ppo = listing.get('ppo_score', 0) or 0
-                if ppo < 50:
+                public_found += 1
+
+                # NO PPO threshold for public APIs — they're free, zero risk
+                # Just skip ghost listings
+                if listing.get('is_ghost'):
                     continue
 
-                # Check if already applied or queued
-                try:
-                    # Check the auto_apply_queue table for existing entries
-                    queued_apps = self.db.get_queued_applications(limit=100)
-                    already_handled = any(
-                        q.get('listing_id') == listing_id
-                        for q in queued_apps
-                    )
-                    if already_handled:
-                        continue
-                    # Also check application history
-                    history = self.db.get_application_history(limit=200)
-                    already_applied = any(
-                        h.get('listing_id') == listing_id and h.get('status') == 'applied'
-                        for h in history
-                    )
-                    if already_applied:
-                        continue
-                except Exception:
-                    pass
+                # Dedup: skip if already queued or applied
+                if listing_id in queued_ids or listing_id in applied_ids:
+                    continue
+
+                # Must have a URL to apply to
+                url = listing.get('url', '') or listing.get('source_url', '')
+                if not url:
+                    continue
 
                 # Queue it
                 try:
                     success = self.queue_manager.queue_listing(
                         listing_id, source,
-                        priority=int(ppo),
-                        queued_by='auto_public_api',
+                        priority=max(int(listing.get('ppo_score', 0) or 0), 50),
                     )
                     if success:
                         queued_count += 1
+                        ppo = listing.get('ppo_score', 0) or 0
                         logger.info(
                             f"[{AGENT_ID}] Auto-queued {source} listing #{listing_id}: "
-                            f"'{listing.get('title', '')[:40]}' (PPO: {ppo:.0f})"
+                            f"'{listing.get('title', '')[:40]}' @ {listing.get('company', '')[:30]} "
+                            f"(PPO: {ppo:.0f})"
                         )
                 except Exception as q_err:
                     logger.debug(f"[{AGENT_ID}] Auto-queue error for #{listing_id}: {q_err}")
+
+            if queued_count == 0:
+                logger.info(
+                    f"[{AGENT_ID}] No public-API listings to auto-queue "
+                    f"(found {public_found} public-API listings in top 200, "
+                    f"all already queued/applied or missing URL)"
+                )
 
             return queued_count
 
