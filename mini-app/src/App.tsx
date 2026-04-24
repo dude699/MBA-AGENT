@@ -3,7 +3,7 @@
 // ============================================================
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { RefreshCw, ChevronUp, Clock, Archive, Database } from 'lucide-react';
+import { RefreshCw, ChevronUp, Clock, Archive, Database, Sparkles, FileText, Upload } from 'lucide-react';
 
 import Header from '@/components/Header';
 import InternshipCard from '@/components/InternshipCard';
@@ -23,20 +23,45 @@ import { useAppStore } from '@/store/useAppStore';
 import { hapticFeedback } from '@/utils/helpers';
 import { applyFilters, applySorting } from '@/utils/helpers';
 import { SOURCE_CONFIG } from '@/utils/constants';
-import { fetchSupabaseLatestJobs, fetchSupabaseAllJobs } from '@/services/api';
+import { fetchSupabaseAllJobs, fetchCVMatchedJobs } from '@/services/api';
 import type { Internship, InternshipSource } from '@/types';
+
+// Resolve telegram_id once — used by every CV-aware call
+function getTelegramId(): string {
+  try {
+    const tg = (window as any)?.Telegram?.WebApp;
+    const id = tg?.initDataUnsafe?.user?.id;
+    if (id) return String(id);
+  } catch {}
+  try {
+    const stored = localStorage.getItem('internhub_telegram_id');
+    if (stored) return stored;
+  } catch {}
+  return 'anonymous';
+}
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('browse');
-  const [browseMode, setBrowseMode] = useState<'live' | 'latest' | 'archive'>('live');
+  // 'live' = real-time SQLite scrape | 'foryou' = CV-matched (was 'latest')
+  // 'archive' = full Supabase archive
+  const [browseMode, setBrowseMode] = useState<'live' | 'foryou' | 'archive'>('live');
   const [showScrollTop, setShowScrollTop] = useState(false);
 
-  // Supabase state
+  // Supabase archive state
   const [sbJobs, setSbJobs] = useState<Internship[]>([]);
   const [sbLoading, setSbLoading] = useState(false);
   const [sbPage, setSbPage] = useState(1);
   const [sbTotal, setSbTotal] = useState(0);
   const [sbHasMore, setSbHasMore] = useState(false);
+
+  // CV-matched ("For You") state
+  const [cvJobs, setCvJobs] = useState<Internship[]>([]);
+  const [cvLoading, setCvLoading] = useState(false);
+  const [cvPage, setCvPage] = useState(1);
+  const [cvTotal, setCvTotal] = useState(0);
+  const [cvHasMore, setCvHasMore] = useState(false);
+  const [cvHasUploadedCV, setCvHasUploadedCV] = useState(false);
+  const [cvTopKeywords, setCvTopKeywords] = useState<string[]>([]);
 
   // Keep a window-level cache of Supabase jobs so InternshipDetail can find them
   useEffect(() => {
@@ -86,12 +111,10 @@ export default function App() {
     hapticFeedback('light');
   };
 
-  // Supabase data fetcher — now uses ALL active filters
-  const loadSupabaseJobs = useCallback(async (mode: 'latest' | 'archive', page: number = 1) => {
+  // Archive (Supabase) fetcher — unchanged
+  const loadSupabaseJobs = useCallback(async (page: number = 1) => {
     setSbLoading(true);
     try {
-      const fetcher = mode === 'latest' ? fetchSupabaseLatestJobs : fetchSupabaseAllJobs;
-      // Pass ALL current filters to Supabase queries
       const filterParams: any = {
         sources: filters.sources || [],
         categories: filters.categories || [],
@@ -100,13 +123,9 @@ export default function App() {
         onlyWithStipend: filters.onlyWithStipend,
         durationMax: filters.durationMax,
       };
-
-      const resp = await fetcher(page, 20, filterParams);
-      if (page === 1) {
-        setSbJobs(resp.data);
-      } else {
-        setSbJobs(prev => [...prev, ...resp.data]);
-      }
+      const resp = await fetchSupabaseAllJobs(page, 20, filterParams);
+      if (page === 1) setSbJobs(resp.data);
+      else setSbJobs(prev => [...prev, ...resp.data]);
       setSbTotal(resp.meta?.total || 0);
       setSbHasMore(resp.meta?.hasMore || false);
       setSbPage(page);
@@ -117,14 +136,54 @@ export default function App() {
     }
   }, [filters]);
 
-  // Load Supabase data when mode or filters change (react to all filter changes)
+  // "For You" — CV-matched jobs fetcher
+  const loadCVMatchedJobs = useCallback(async (page: number = 1) => {
+    setCvLoading(true);
+    try {
+      const tgId = getTelegramId();
+      const searchQ = filters.search || '';
+      const sourceQ = (filters.sources || []).join(',');
+      const resp = await fetchCVMatchedJobs(tgId, page, 20, {
+        search: searchQ,
+        source: sourceQ,
+        minScore: cvHasUploadedCV ? 20 : 0,
+      });
+      if (page === 1) setCvJobs(resp.data);
+      else setCvJobs(prev => [...prev, ...resp.data]);
+      setCvTotal(resp.meta?.total || 0);
+      setCvHasMore(resp.meta?.hasMore || false);
+      setCvPage(page);
+      setCvHasUploadedCV(resp.cvMeta?.hasCV || false);
+      setCvTopKeywords(resp.cvMeta?.topKeywords || []);
+    } catch (err) {
+      console.error('CV-matched fetch error:', err);
+    } finally {
+      setCvLoading(false);
+    }
+  }, [filters, cvHasUploadedCV]);
+
+  // Load archive data when Archive tab opens or filters change
   useEffect(() => {
-    if (browseMode !== 'live' && activeTab === 'browse') {
+    if (browseMode === 'archive' && activeTab === 'browse') {
       setSbJobs([]);
       setSbPage(1);
-      loadSupabaseJobs(browseMode === 'latest' ? 'latest' : 'archive', 1);
+      loadSupabaseJobs(1);
     }
   }, [browseMode, activeTab, loadSupabaseJobs]);
+
+  // Load CV-matched data when For You tab opens or filters change
+  useEffect(() => {
+    if (browseMode === 'foryou' && activeTab === 'browse') {
+      setCvJobs([]);
+      setCvPage(1);
+      loadCVMatchedJobs(1);
+    }
+  }, [browseMode, activeTab, loadCVMatchedJobs]);
+
+  // Keep the Supabase cache pointer updated so InternshipDetail can look up CV jobs too
+  useEffect(() => {
+    (window as any).__cvJobsCache = cvJobs;
+  }, [cvJobs]);
 
   return (
     <div className="app-root" style={{ background: '#ffffff', color: '#0a0a0a', minHeight: '100vh', touchAction: 'pan-y pan-x' }}>
@@ -151,15 +210,18 @@ export default function App() {
                     Live
                   </button>
                   <button
-                    onClick={() => { setBrowseMode('latest'); hapticFeedback('light'); }}
-                    className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-[11px] font-bold transition-all ${
-                      browseMode === 'latest'
+                    onClick={() => { setBrowseMode('foryou'); hapticFeedback('light'); }}
+                    className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-[11px] font-bold transition-all relative ${
+                      browseMode === 'foryou'
                         ? 'bg-white text-[#0a0a0a] shadow-sm'
                         : 'text-[#9ca3af]'
                     }`}
                   >
-                    <Clock className="w-3 h-3" />
-                    Latest
+                    <Sparkles className="w-3 h-3" />
+                    For You
+                    {cvHasUploadedCV && browseMode !== 'foryou' && (
+                      <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full" style={{background:'#10b981'}} />
+                    )}
                   </button>
                   <button
                     onClick={() => { setBrowseMode('archive'); hapticFeedback('light'); }}
@@ -280,20 +342,125 @@ export default function App() {
                 </>
               )}
 
-              {/* === SUPABASE MODE (Latest or Archive) === */}
-              {browseMode !== 'live' && (
+              {/* === FOR YOU MODE (CV-matched jobs) === */}
+              {browseMode === 'foryou' && (
+                <div className="px-4">
+                  <div className="py-2 flex items-center justify-between">
+                    <p className="text-xs text-primary-500">
+                      <Sparkles className="w-3 h-3 inline mr-1" style={{color:'#6366f1'}} />
+                      <span className="font-bold text-primary-800">{cvJobs.length}</span>
+                      {' '}{cvHasUploadedCV ? 'matched for your CV' : 'jobs (upload CV for ranking)'}
+                      {cvTotal > 0 && cvJobs.length !== cvTotal && (
+                        <span className="text-primary-400"> of {cvTotal}</span>
+                      )}
+                    </p>
+                    <button
+                      onClick={() => { loadCVMatchedJobs(1); hapticFeedback('light'); }}
+                      className="flex items-center gap-1 text-[11px] font-medium text-primary-500 hover:text-accent transition-colors"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${cvLoading ? 'animate-spin' : ''}`} />
+                      Refresh
+                    </button>
+                  </div>
+
+                  {/* CV status banner */}
+                  {cvHasUploadedCV && cvTopKeywords.length > 0 && (
+                    <div className="mb-3 p-3 rounded-xl" style={{background:'linear-gradient(135deg, #eef2ff 0%, #f5f3ff 100%)', border:'1px solid #e0e7ff'}}>
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <FileText className="w-3.5 h-3.5" style={{color:'#6366f1'}} />
+                        <span className="text-[11px] font-bold" style={{color:'#4338ca'}}>Ranking jobs against your CV</span>
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {cvTopKeywords.slice(0, 8).map(kw => (
+                          <span key={kw} className="px-2 py-0.5 rounded-full text-[10px] font-semibold" style={{background:'#ffffff', color:'#4338ca', border:'1px solid #e0e7ff'}}>
+                            {kw}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="space-y-3" style={{ paddingBottom: hasSelection ? '80px' : '16px' }}>
+                    {cvLoading && cvJobs.length === 0 ? (
+                      <ListSkeleton count={5} />
+                    ) : !cvHasUploadedCV && cvJobs.length === 0 ? (
+                      <div className="py-12 text-center">
+                        <div className="w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-4" style={{background:'linear-gradient(135deg, #eef2ff 0%, #f5f3ff 100%)'}}>
+                          <Upload className="w-8 h-8" style={{color:'#6366f1'}} />
+                        </div>
+                        <h3 className="text-base font-bold mb-2" style={{color:'#1f2937'}}>Upload your CV</h3>
+                        <p className="text-xs mb-4 leading-relaxed px-6" style={{color:'#6b7280'}}>
+                          Drop your resume in Settings to get jobs ranked by how well they match your skills and experience.
+                        </p>
+                        <button
+                          onClick={() => { setActiveTab('settings'); hapticFeedback('medium'); }}
+                          className="btn-primary text-xs"
+                        >
+                          Go to Settings
+                        </button>
+                      </div>
+                    ) : cvJobs.length === 0 ? (
+                      <div className="py-16 text-center">
+                        <div className="w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-4" style={{background:'#f3f4f6'}}>
+                          <Sparkles className="w-8 h-8" style={{color:'#d1d5db'}} />
+                        </div>
+                        <h3 className="text-base font-bold mb-2" style={{color:'#1f2937'}}>No strong matches yet</h3>
+                        <p className="text-xs" style={{color:'#6b7280'}}>
+                          Scraping is still running. Check back soon or adjust your search.
+                        </p>
+                      </div>
+                    ) : (
+                      <>
+                        {cvJobs.map((internship, index) => (
+                          <InternshipCard key={internship.id} internship={internship} index={index} />
+                        ))}
+
+                        {cvHasMore && (
+                          <div className="py-4">
+                            <button
+                              onClick={() => loadCVMatchedJobs(cvPage + 1)}
+                              disabled={cvLoading}
+                              className="w-full py-3 bg-surface-muted text-primary-600 rounded-xl text-xs font-semibold hover:bg-surface-border transition-colors"
+                            >
+                              {cvLoading ? (
+                                <span className="flex items-center justify-center gap-2">
+                                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                  Loading...
+                                </span>
+                              ) : (
+                                `Load More (${cvJobs.length} of ${cvTotal})`
+                              )}
+                            </button>
+                          </div>
+                        )}
+
+                        {!cvHasMore && cvJobs.length > 0 && (
+                          <div className="py-6 text-center">
+                            <p className="text-xs text-primary-400">
+                              All {cvJobs.length} matched jobs loaded
+                            </p>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* === ARCHIVE MODE (full Supabase history) === */}
+              {browseMode === 'archive' && (
                 <div className="px-4">
                   <div className="py-2 flex items-center justify-between">
                     <p className="text-xs text-primary-500">
                       <Database className="w-3 h-3 inline mr-1" />
                       <span className="font-bold text-primary-800">{filteredSbJobs.length}</span>
-                      {' '}{browseMode === 'latest' ? 'latest session' : 'archived'} jobs
+                      {' '}archived jobs
                       {sbTotal > 0 && filteredSbJobs.length !== sbTotal && (
                         <span className="text-primary-400"> (filtered from {sbTotal})</span>
                       )}
                     </p>
                     <button
-                      onClick={() => { loadSupabaseJobs(browseMode === 'latest' ? 'latest' : 'archive', 1); hapticFeedback('light'); }}
+                      onClick={() => { loadSupabaseJobs(1); hapticFeedback('light'); }}
                       className="flex items-center gap-1 text-[11px] font-medium text-primary-500 hover:text-accent transition-colors"
                     >
                       <RefreshCw className={`w-3 h-3 ${sbLoading ? 'animate-spin' : ''}`} />
@@ -307,17 +474,15 @@ export default function App() {
                     ) : filteredSbJobs.length === 0 ? (
                       <div className="py-16 text-center">
                         <div className="w-20 h-20 rounded-3xl flex items-center justify-center mx-auto mb-4" style={{background:'#f3f4f6'}}>
-                          <Clock className="w-8 h-8" style={{color:'#d1d5db'}} />
+                          <Archive className="w-8 h-8" style={{color:'#d1d5db'}} />
                         </div>
                         <h3 className="text-base font-bold mb-2" style={{color:'#1f2937'}}>
-                          {sbJobs.length > 0 ? 'No Jobs Match Filters' : browseMode === 'latest' ? 'No Latest Jobs' : 'No Archived Jobs'}
+                          {sbJobs.length > 0 ? 'No Jobs Match Filters' : 'No Archived Jobs'}
                         </h3>
                         <p className="text-xs" style={{color:'#6b7280'}}>
                           {sbJobs.length > 0
                             ? 'Try adjusting your filters to see more results.'
-                            : browseMode === 'latest'
-                              ? 'Jobs from the current scraping session will appear here.'
-                              : 'All previously scraped jobs will be archived here.'}
+                            : 'All previously scraped jobs will be archived here.'}
                         </p>
                         {sbJobs.length > 0 && (
                           <button
@@ -331,17 +496,13 @@ export default function App() {
                     ) : (
                       <>
                         {filteredSbJobs.map((internship, index) => (
-                          <InternshipCard
-                            key={internship.id}
-                            internship={internship}
-                            index={index}
-                          />
+                          <InternshipCard key={internship.id} internship={internship} index={index} />
                         ))}
 
                         {sbHasMore && (
                           <div className="py-4">
                             <button
-                              onClick={() => loadSupabaseJobs(browseMode === 'latest' ? 'latest' : 'archive', sbPage + 1)}
+                              onClick={() => loadSupabaseJobs(sbPage + 1)}
                               disabled={sbLoading}
                               className="w-full py-3 bg-surface-muted text-primary-600 rounded-xl text-xs font-semibold hover:bg-surface-border transition-colors"
                             >

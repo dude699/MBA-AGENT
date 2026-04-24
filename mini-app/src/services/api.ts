@@ -591,6 +591,87 @@ export async function fetchSupabaseStats(): Promise<APIResponse<any>> {
   }
 }
 
+// ===== PRISM v11: CV-MATCHED JOBS ("For You" tab) =====
+
+export interface CVStatus {
+  has_cv: boolean;
+  keyword_count: number;
+  top_keywords: string[];
+  has_profile: boolean;
+  text_preview: string;
+}
+
+export async function fetchCVStatus(telegramId: string = 'anonymous'): Promise<APIResponse<CVStatus>> {
+  try {
+    const params = new URLSearchParams({ telegram_id: telegramId });
+    const resp = await fetch(`${getApiUrl('/cv/status')}?${params.toString()}`, { headers: getHeaders() });
+    if (!resp.ok) throw new Error(`API error: ${resp.status}`);
+    const data = await resp.json();
+    return {
+      success: data.success,
+      data: data.data || { has_cv: false, keyword_count: 0, top_keywords: [], has_profile: false, text_preview: '' },
+      timestamp: new Date().toISOString(),
+    };
+  } catch (error) {
+    return {
+      success: false,
+      data: { has_cv: false, keyword_count: 0, top_keywords: [], has_profile: false, text_preview: '' },
+      timestamp: new Date().toISOString(),
+    };
+  }
+}
+
+export async function fetchCVMatchedJobs(
+  telegramId: string = 'anonymous',
+  page: number = 1,
+  pageSize: number = 20,
+  opts: { minScore?: number; source?: string; search?: string } = {},
+): Promise<PaginatedResponse<Internship> & { cvMeta: { hasCV: boolean; topKeywords: string[]; keywordCount: number } }> {
+  try {
+    const params = new URLSearchParams();
+    params.set('telegram_id', telegramId);
+    params.set('page', String(page));
+    params.set('per_page', String(pageSize));
+    if (opts.minScore && opts.minScore > 0) params.set('min_score', String(opts.minScore));
+    if (opts.source) params.set('source', opts.source);
+    if (opts.search) params.set('search', opts.search);
+
+    const resp = await fetch(`${getApiUrl('/cv-matched-jobs')}?${params.toString()}`, { headers: getHeaders() });
+    if (!resp.ok) throw new Error(`API error: ${resp.status}`);
+    const data = await resp.json();
+    if (!data.success) throw new Error(data.error || 'API error');
+
+    const items: Internship[] = (data.data || []).map((item: any) => ensureInternshipFields(item));
+    return {
+      success: true,
+      data: items,
+      meta: {
+        total: data.meta?.total || items.length,
+        page: data.meta?.page || page,
+        pageSize: data.meta?.pageSize || pageSize,
+        hasMore: data.meta?.hasMore || false,
+        filters: {} as FilterState,
+        sort: 'match_score' as any,
+      },
+      cvMeta: {
+        hasCV: data.meta?.hasCV || false,
+        topKeywords: data.meta?.topKeywords || [],
+        keywordCount: data.meta?.keywordCount || 0,
+      },
+      timestamp: data.timestamp || new Date().toISOString(),
+    };
+  } catch (error) {
+    console.warn('[API] fetchCVMatchedJobs failed:', error);
+    return {
+      success: true,
+      data: [],
+      meta: { total: 0, page, pageSize, hasMore: false, filters: {} as FilterState, sort: 'match_score' as any },
+      cvMeta: { hasCV: false, topKeywords: [], keywordCount: 0 },
+      timestamp: new Date().toISOString(),
+    };
+  }
+}
+
 // ===== CANONICAL JOB COUNT =====
 // Single source of truth for job count across ALL surfaces.
 // Call this from Header, Profile, Settings — everywhere you show a count.
