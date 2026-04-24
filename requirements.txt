@@ -69,3 +69,7 @@ psutil>=5.9                # System metrics (CPU/memory) — ~3MB
 
 # === Job Scraping ===
 python-jobspy>=1.1         # LinkedIn/Naukri/Indeed multi-portal scraper — ~5MB
+
+# === PRISM v11: CV Parsing (lightweight fallback) ===
+# pdftotext is preferred (used if available in PATH), pypdf is the pure-python fallback.
+pypdf>=4.0                 # Pure-python PDF text extraction — ~2MB

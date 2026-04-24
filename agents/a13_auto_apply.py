@@ -834,26 +834,51 @@ class InternshalaApplicator:
 
     def _login_with_playwright(self, email: str, password: str) -> Tuple[bool, str]:
         """
-        PRISM v10.0: Login to Internshala using Playwright headless browser.
+        PRISM v11.0: Login to Internshala using Playwright headless browser.
 
-        WHY THIS WORKS:
-            - reCAPTCHA v3 Enterprise scores based on BROWSER BEHAVIOR
-            - A real Chromium browser with human-like mouse/keyboard events
-              gets a high trust score (0.7-0.9) automatically
-            - No captcha solver service needed ($0 cost)
-            - No manual cookie extraction needed (fully automated)
+        ⚠️ MEMORY-GATED on Render free tier (512MB RAM):
+            Chromium alone needs ~250-350MB RAM. On a 512MB instance already
+            running the aiohttp server + AI SDKs + Supabase + Telegram bot,
+            launching Chromium causes the OS OOM killer to SIGKILL the whole
+            process mid-login. This is the ROOT CAUSE of the "ASSISTED (fallback)"
+            logs repeating every apply attempt.
 
-        Flow:
-            1. Launch headless Chromium with stealth settings
-            2. Navigate to login page (reCAPTCHA v3 loads in background)
-            3. Type email + password with human-like delays
-            4. Click login button (reCAPTCHA auto-scores the interaction)
-            5. Wait for redirect to dashboard
-            6. Extract ALL cookies from browser context
-            7. Save to DB + build curl_cffi session for subsequent API calls
+            We now only launch Playwright if ENABLE_PLAYWRIGHT_LOGIN=true is
+            explicitly set. On Render free tier, this stays OFF and we rely on:
+                Tier 2: stored cookie session in Supabase (lasts weeks)
+                Tier 3: pure HTTP login via curl_cffi + stored credentials
+                Tier 4: raw cookie from frontend
+                Tier 5: assisted mode (cover letter + link)
 
         Returns: (success: bool, error_message: str)
         """
+        # ===== MEMORY SAFETY GATE =====
+        # Default: DISABLED on Render (RENDER_DEPLOY=true) to avoid OOM crashes.
+        # Users on beefier hosts can set ENABLE_PLAYWRIGHT_LOGIN=true.
+        enable_pw = os.environ.get('ENABLE_PLAYWRIGHT_LOGIN', '').strip().lower()
+        is_render = os.environ.get('RENDER_DEPLOY', '').strip().lower() == 'true'
+        if enable_pw not in ('true', '1', 'yes', 'on'):
+            if is_render:
+                return False, (
+                    "Playwright login disabled on Render free tier (prevents OOM). "
+                    "Using HTTP-only auth flow."
+                )
+            return False, "Playwright login not enabled (set ENABLE_PLAYWRIGHT_LOGIN=true)"
+
+        # Second safety: check live RAM headroom before launching Chromium.
+        try:
+            import psutil
+            vm = psutil.virtual_memory()
+            free_mb = vm.available / 1024 / 1024
+            if free_mb < 350:
+                logger.warning(
+                    f"[{AGENT_ID}] Refusing Playwright launch — only {free_mb:.0f}MB "
+                    f"RAM free (need 350MB+). Falling back to HTTP login."
+                )
+                return False, f"Insufficient RAM for Playwright ({free_mb:.0f}MB free)"
+        except Exception:
+            pass
+
         try:
             from playwright.sync_api import sync_playwright
         except ImportError:

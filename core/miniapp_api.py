@@ -1888,6 +1888,17 @@ async def handle_user_upload_cv(request: web.Request) -> web.Response:
 
         logger.info(f"[{MODULE_ID}] CV uploaded for user {safe_id}: {len(cv_data)} bytes")
 
+        # PRISM v11: Immediately refresh the CV matcher so "For You" tab
+        # starts returning scored results on the very next request.
+        cv_status_info: Dict[str, Any] = {}
+        try:
+            from core.cv_matcher import get_cv_matcher
+            matcher = get_cv_matcher()
+            matcher.refresh_from_cv(safe_id)
+            cv_status_info = matcher.get_cv_status(safe_id)
+        except Exception as matcher_err:
+            logger.warning(f"[{MODULE_ID}] CV matcher refresh failed: {matcher_err}")
+
         return _json_response({
             "success": True,
             "data": {
@@ -1895,6 +1906,7 @@ async def handle_user_upload_cv(request: web.Request) -> web.Response:
                 "size": len(cv_data),
                 "telegram_id": telegram_id,
                 "stored": True,
+                "cv_status": cv_status_info,
             },
         })
 
@@ -1952,44 +1964,264 @@ async def handle_user_profile(request: web.Request) -> web.Response:
         return _json_response({"success": False, "error": str(e)[:200]}, 500)
 
 
+# ============================================================
+# PRISM v11: CV-MATCHED JOBS ENDPOINTS ("For You" tab)
+# ============================================================
+
+async def handle_cv_status(request: web.Request) -> web.Response:
+    """
+    GET /api/cv/status?telegram_id=...
+    Returns whether user has a CV + preview of extracted keywords.
+    Used by the 'For You' tab to show appropriate empty states.
+    """
+    try:
+        telegram_id = request.query.get('telegram_id', 'anonymous')
+        from core.cv_matcher import get_cv_matcher
+        matcher = get_cv_matcher()
+        status = matcher.get_cv_status(telegram_id)
+        return _json_response({"success": True, "data": status})
+    except Exception as e:
+        logger.error(f"[{MODULE_ID}] /api/cv/status error: {e}")
+        return _json_response({"success": False, "error": str(e)[:200]}, 500)
+
+
+async def handle_cv_matched_jobs(request: web.Request) -> web.Response:
+    """
+    GET /api/cv-matched-jobs?telegram_id=...&page=1&per_page=20&min_score=30
+
+    PRISM v11 — "For You" tab data source.
+
+    Fetches a broad pool of recent listings (SQLite + Supabase latest_jobs),
+    scores each against the user's uploaded CV via zero-cost rapidfuzz
+    keyword overlap, and returns them sorted by match_score desc.
+
+    Query params:
+        telegram_id : user identifier (for CV lookup)
+        page        : page number (1-based)
+        per_page    : page size (max 50)
+        min_score   : filter out listings below this score (default 0)
+        source      : optional comma-separated source filter
+        search      : optional free-text search
+    """
+    try:
+        telegram_id = request.query.get('telegram_id', 'anonymous')
+        page = max(1, int(request.query.get('page', '1')))
+        per_page = min(50, max(1, int(request.query.get('per_page', '20'))))
+        min_score = float(request.query.get('min_score', '0'))
+        raw_source = request.query.get('source', '') or ''
+        sources = [s.strip().lower() for s in raw_source.split(',') if s.strip()]
+        search = (request.query.get('search', '') or '').strip().lower()
+
+        from core.cv_matcher import get_cv_matcher
+        matcher = get_cv_matcher()
+
+        # Ensure CV is loaded (lazy refresh on first request for this user)
+        cv_status = matcher.get_cv_status(telegram_id)
+
+        # Pool candidate listings — pull from SQLite (fresh) AND Supabase (broad)
+        candidates: List[Dict[str, Any]] = []
+        seen_urls: set = set()
+
+        # ===== 1. SQLite clean_listings (recent, high-quality) =====
+        try:
+            from core.database import get_db
+            db = get_db()
+            sqlite_listings, _ = db.get_management_internships(
+                limit=200, offset=0, max_duration_months=12, sort_by='date',
+            )
+            for l in sqlite_listings:
+                url = (l.get('source_url', '') or l.get('url', '') or '').strip()
+                key = url or f"sqlite_{l.get('id', 0)}"
+                if key in seen_urls:
+                    continue
+                seen_urls.add(key)
+                candidates.append({
+                    'id': l.get('id', 0),
+                    '_db': 'sqlite',
+                    'title': l.get('title', ''),
+                    'company': l.get('company', ''),
+                    'source': (l.get('source', '') or '').lower(),
+                    'source_url': url,
+                    'description_text': l.get('description_text', '') or l.get('description', ''),
+                    'location': l.get('location', ''),
+                    'category': l.get('category', ''),
+                    'stipend': l.get('stipend', 0),
+                    'duration': l.get('duration', 0),
+                    'posted_at': l.get('posted_at', ''),
+                    'source_id': l.get('source_id', ''),
+                })
+        except Exception as db_err:
+            logger.debug(f"[{MODULE_ID}] SQLite pool fetch skipped: {db_err}")
+
+        # ===== 2. Supabase latest_jobs (broader, current session) =====
+        try:
+            from core.supabase_db import SupabaseJobDB
+            sb_result = SupabaseJobDB.get_latest_jobs(limit=200)
+            # get_latest_jobs returns (list, total) tuple
+            if isinstance(sb_result, tuple):
+                sb_jobs = sb_result[0] or []
+            else:
+                sb_jobs = sb_result or []
+            for j in sb_jobs:
+                url = (j.get('source_url', '') or '').strip()
+                key = url or f"sb_{j.get('id', 0)}"
+                if key in seen_urls:
+                    continue
+                seen_urls.add(key)
+                candidates.append({
+                    'id': f"sb_{j.get('id', 0)}",
+                    '_db': 'supabase',
+                    'title': j.get('title', ''),
+                    'company': j.get('company', ''),
+                    'source': (j.get('source', '') or '').lower(),
+                    'source_url': url,
+                    'description_text': j.get('description', ''),
+                    'location': j.get('location', ''),
+                    'category': j.get('category', ''),
+                    'stipend': j.get('stipend', 0),
+                    'duration': j.get('duration', 0),
+                    'posted_at': j.get('posted_at', ''),
+                    'source_id': j.get('source_id', ''),
+                })
+        except Exception as sb_err:
+            logger.debug(f"[{MODULE_ID}] Supabase pool fetch skipped: {sb_err}")
+
+        # Optional filters
+        if sources:
+            candidates = [c for c in candidates if c['source'] in sources]
+        if search:
+            candidates = [
+                c for c in candidates
+                if search in (c['title'] or '').lower()
+                or search in (c['company'] or '').lower()
+                or search in (c['description_text'] or '').lower()[:1000]
+            ]
+
+        # ===== 3. Score every candidate against the CV =====
+        scored = matcher.score_listings_batch(candidates, telegram_id)
+
+        # Apply min_score filter
+        if min_score > 0:
+            scored = [s for s in scored if s.get('cv_match_score', 0) >= min_score]
+
+        total = len(scored)
+        offset = (page - 1) * per_page
+        paged = scored[offset:offset + per_page]
+
+        # Transform to frontend shape (reuse existing transform if possible)
+        items: List[Dict[str, Any]] = []
+        for s in paged:
+            items.append({
+                'id': str(s.get('id', '')),
+                'title': s.get('title', ''),
+                'company': s.get('company', ''),
+                'source': s.get('source', ''),
+                'sourceUrl': s.get('source_url', ''),
+                'description': (s.get('description_text', '') or '')[:800],
+                'location': s.get('location', '') or 'Not specified',
+                'category': s.get('category', '') or 'general',
+                'stipend': s.get('stipend', 0) or 0,
+                'stipendCurrency': '₹',
+                'stipendType': 'monthly' if (s.get('stipend', 0) or 0) > 0 else 'unpaid',
+                'duration': s.get('duration', 0) or 0,
+                'durationUnit': 'months',
+                'postedDate': s.get('posted_at', '') or '',
+                'matchScore': int(round(s.get('cv_match_score', 0))),
+                'cvMatchScore': s.get('cv_match_score', 0),
+                'cvMatchedKeywords': s.get('cv_matched_keywords', []),
+                'cvMatchReasons': s.get('cv_match_reasons', []),
+                'skills': s.get('cv_matched_keywords', [])[:6],
+                'tags': s.get('cv_matched_keywords', [])[:4],
+                'locationType': 'remote' if 'remote' in (s.get('location', '') or '').lower() or 'work from home' in (s.get('location', '') or '').lower() else 'onsite',
+                'openings': 1,
+                'applicants': 0,
+                'deadline': '',
+                'startDate': '',
+                'isExpired': False,
+                'isPremium': False,
+                'isVerified': True,
+                'ghostScore': 0,
+                'successRate': 50,
+                'avgResponseDays': 5,
+                'alreadyApplied': False,
+                'companyTier': 'startup',
+                'sector': '',
+                'requirements': [],
+                'responsibilities': [],
+                'perks': [],
+                'lastUpdated': s.get('posted_at', '') or datetime.now(IST).isoformat(),
+                'hash': '',
+            })
+
+        return _json_response({
+            "success": True,
+            "data": items,
+            "meta": {
+                "total": total,
+                "page": page,
+                "pageSize": per_page,
+                "hasMore": offset + per_page < total,
+                "hasCV": cv_status.get('has_cv', False),
+                "topKeywords": cv_status.get('top_keywords', []),
+                "keywordCount": cv_status.get('keyword_count', 0),
+            },
+            "timestamp": datetime.now(IST).isoformat(),
+        })
+
+    except Exception as e:
+        logger.error(f"[{MODULE_ID}] /api/cv-matched-jobs error: {e}")
+        import traceback
+        logger.debug(traceback.format_exc())
+        return _json_response({"success": False, "error": str(e)[:200]}, 500)
+
+
 def _read_user_cv_text(telegram_id: str) -> str:
     """Read user's uploaded CV and extract text for AI context.
-    Returns empty string if no CV or extraction fails."""
+    Returns empty string if no CV or extraction fails.
+    PRISM v11: unified via CVMatcher so we don't re-extract on every LLM call."""
+    try:
+        from core.cv_matcher import get_cv_matcher
+        matcher = get_cv_matcher()
+        status = matcher.get_cv_status(telegram_id)
+        preview = status.get('text_preview', '') or ''
+        if preview:
+            return preview[:2000]
+    except Exception as e:
+        logger.debug(f"[{MODULE_ID}] CVMatcher preview unavailable: {e}")
+
+    # Legacy fallback — extract directly for users whose cache hasn't been primed
     try:
         safe_id = str(telegram_id).replace('/', '').replace('..', '')[:20]
         cv_path = os.path.join('data', 'user_cvs', f'{safe_id}.pdf')
-
         if not os.path.isfile(cv_path):
             return ""
 
-        # Try to extract text from PDF
+        # pdftotext (fast path)
         try:
             import subprocess
-            # Use pdftotext if available (most Linux systems have it)
             result = subprocess.run(
                 ['pdftotext', '-layout', cv_path, '-'],
-                capture_output=True, text=True, timeout=10
+                capture_output=True, text=True, timeout=10,
             )
             if result.returncode == 0 and result.stdout.strip():
-                # Truncate to ~2000 chars to fit in LLM context
                 return result.stdout.strip()[:2000]
-        except (FileNotFoundError, subprocess.TimeoutExpired):
+        except (FileNotFoundError, subprocess.TimeoutExpired, Exception):
             pass
 
-        # Fallback: try PyPDF2 or basic reading
-        try:
-            import PyPDF2
-            with open(cv_path, 'rb') as f:
-                reader = PyPDF2.PdfReader(f)
-                text = ""
-                for page in reader.pages[:3]:  # Max 3 pages
-                    text += page.extract_text() or ""
-                return text.strip()[:2000]
-        except ImportError:
-            pass
+        # pypdf / PyPDF2 fallback
+        for module_name in ('pypdf', 'PyPDF2'):
+            try:
+                mod = __import__(module_name)
+                with open(cv_path, 'rb') as f:
+                    reader = mod.PdfReader(f)
+                    text = ""
+                    for page in reader.pages[:3]:
+                        text += page.extract_text() or ""
+                    return text.strip()[:2000]
+            except Exception:
+                continue
 
-        return "[CV uploaded but text extraction unavailable - install pdftotext or PyPDF2]"
-
+        return ""
     except Exception as e:
         logger.debug(f"[{MODULE_ID}] CV text extraction error: {e}")
         return ""
@@ -2475,6 +2707,10 @@ def register_miniapp_routes(app):
     app.router.add_post('/api/user/upload-cv', handle_user_upload_cv)
     app.router.add_get('/api/user/profile', handle_user_profile)
     app.router.add_post('/api/user/profile', handle_user_profile)
+
+    # PRISM v11: CV-matched jobs ("For You" tab) + CV status
+    app.router.add_get('/api/cv/status', handle_cv_status)
+    app.router.add_get('/api/cv-matched-jobs', handle_cv_matched_jobs)
 
     # System health check
     app.router.add_get('/api/system/health', handle_system_health)
