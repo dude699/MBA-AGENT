@@ -53,7 +53,7 @@ NEXUS v0.2 is a full architectural rebuild on verified 2026 tooling, replacing t
 - [x] `requirements.txt` + `requirements-nexus.txt` — Camoufox/Browser-Use/Crawl4AI/Skyvern ✅
 
 ### Phase C — Layer 0 · Cryptographic Vault
-- [ ] `core/session_vault.py` — AES-256 vault + Session Freshness Oracle (health 0–100) ⏳
+- [x] `core/session_vault.py` — AES-256 vault + Session Freshness Oracle (health 0–100) ✅
 
 ### Phase D — Layer 1 · Stealth Browser Triad
 - [ ] `core/stealth_triad.py` — Decision tree: known portal → Skyvern code · new → Browser-Use → cache ⏳
