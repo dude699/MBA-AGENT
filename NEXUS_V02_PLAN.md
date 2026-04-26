@@ -91,7 +91,7 @@ NEXUS v0.2 is a full architectural rebuild on verified 2026 tooling, replacing t
 - [x] `core/innovations.py` — Trajectory scoring, FOMO/deadline cliffs, stealth warmup, multi-resume routing, employer perspective, applicant-count estimator, applied-but-not-viewed loop, salary normaliser, cold-start bypass, portal benchmarking ✅
 
 ### Phase N — Bootstrap
-- [ ] `scripts/nexus_bootstrap.sh` — The exact first 4 commands from the doc ⏳
+- [x] `scripts/nexus_bootstrap.sh` — The exact first 4 commands from the doc ✅
 
 ---
 
@@ -148,4 +148,25 @@ NEXUS v0.2 is a full architectural rebuild on verified 2026 tooling, replacing t
 
 This plan auto-updates after every committed file. Watch the checkboxes flip from `[ ]` → `[x]` in the PR diff in real-time.
 
-> _Last update: bootstrapping plan._
+## ✅ Build Complete — All 22 files committed & pushed
+
+| Phase | Files | Status |
+|-------|-------|--------|
+| A — Foundation | `NEXUS_V02_PLAN.md`, `docs/NEXUS_ARCHITECTURE.md` | ✅ |
+| B — Schema & Config | `data/nexus_v02_schema.sql`, `core/nexus_config.py`, `requirements*.txt` | ✅ |
+| C — Layer 0 Vault | `core/session_vault.py` | ✅ |
+| D — Layer 1 Stealth Triad | `core/stealth_triad.py`, `agents/n01_skyvern_apply.py`, `agents/n02_browser_use_apply.py` | ✅ |
+| E — Layer 2 Discovery | `core/crawl4ai_discovery.py`, `core/reactive_discovery.py`, `agents/n03_crawl4ai_scraper.py` | ✅ |
+| F — Layer 3 Scoring | `core/scoring_engine_v2.py`, `core/pgvector_matcher.py` | ✅ |
+| G — Layer 4 Answers | `core/answer_rag.py` | ✅ |
+| H — Layer 5 CAPTCHA | `core/captcha_resolver.py` | ✅ |
+| I — Layer 6 Orchestrator | `core/orchestrator.py` | ✅ |
+| J — Layer 7 Dedup | `core/dedup_semantic.py` | ✅ |
+| K — Layer 8 Interview | `core/interview_intel.py` | ✅ |
+| L — Layer 9 Telegram | `core/telegram_dashboard.py` | ✅ |
+| M — Innovations | `core/innovations.py` | ✅ |
+| N — Bootstrap | `scripts/nexus_bootstrap.sh` | ✅ |
+
+**Next operator step:** run `./scripts/nexus_bootstrap.sh` on the worker dyno, then start the orchestrator.
+
+> _Last update: build complete · all 22 files landed via 22 atomic commits to PR #64._
