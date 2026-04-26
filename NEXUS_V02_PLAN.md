@@ -88,7 +88,7 @@ NEXUS v0.2 is a full architectural rebuild on verified 2026 tooling, replacing t
 - [x] `core/telegram_dashboard.py` — 15+ commands + inline buttons + digests ✅
 
 ### Phase M — The 15 Innovations
-- [ ] `core/innovations.py` — Trajectory scoring, FOMO/deadline cliffs, stealth warmup, multi-resume routing, employer perspective, applicant-count estimator, applied-but-not-viewed loop, salary normaliser, cold-start bypass, portal benchmarking ⏳
+- [x] `core/innovations.py` — Trajectory scoring, FOMO/deadline cliffs, stealth warmup, multi-resume routing, employer perspective, applicant-count estimator, applied-but-not-viewed loop, salary normaliser, cold-start bypass, portal benchmarking ✅
 
 ### Phase N — Bootstrap
 - [ ] `scripts/nexus_bootstrap.sh` — The exact first 4 commands from the doc ⏳
