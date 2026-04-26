@@ -70,7 +70,7 @@ NEXUS v0.2 is a full architectural rebuild on verified 2026 tooling, replacing t
 - [x] `core/pgvector_matcher.py` — Groq embeddings + cosine semantic profile match ✅
 
 ### Phase G — Layer 4 · Adaptive Answers
-- [ ] `core/answer_rag.py` — Top-3 retrieval + Cerebras voice-consistent generation + validator ⏳
+- [x] `core/answer_rag.py` — Top-3 retrieval + Cerebras voice-consistent generation + validator ✅
 
 ### Phase H — Layer 5 · CAPTCHA
 - [ ] `core/captcha_resolver.py` — T1 vision · T2 audio · T3 Telegram relay · T4 surgical fallback ⏳
