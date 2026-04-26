@@ -61,7 +61,7 @@ NEXUS v0.2 is a full architectural rebuild on verified 2026 tooling, replacing t
 - [x] `agents/n02_browser_use_apply.py` — Browser-Use v2.0 AI apply (new portals) ✅
 
 ### Phase E — Layer 2 · Universal Discovery
-- [ ] `core/crawl4ai_discovery.py` — Crawl4AI universal extraction → NormalisedJob ⏳
+- [x] `core/crawl4ai_discovery.py` — Crawl4AI universal extraction → NormalisedJob ✅
 - [ ] `core/reactive_discovery.py` — RSS/webhook event-driven layer (5–15 min apply latency) ⏳
 - [ ] `agents/n03_crawl4ai_scraper.py` — Per-portal Crawl4AI scraper agent ⏳
 
