@@ -82,7 +82,7 @@ NEXUS v0.2 is a full architectural rebuild on verified 2026 tooling, replacing t
 - [x] `core/dedup_semantic.py` — pgvector cosine ≥0.88 + exact SHA256 match ✅
 
 ### Phase K — Layer 8 · Interview Intel
-- [ ] `core/interview_intel.py` — Gmail/LinkedIn/WhatsApp signals + 90s Crawl4AI briefing ⏳
+- [x] `core/interview_intel.py` — Gmail/LinkedIn/WhatsApp signals + 90s Crawl4AI briefing ✅
 
 ### Phase L — Layer 9 · Telegram Dashboard
 - [ ] `core/telegram_dashboard.py` — 15+ commands + inline buttons + digests ⏳
