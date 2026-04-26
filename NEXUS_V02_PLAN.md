@@ -79,7 +79,7 @@ NEXUS v0.2 is a full architectural rebuild on verified 2026 tooling, replacing t
 - [ ] `core/orchestrator.py` — Priority queue + dynamic re-scoring + apply windows + Risk Governor ⏳
 
 ### Phase J — Layer 7 · Dedup
-- [ ] `core/dedup_semantic.py` — pgvector cosine ≥0.88 + exact SHA256 match ⏳
+- [x] `core/dedup_semantic.py` — pgvector cosine ≥0.88 + exact SHA256 match ✅
 
 ### Phase K — Layer 8 · Interview Intel
 - [ ] `core/interview_intel.py` — Gmail/LinkedIn/WhatsApp signals + 90s Crawl4AI briefing ⏳
