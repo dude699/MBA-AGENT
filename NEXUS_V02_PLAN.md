@@ -62,7 +62,7 @@ NEXUS v0.2 is a full architectural rebuild on verified 2026 tooling, replacing t
 
 ### Phase E — Layer 2 · Universal Discovery
 - [x] `core/crawl4ai_discovery.py` — Crawl4AI universal extraction → NormalisedJob ✅
-- [ ] `core/reactive_discovery.py` — RSS/webhook event-driven layer (5–15 min apply latency) ⏳
+- [x] `core/reactive_discovery.py` — RSS/webhook event-driven layer (5–15 min apply latency) ✅
 - [ ] `agents/n03_crawl4ai_scraper.py` — Per-portal Crawl4AI scraper agent ⏳
 
 ### Phase F — Layer 3 · Scoring & Match
