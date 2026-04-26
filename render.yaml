@@ -107,5 +107,31 @@ services:
       # MUST be removed after the reset deploy completes!
       # - key: FORCE_DB_RESET
       #   value: "true"
+      # ============================================================
+      # === NEXUS v0.2 — 10-Layer Stealth/Apply Architecture ===
+      # ============================================================
+      # Feature flag — defaults to off so existing PRISM v0.1 deploys
+      # are byte-identical. Flip to "true" in the Render Dashboard
+      # (Environment tab) to enable Phase 10 / Layer 0–9.
+      # Render free 512MB tier boots NEXUS in LIGHT mode (in-memory DB,
+      # NullAdapter triad, dashboard polling only).
+      # Run scripts/nexus_bootstrap.sh on a worker dyno to enable FULL
+      # mode (Camoufox + Browser-Use + Skyvern + Crawl4AI + Postgres).
+      - key: NEXUS_ENABLED
+        value: "false"
+      # Layer 0 — Cryptographic Vault key (Fernet, 32-byte urlsafe-base64)
+      - key: SESSION_VAULT_KEY
+        sync: false
+      # Layer 5 — Gemini 2.5 Flash for CAPTCHA T1 vision
+      - key: GEMINI_API_KEY
+        sync: false
+      # Postgres / pgvector (apply via scripts/nexus_bootstrap.sh --step schema)
+      - key: DATABASE_URL
+        sync: false
+      # Operator profile
+      - key: NEXUS_USER_HANDLE
+        sync: false
+      - key: MASTER_RESUME_PATH
+        sync: false
     plan: free
     region: oregon

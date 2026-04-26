@@ -354,6 +354,7 @@ class Application:
         self._startup_complete = False  # SIGTERM deferred until startup done
         self._watchdog_task: Optional[asyncio.Task] = None
         self._gc_task: Optional[asyncio.Task] = None
+        self._nexus = None              # NEXUS v0.2 runtime (Phase 10, opt-in)
         self._status = SubsystemStatus()
         self._start_time = time.monotonic()
         self._is_render = bool(
@@ -848,6 +849,43 @@ class Application:
             self._status.mark_degraded('embeddings', str(e))
             logger.info(f"[Phase 9/11] Embedding engine: skipped ({e})")
 
+        # ============================================================
+        # NEXUS v0.2: Phase 10 — 10-Layer Stealth/Apply Architecture
+        # ------------------------------------------------------------
+        # Opt-in by setting NEXUS_ENABLED=true in the environment.
+        # On the slim 512MB Render dyno NEXUS boots in *light* mode:
+        #   • Layer 0–9 wired with in-memory backends (no Postgres yet)
+        #   • Stealth Triad uses NullAdapter unless requirements-nexus.txt
+        #     is installed (heavy stack: Camoufox + Browser-Use + Skyvern).
+        #   • Telegram dashboard polls only if python-telegram-bot v20+
+        #     is installed (already in base requirements.txt).
+        # The bootstrap script (scripts/nexus_bootstrap.sh) is what flips
+        # the worker dyno to FULL mode by installing requirements-nexus.txt
+        # and applying data/nexus_v02_schema.sql.
+        # ============================================================
+        if os.getenv('NEXUS_ENABLED', '').lower() in ('1', 'true', 'yes', 'on'):
+            logger.info("[Phase 10/11] NEXUS v0.2 runtime — booting 10-layer architecture...")
+            try:
+                from core.nexus_runtime import NexusRuntime
+                self._nexus = NexusRuntime()
+                report = await self._nexus.start()
+                self._status.mark_ok(
+                    'nexus_v02',
+                    f"layers={len(report.layers_ok)} "
+                    f"triad={'live' if report.triad_live else 'null'} "
+                    f"dashboard={'on' if report.dashboard_ok else 'off'}",
+                )
+                logger.info(f"[Phase 10/11] NEXUS v0.2: {report.summary()}")
+                if report.layers_fail:
+                    for layer, err in report.layers_fail.items():
+                        logger.warning(f"[Phase 10/11] NEXUS layer {layer} failed: {err}")
+            except Exception as e:
+                self._status.mark_degraded('nexus_v02', str(e))
+                logger.exception(f"[Phase 10/11] NEXUS v0.2: skipped ({e})")
+        else:
+            logger.info("[Phase 10/11] NEXUS v0.2: disabled (set NEXUS_ENABLED=true to opt-in)")
+            self._status.mark_ok('nexus_v02', 'disabled')
+
         gc.collect()
 
         duration = time.monotonic() - start_time
@@ -965,6 +1003,17 @@ class Application:
                 except (asyncio.TimeoutError, asyncio.CancelledError):
                     pass
         logger.info("  [0/5] Background tasks stopped")
+
+        # NEXUS v0.2 runtime — stop tick loops + dashboard cleanly BEFORE
+        # the rest, so the dashboard releases its long-poll lock first.
+        if self._nexus:
+            try:
+                await asyncio.wait_for(self._nexus.stop(), timeout=10.0)
+                logger.info("  [0.5/5] NEXUS v0.2 runtime: STOPPED")
+            except asyncio.TimeoutError:
+                logger.warning("  [0.5/5] NEXUS v0.2: stop timed out (10s)")
+            except Exception as e:
+                logger.error(f"  [0.5/5] NEXUS v0.2: {e}")
 
         # TELEGRAM FIRST
         if self._telegram:

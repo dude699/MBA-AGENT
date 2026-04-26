@@ -302,9 +302,21 @@ def is_apply_window_open(portal: str, now_hhmm: str) -> bool:
     return any(start <= now_hhmm < end for start, end in spec)
 
 
+# ────────────────────────────────────────────────────────────────────────────
+# 16. Convenience aliases — keep doc/Layer 9 dashboard wiring frictionless
+# ────────────────────────────────────────────────────────────────────────────
+# `core.telegram_dashboard` imports these short names directly from the
+# architecture doc. They are aliases over the canonical objects defined above
+# so that nothing else has to change.
+PORTALS             = SUPPORTED_PORTALS
+TELEGRAM_BOT_TOKEN  = STACK.telegram_bot_token or os.getenv("TG_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID    = STACK.telegram_chat_id   or os.getenv("TG_CHAT_ID",   "")
+
+
 __all__ = [
     "NEXUS_VERSION", "USER_HANDLE", "DEFAULT_TIMEZONE", "ENVIRONMENT",
-    "STACK", "SUPPORTED_PORTALS",
+    "STACK", "SUPPORTED_PORTALS", "PORTALS",
+    "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID",
     "PORTAL_RISK", "PortalRiskProfile",
     "APPLY_WINDOWS", "REACTIVE_SOURCES",
     "SCORING_WEIGHTS", "ROUTING_THRESHOLDS",

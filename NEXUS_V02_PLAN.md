@@ -93,6 +93,13 @@ NEXUS v0.2 is a full architectural rebuild on verified 2026 tooling, replacing t
 ### Phase N — Bootstrap
 - [x] `scripts/nexus_bootstrap.sh` — The exact first 4 commands from the doc ✅
 
+### Phase O — Wire-up (PRISM ↔ NEXUS coexistence)
+- [x] `core/nexus_runtime.py` — single ignition point: assembles Layer 0–9 + Telegram dashboard, runs queue tick + rescore loops, publishes `get_runtime()` singleton ✅
+- [x] `main.py` — Phase 10/11 boot hook (env-gated by `NEXUS_ENABLED`), graceful-shutdown integration, `_nexus` field on Application ✅
+- [x] `core/keepalive.py` — public `/nexus` endpoint returning live layer snapshot (503 when disabled) ✅
+- [x] `core/nexus_config.py` — convenience aliases `PORTALS`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` so the dashboard imports cleanly ✅
+- [x] `.env.example` + `render.yaml` — `NEXUS_ENABLED`, `SESSION_VAULT_KEY`, `GEMINI_API_KEY`, `DATABASE_URL`, profile vars ✅
+
 ---
 
 ## 📦 The Verified Free Stack (April 2026)
@@ -148,7 +155,7 @@ NEXUS v0.2 is a full architectural rebuild on verified 2026 tooling, replacing t
 
 This plan auto-updates after every committed file. Watch the checkboxes flip from `[ ]` → `[x]` in the PR diff in real-time.
 
-## ✅ Build Complete — All 22 files committed & pushed
+## ✅ Build Complete — All files committed, pushed & wired
 
 | Phase | Files | Status |
 |-------|-------|--------|
@@ -166,7 +173,44 @@ This plan auto-updates after every committed file. Watch the checkboxes flip fro
 | L — Layer 9 Telegram | `core/telegram_dashboard.py` | ✅ |
 | M — Innovations | `core/innovations.py` | ✅ |
 | N — Bootstrap | `scripts/nexus_bootstrap.sh` | ✅ |
+| **O — Wire-up** | `core/nexus_runtime.py`, `main.py` (Phase 10), `core/keepalive.py` (`/nexus`), `.env.example`, `render.yaml` | ✅ |
 
-**Next operator step:** run `./scripts/nexus_bootstrap.sh` on the worker dyno, then start the orchestrator.
+---
 
-> _Last update: build complete · all 22 files landed via 22 atomic commits to PR #64._
+## 🚀 Operator Ship Path (after this PR is merged)
+
+### Step 1 — Render web service (light mode, free 512MB tier)
+1. In the Render dashboard, open the service → **Environment** tab.
+2. Set `NEXUS_ENABLED=true`.
+3. (Optional, recommended) generate `SESSION_VAULT_KEY`:
+   ```bash
+   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+   ```
+4. Add `GEMINI_API_KEY`, `DATABASE_URL`, `NEXUS_USER_HANDLE`.
+5. Trigger a deploy. Phase 10 will boot all 6 implementable layers in light mode.
+6. Verify: `GET https://<your-service>.onrender.com/nexus` → JSON with `layers_ok`.
+
+### Step 2 — Worker dyno (FULL mode, ≥ 2 GB RAM)
+On a separate beefier worker process, run the bootstrap installer (the exact "first 4 commands" from the doc):
+```bash
+chmod +x scripts/nexus_bootstrap.sh
+./scripts/nexus_bootstrap.sh                       # all 4 steps
+# OR step-by-step:
+./scripts/nexus_bootstrap.sh --step schema         # apply pgvector schema
+./scripts/nexus_bootstrap.sh --step deps           # heavy stack
+./scripts/nexus_bootstrap.sh --step camoufox       # FF142 fork
+./scripts/nexus_bootstrap.sh --step vault          # gen key + capture sessions
+```
+Then start the same `python main.py` on the worker — Phase 10 will detect `requirements-nexus.txt` is installed and flip `triad_live=True` automatically.
+
+### Step 3 — Capture sessions (one-time per portal)
+```bash
+python -m core.session_vault capture --portal linkedin
+python -m core.session_vault capture --portal naukri
+python -m core.session_vault capture --portal internshala
+```
+
+### Step 4 — Watch the cockpit
+The Telegram dashboard polls automatically once `TG_BOT_TOKEN` is set. Use `/help` for the 15-command surface.
+
+> _Last update: PR #64 wired into PRISM via Phase O — main.py boots NEXUS as Phase 10/11, graceful shutdown integrated, `/nexus` endpoint live, opt-in via `NEXUS_ENABLED=true`._
