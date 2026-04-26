@@ -45,7 +45,7 @@ NEXUS v0.2 is a full architectural rebuild on verified 2026 tooling, replacing t
 
 ### Phase A — Foundation & Plan
 - [x] `NEXUS_V02_PLAN.md` — this living plan ✅
-- [ ] `docs/NEXUS_ARCHITECTURE.md` — 10-layer architecture deep-dive ⏳
+- [x] `docs/NEXUS_ARCHITECTURE.md` — 10-layer architecture deep-dive ✅
 
 ### Phase B — Schema & Config (data backbone)
 - [ ] `data/nexus_v02_schema.sql` — pgvector + vault + queue + answer_bank ⏳
