@@ -76,7 +76,7 @@ NEXUS v0.2 is a full architectural rebuild on verified 2026 tooling, replacing t
 - [x] `core/captcha_resolver.py` — T1 vision · T2 audio · T3 Telegram relay · T4 surgical fallback ✅
 
 ### Phase I — Layer 6 · Orchestrator
-- [ ] `core/orchestrator.py` — Priority queue + dynamic re-scoring + apply windows + Risk Governor ⏳
+- [x] `core/orchestrator.py` — Priority queue + dynamic re-scoring + apply windows + Risk Governor ✅
 
 ### Phase J — Layer 7 · Dedup
 - [x] `core/dedup_semantic.py` — pgvector cosine ≥0.88 + exact SHA256 match ✅
