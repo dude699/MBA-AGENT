@@ -66,7 +66,7 @@ NEXUS v0.2 is a full architectural rebuild on verified 2026 tooling, replacing t
 - [x] `agents/n03_crawl4ai_scraper.py` — Per-portal Crawl4AI scraper agent ✅
 
 ### Phase F — Layer 3 · Scoring & Match
-- [ ] `core/scoring_engine_v2.py` — 9-dimension scoring (incl. Cultural Fit, Trajectory) ⏳
+- [x] `core/scoring_engine_v2.py` — 9-dimension scoring (incl. Cultural Fit, Trajectory) ✅
 - [x] `core/pgvector_matcher.py` — Groq embeddings + cosine semantic profile match ✅
 
 ### Phase G — Layer 4 · Adaptive Answers
