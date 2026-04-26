@@ -50,7 +50,7 @@ NEXUS v0.2 is a full architectural rebuild on verified 2026 tooling, replacing t
 ### Phase B — Schema & Config (data backbone)
 - [x] `data/nexus_v02_schema.sql` — pgvector + vault + queue + answer_bank ✅
 - [x] `core/nexus_config.py` — central config: portal limits, scoring weights, risk thresholds ✅
-- [ ] `requirements.txt` — add Camoufox/Browser-Use/Crawl4AI/Skyvern ⏳
+- [x] `requirements.txt` + `requirements-nexus.txt` — Camoufox/Browser-Use/Crawl4AI/Skyvern ✅
 
 ### Phase C — Layer 0 · Cryptographic Vault
 - [ ] `core/session_vault.py` — AES-256 vault + Session Freshness Oracle (health 0–100) ⏳
