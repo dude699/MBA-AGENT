@@ -67,7 +67,7 @@ NEXUS v0.2 is a full architectural rebuild on verified 2026 tooling, replacing t
 
 ### Phase F — Layer 3 · Scoring & Match
 - [ ] `core/scoring_engine_v2.py` — 9-dimension scoring (incl. Cultural Fit, Trajectory) ⏳
-- [ ] `core/pgvector_matcher.py` — Groq embeddings + cosine semantic profile match ⏳
+- [x] `core/pgvector_matcher.py` — Groq embeddings + cosine semantic profile match ✅
 
 ### Phase G — Layer 4 · Adaptive Answers
 - [ ] `core/answer_rag.py` — Top-3 retrieval + Cerebras voice-consistent generation + validator ⏳
