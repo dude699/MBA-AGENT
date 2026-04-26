@@ -56,7 +56,7 @@ NEXUS v0.2 is a full architectural rebuild on verified 2026 tooling, replacing t
 - [x] `core/session_vault.py` — AES-256 vault + Session Freshness Oracle (health 0–100) ✅
 
 ### Phase D — Layer 1 · Stealth Browser Triad
-- [ ] `core/stealth_triad.py` — Decision tree: known portal → Skyvern code · new → Browser-Use → cache ⏳
+- [x] `core/stealth_triad.py` — Decision tree: known portal → Skyvern code · new → Browser-Use → cache ✅
 - [ ] `agents/n01_skyvern_apply.py` — Skyvern code-cache executor ⏳
 - [ ] `agents/n02_browser_use_apply.py` — Browser-Use v2.0 AI apply (new portals) ⏳
 
