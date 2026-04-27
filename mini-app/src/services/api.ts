@@ -30,6 +30,21 @@ export function getSessionToken(): string | null {
   return sessionToken;
 }
 
+// Telegram WebApp ID (server uses this to identify the caller for
+// per-user CV matching, credential vault scoping, and admin gating).
+function getTelegramIdForHeader(): string {
+  try {
+    const tg = (window as any)?.Telegram?.WebApp;
+    const id = tg?.initDataUnsafe?.user?.id;
+    if (id) return String(id);
+  } catch {}
+  try {
+    const stored = localStorage.getItem('internhub_telegram_id');
+    if (stored) return stored;
+  } catch {}
+  return '';
+}
+
 function getHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -37,6 +52,10 @@ function getHeaders(): Record<string, string> {
   const token = getSessionToken();
   if (token) {
     headers['X-Session-Token'] = token;
+  }
+  const tgId = getTelegramIdForHeader();
+  if (tgId) {
+    headers['X-Telegram-Id'] = tgId;
   }
   return headers;
 }

@@ -15,6 +15,7 @@ import InternshipDetail from '@/components/InternshipDetail';
 import AnalyticsDashboard from '@/components/AnalyticsDashboard';
 import BottomBar from '@/components/BottomBar';
 import SettingsPage from '@/components/SettingsPage';
+import AdminPanel from '@/components/AdminPanel';
 import { ListSkeleton } from '@/components/Skeletons';
 import { SourceIcon } from '@/components/SourceIcons';
 
@@ -42,6 +43,17 @@ function getTelegramId(): string {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('browse');
+  // Admin gate — /api/whoami is public-but-truthful (returns is_admin bool).
+  // The actual admin endpoints have their own server-side @_admin_only check
+  // so this client value is just for UI rendering, not security.
+  const [isAdmin, setIsAdmin] = useState(false);
+  useEffect(() => {
+    const tgId = getTelegramId();
+    fetch(`/api/whoami`, { headers: { 'X-Telegram-Id': tgId } })
+      .then(r => r.json())
+      .then(d => { if (d?.success && d?.is_admin) setIsAdmin(true); })
+      .catch(() => {});
+  }, []);
   // 'live' = real-time SQLite scrape | 'foryou' = CV-matched (was 'latest')
   // 'archive' = full Supabase archive
   const [browseMode, setBrowseMode] = useState<'live' | 'foryou' | 'archive'>('live');
@@ -544,6 +556,12 @@ export default function App() {
               <SettingsPage />
             </div>
           )}
+
+          {activeTab === 'admin' && isAdmin && (
+            <div className="animate-tab-in">
+              <AdminPanel />
+            </div>
+          )}
       </main>
 
       {/* Panels & Modals — z-index: Filter/Sort 50, LLM 60, Detail 50 */}
@@ -554,7 +572,7 @@ export default function App() {
       <InternshipDetail />
 
       {/* Bottom Navigation */}
-      <BottomBar activeTab={activeTab} onTabChange={setActiveTab} />
+      <BottomBar activeTab={activeTab} onTabChange={setActiveTab} isAdmin={isAdmin} />
 
       {/* Scroll to Top — stays above content but below bottom bar */}
       {showScrollTop && (

@@ -5,16 +5,17 @@
 
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Zap, Sparkles, BarChart3, Home, Settings } from 'lucide-react';
+import { Zap, Sparkles, BarChart3, Home, Settings, Shield } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { hapticFeedback } from '@/utils/helpers';
 
 interface BottomBarProps {
   activeTab: string;
   onTabChange: (tab: string) => void;
+  isAdmin?: boolean;
 }
 
-export default function BottomBar({ activeTab, onTabChange }: BottomBarProps) {
+export default function BottomBar({ activeTab, onTabChange, isAdmin = false }: BottomBarProps) {
   const { selectedIds, setBatchPanelOpen, setLLMPanelOpen } = useAppStore();
   const hasSelection = selectedIds.size > 0;
 
@@ -95,6 +96,15 @@ export default function BottomBar({ activeTab, onTabChange }: BottomBarProps) {
             active={activeTab === 'settings'}
             onClick={() => { onTabChange('settings'); hapticFeedback('light'); }}
           />
+          {isAdmin && (
+            <NavItem
+              icon={<Shield />}
+              label="Admin"
+              active={activeTab === 'admin'}
+              onClick={() => { onTabChange('admin'); hapticFeedback('medium'); }}
+              accentColor="#0a0a0a"
+            />
+          )}
         </div>
       </nav>
     </>
