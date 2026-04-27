@@ -136,5 +136,19 @@ services:
         sync: false
       - key: MASTER_RESUME_PATH
         sync: false
+      # NEXUS v0.2 — admin gate + secrets
+      - key: NEXUS_SUPER_ADMIN_ID
+        value: "1284690336"
+      - key: NEXUS_CALLBACK_SECRET
+        sync: false
+      - key: CREDENTIAL_VAULT_KEY
+        sync: false
+      # Job retention TTL (low-score 15d, high-score 25d)
+      - key: JOB_LOW_TTL_DAYS
+        value: "15"
+      - key: JOB_HIGH_TTL_DAYS
+        value: "25"
+      - key: JOB_SCORE_TIER_CUTOFF
+        value: "60"
     plan: free
     region: oregon

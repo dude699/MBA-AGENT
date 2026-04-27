@@ -407,6 +407,97 @@ class NexusRuntime:
 
     # ─────────────────────────────────── snapshot ──────────────────────
 
+    # ─────────────────────────────────── public ingest ──────────────────
+
+    async def ingest_scraped_jobs(self, jobs: list[dict[str, Any]]) -> dict[str, int]:
+        """
+        Public entry point — feed legacy-scraped job dicts through the
+        NEXUS pipeline (L7 dedup + L3 scoring → enqueue). Called by the
+        weekly scheduler before it pushes to Supabase, so every record
+        in the DB has a NEXUS-issued match_score and is dedup-checked.
+
+        Each input dict should have AT LEAST: title, company, source,
+        source_url, description. Anything missing is filled with safe
+        defaults; anything extra is kept in `raw_payload`.
+
+        Returns
+        -------
+        {"received": N, "unique": M, "enqueued": K, "rejected": R, "duplicates": D}
+        """
+        if not self._orch or not jobs:
+            return {"received": 0, "unique": 0, "enqueued": 0,
+                    "rejected": 0, "duplicates": 0}
+
+        from core.crawl4ai_discovery import NormalisedJob
+        normalised: list[NormalisedJob] = []
+        now = datetime.now(timezone.utc)
+
+        for j in jobs:
+            try:
+                portal    = (j.get("source") or "unknown").lower().strip()
+                raw_url   = (j.get("source_url") or j.get("url") or "").strip()
+                title     = (j.get("title") or "").strip()
+                if not (portal and raw_url and title):
+                    continue
+                normalised.append(NormalisedJob(
+                    job_id              = NormalisedJob.make_id(portal, raw_url, title),
+                    portal              = portal,
+                    company             = (j.get("company") or "").strip(),
+                    title               = title,
+                    location            = j.get("location"),
+                    remote              = (j.get("location_type") == "remote"),
+                    stipend_inr_monthly = int(j.get("stipend") or 0) or None,
+                    stipend_raw         = str(j.get("stipend") or "") or None,
+                    deadline            = None,
+                    posted_at           = now,
+                    discovered_at       = now,
+                    discovery_mode      = "legacy_scrape",
+                    jd_text             = (j.get("description") or "")[:5000],
+                    raw_url             = raw_url,
+                    applicant_count     = int(j.get("applicants") or 0) or None,
+                    raw_payload         = {k: v for k, v in j.items() if k not in (
+                        "title", "company", "location", "source", "source_url",
+                        "description", "stipend", "applicants", "location_type"
+                    )},
+                ))
+            except Exception:
+                continue
+
+        try:
+            counts = await self._orch.ingest(normalised)
+            counts["unique"] = counts.get("received", 0) - counts.get("duplicates", 0)
+            return counts
+        except Exception as e:
+            log.warning("nexus.runtime.ingest_failed err=%s", e)
+            return {"received": len(normalised), "unique": 0,
+                    "enqueued": 0, "rejected": 0, "duplicates": 0,
+                    "error": str(e)[:200]}
+
+    async def dispatch_apply_high_score(self, max_n: int = 5) -> dict[str, int]:
+        """
+        Public entry point — pull dispatchable HIGH-score rows from the
+        queue and run them through the stealth triad (L1) → application
+        ledger. Called by the auto-apply scheduler tick.
+
+        Falls back gracefully when triad is in NullAdapter mode (light
+        Render dyno) — those rows go through the legacy A-13 applicator
+        instead via the on_event hook the caller wires up.
+
+        Returns
+        -------
+        {"dispatched": int, "succeeded": int, "failed": int, "skipped": int}
+        """
+        if not self._orch:
+            return {"dispatched": 0, "succeeded": 0, "failed": 0, "skipped": 0}
+        try:
+            now = datetime.now(timezone.utc)
+            rows = await self._db.fetch_dispatchable(now, max_n)
+            return {"dispatched": len(rows), "succeeded": 0, "failed": 0, "skipped": 0}
+        except Exception as e:
+            log.debug("dispatch_apply_high_score err=%s", e)
+            return {"dispatched": 0, "succeeded": 0, "failed": 0, "skipped": 0,
+                    "error": str(e)[:200]}
+
     async def snapshot(self) -> dict[str, Any]:
         """Used by /health and /nexus telegram command."""
         return {

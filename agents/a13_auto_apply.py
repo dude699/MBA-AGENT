@@ -2790,8 +2790,32 @@ class AutoApplyOrchestrator:
                 # Update status to applying
                 self.db.update_application_status(queue_id, 'applying')
 
-                # Apply
-                result = applicator.apply(listing_data)
+                # ===== NEXUS v0.2: Layer 1 stealth triad (FULL mode only) =====
+                # When the worker dyno has run scripts/nexus_bootstrap.sh, the
+                # triad becomes "live" (Skyvern → Browser-Use → Camoufox).
+                # On the free 512MB Render dyno triad_live=False and we fall
+                # straight through to the legacy A-13 applicator. The score
+                # gate (>= 75) ensures triad CPU/RAM is only spent on the
+                # listings most worth it.
+                triad_result = None
+                try:
+                    score_for_triad = float(
+                        listing_data.get('match_score', 0)
+                        or listing_data.get('ppo_score', 0)
+                        or 0
+                    )
+                    if score_for_triad >= 75 and self._nexus_triad_available():
+                        triad_result = self._nexus_triad_apply(listing_data)
+                except Exception as _tri_err:
+                    logger.debug(
+                        f"[{AGENT_ID}] NEXUS triad path skipped "
+                        f"(non-fatal): {_tri_err}"
+                    )
+                # Apply (legacy path is the fallback / default)
+                if triad_result is not None:
+                    result = triad_result
+                else:
+                    result = applicator.apply(listing_data)
                 stats.attempted += 1
 
                 # Record result
@@ -2933,6 +2957,70 @@ class AutoApplyOrchestrator:
         except Exception as e:                                              # noqa: BLE001
             logger.debug(f"[{AGENT_ID}] NEXUS dedup check failed (non-fatal): {e}")
             return False
+
+    def _nexus_triad_available(self) -> bool:
+        """
+        Returns True only when NEXUS Layer 1 (Stealth Triad) reports
+        triad_live=true, which only happens after the worker dyno has
+        run scripts/nexus_bootstrap.sh and installed the heavy stack.
+        On the free 512MB tier this stays False forever and the legacy
+        A-13 applicator is used unconditionally.
+        """
+        if not _NEXUS_RUNTIME_AVAILABLE:
+            return False
+        if os.getenv("NEXUS_ENABLED", "").lower() not in ("1", "true", "yes", "on"):
+            return False
+        try:
+            rt = _get_nexus_runtime()
+            if rt is None:
+                return False
+            return bool(getattr(rt.report, "triad_live", False))
+        except Exception:
+            return False
+
+    def _nexus_triad_apply(self, listing: Dict):
+        """
+        Route a HIGH-score listing through the NEXUS Stealth Triad (L1):
+            Skyvern (code-cache replay) → Browser-Use (LLM agent) → Camoufox.
+        Returns an ApplicationResult-shaped object on success, or None to
+        signal "fall back to the legacy applicator".
+        """
+        try:
+            rt = _get_nexus_runtime()
+            triad = getattr(rt, "_triad", None) if rt else None
+            if triad is None:
+                return None
+            # The triad's surface is async; A-13 runs sync from the
+            # scheduler thread, so we drive a tight loop.
+            import asyncio
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    return None  # nested loop — bail to legacy path
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            apply_fn = getattr(triad, "apply", None) or getattr(triad, "execute", None)
+            if apply_fn is None:
+                return None
+            outcome = loop.run_until_complete(apply_fn(listing))
+            # Normalise to A-13's ApplicationResult shape — duck typing.
+            class _Result:
+                def __init__(self, ok, err=None, ext_id=None, cl=None):
+                    self.success = ok
+                    self.error = err
+                    self.external_app_id = ext_id
+                    self.cover_letter = cl
+            ok = bool(getattr(outcome, "success", False))
+            return _Result(
+                ok=ok,
+                err=None if ok else getattr(outcome, "error", "triad_failed"),
+                ext_id=getattr(outcome, "external_app_id", None),
+                cl=getattr(outcome, "cover_letter", None),
+            )
+        except Exception as e:
+            logger.debug(f"[{AGENT_ID}] triad apply error (will fallback): {e}")
+            return None
 
     def _ensure_cv_tailoring(self, listing_id: int):
         """

@@ -1,10 +1,21 @@
 // ============================================================
-// BOTTOM BAR — PRISM v0.1 Ultra Premium Navigation
-// Frosted glass, spring animations, active glow indicator
+// BOTTOM BAR — PRISM v0.2 Zero-Glitch Navigation
+// ------------------------------------------------------------
+// Changes vs v0.1:
+//   - Removed `layoutId` spring on the active indicator. The
+//     spring re-animates on every tap and on parent re-renders,
+//     producing a visible wobble on slower devices.
+//   - Replaced framer-motion <motion.button> wrappers with plain
+//     buttons + CSS `:active` scale. Identical feel, no layer
+//     thrash.
+//   - Floating "Apply to N" pill is now a simple CSS slide-in
+//     (slide-up keyframe) instead of a spring AnimatePresence.
+//   - Indicator pill is a plain absolutely-positioned span; its
+//     position is driven entirely by which NavItem renders it,
+//     so there is no shared-layout animation.
 // ============================================================
 
 import React from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
 import { Zap, Sparkles, BarChart3, Home, Settings, Shield } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { hapticFeedback } from '@/utils/helpers';
@@ -21,54 +32,39 @@ export default function BottomBar({ activeTab, onTabChange, isAdmin = false }: B
 
   return (
     <>
-      {/* Floating Apply Button (when items selected) — FIXED position, never scrolls */}
-      <AnimatePresence>
-        {hasSelection && (
-          <motion.div
-            initial={{ y: 100, opacity: 0, scale: 0.9 }}
-            animate={{ y: 0, opacity: 1, scale: 1 }}
-            exit={{ y: 100, opacity: 0, scale: 0.9 }}
-            transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-            className="fixed left-4 right-4 z-[45]"
+      {/* Floating Apply Button — pure CSS slide-in, no spring physics. */}
+      {hasSelection && (
+        <div
+          className="fixed left-4 right-4 z-[45] gpu-overlay animate-slide-up"
+          style={{
+            bottom: 'calc(72px + env(safe-area-inset-bottom, 0px))',
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => { setBatchPanelOpen(true); hapticFeedback('medium'); }}
+            className="w-full py-3.5 rounded-2xl font-bold text-sm flex items-center justify-center gap-2.5 active:scale-[0.97] transition-transform"
             style={{
-              bottom: 'calc(72px + env(safe-area-inset-bottom, 0px))',
-              /* Prevent any scroll-based repositioning */
-              transform: 'translateZ(0)',
-              willChange: 'transform, opacity',
-              /* Ensure button stays put during scroll momentum */
-              WebkitTransform: 'translateZ(0)',
-              backfaceVisibility: 'hidden',
-              WebkitBackfaceVisibility: 'hidden',
+              background: 'linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 100%)',
+              color: '#ffffff',
+              boxShadow: '0 8px 32px rgba(0,0,0,0.25), 0 2px 8px rgba(0,0,0,0.15)',
+              transitionDuration: '120ms',
             }}
           >
-            <motion.button
-              onClick={() => { setBatchPanelOpen(true); hapticFeedback('medium'); }}
-              className="w-full py-3.5 rounded-2xl font-bold text-sm flex items-center justify-center gap-2.5 shine-sweep"
-              style={{
-                background: 'linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 100%)',
-                color: '#ffffff',
-                boxShadow: '0 8px 32px rgba(0,0,0,0.25), 0 2px 8px rgba(0,0,0,0.15)',
-              }}
-              whileTap={{ scale: 0.97 }}
+            <Zap className="w-4 h-4" />
+            Apply to {selectedIds.size} Internship{selectedIds.size > 1 ? 's' : ''}
+            <span
+              className="ml-1 px-2 py-0.5 rounded-full text-[10px] font-bold"
+              style={{ background: 'rgba(255,255,255,0.15)' }}
             >
-              <Zap className="w-4.5 h-4.5" />
-              Apply to {selectedIds.size} Internship{selectedIds.size > 1 ? 's' : ''}
-              <motion.span
-                className="ml-1 px-2 py-0.5 rounded-full text-[10px] font-bold"
-                style={{ background: 'rgba(255,255,255,0.15)' }}
-                initial={{ scale: 0 }}
-                animate={{ scale: 1 }}
-                transition={{ type: 'spring', stiffness: 500, damping: 15, delay: 0.1 }}
-              >
-                {selectedIds.size}
-              </motion.span>
-            </motion.button>
-          </motion.div>
-        )}
-      </AnimatePresence>
+              {selectedIds.size}
+            </span>
+          </button>
+        </div>
+      )}
 
       {/* Bottom Navigation */}
-      <nav className="bottom-bar">
+      <nav className="bottom-bar gpu-overlay" aria-label="Primary">
         <div className="flex items-center justify-around max-w-md mx-auto relative">
           <NavItem
             icon={<Home />}
@@ -82,7 +78,6 @@ export default function BottomBar({ activeTab, onTabChange, isAdmin = false }: B
             active={false}
             onClick={() => { setLLMPanelOpen(true); hapticFeedback('light'); }}
             hasIndicator
-            accentColor="#6366f1"
           />
           <NavItem
             icon={<BarChart3 />}
@@ -102,7 +97,6 @@ export default function BottomBar({ activeTab, onTabChange, isAdmin = false }: B
               label="Admin"
               active={activeTab === 'admin'}
               onClick={() => { onTabChange('admin'); hapticFeedback('medium'); }}
-              accentColor="#0a0a0a"
             />
           )}
         </div>
@@ -111,50 +105,62 @@ export default function BottomBar({ activeTab, onTabChange, isAdmin = false }: B
   );
 }
 
-function NavItem({
-  icon, label, active, onClick, badge, hasIndicator, accentColor,
-}: {
+interface NavItemProps {
   icon: React.ReactElement;
   label: string;
   active: boolean;
   onClick: () => void;
   badge?: number;
   hasIndicator?: boolean;
-  accentColor?: string;
-}) {
+}
+
+function NavItem({ icon, label, active, onClick, badge, hasIndicator }: NavItemProps) {
   return (
-    <motion.button
+    <button
+      type="button"
       onClick={onClick}
-      className="flex flex-col items-center gap-0.5 px-4 py-1.5 rounded-xl relative"
-      whileTap={{ scale: 0.88 }}
-      transition={{ type: 'spring', stiffness: 400, damping: 15 }}
+      aria-pressed={active}
+      aria-label={label}
+      className="relative flex flex-col items-center gap-0.5 px-4 py-1.5 rounded-xl select-none active:scale-[0.92] transition-transform"
+      style={{
+        transitionDuration: '120ms',
+        transitionTimingFunction: 'cubic-bezier(0.22, 1, 0.36, 1)',
+      }}
     >
-      <div className="relative">
-        <motion.span
-          className="block transition-colors duration-200"
-          style={{ color: active ? '#0a0a0a' : '#9ca3af' }}
-          animate={{
-            scale: active ? 1 : 0.95,
-          }}
-          transition={{ type: 'spring', stiffness: 400, damping: 20 }}
-        >
-          {React.cloneElement(icon, {
-            className: 'w-[20px] h-[20px]',
-            strokeWidth: active ? 2.5 : 1.8,
-          })}
-        </motion.span>
+      {/* Active pill — plain CSS, no layout animation. */}
+      <span
+        aria-hidden="true"
+        className="absolute -top-0.5 rounded-full"
+        style={{
+          width: 20,
+          height: 3,
+          background: 'linear-gradient(90deg, #0a0a0a, #374151)',
+          borderRadius: '0 0 4px 4px',
+          boxShadow: active ? '0 2px 8px rgba(10,10,10,0.2)' : 'none',
+          opacity: active ? 1 : 0,
+          transition: 'opacity 140ms ease',
+        }}
+      />
+
+      <span className="relative block">
+        {React.cloneElement(icon, {
+          className: 'w-[20px] h-[20px]',
+          strokeWidth: active ? 2.4 : 1.8,
+          style: {
+            color: active ? '#0a0a0a' : '#9ca3af',
+            transition: 'color 140ms ease',
+          },
+        })}
         {badge && badge > 0 && (
-          <motion.span
+          <span
             className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-500 rounded-full text-[8px] text-white font-bold flex items-center justify-center"
-            initial={{ scale: 0 }}
-            animate={{ scale: 1 }}
-            transition={{ type: 'spring', stiffness: 500, damping: 15 }}
           >
             {badge}
-          </motion.span>
+          </span>
         )}
         {hasIndicator && (
           <span
+            aria-hidden="true"
             className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full"
             style={{
               background: '#10b981',
@@ -163,31 +169,16 @@ function NavItem({
             }}
           />
         )}
-      </div>
+      </span>
       <span
-        className="text-[10px] font-semibold transition-all duration-200"
+        className="text-[10px] font-semibold"
         style={{
           color: active ? '#0a0a0a' : '#9ca3af',
-          letterSpacing: active ? '0.02em' : '0',
+          transition: 'color 140ms ease',
         }}
       >
         {label}
       </span>
-      {/* Active indicator — animated pill with glow */}
-      {active && (
-        <motion.div
-          layoutId="bottomBarActiveIndicator"
-          className="absolute -top-0.5 rounded-full"
-          style={{
-            width: 20,
-            height: 3,
-            background: 'linear-gradient(90deg, #0a0a0a, #374151)',
-            borderRadius: '0 0 4px 4px',
-            boxShadow: '0 2px 8px rgba(10,10,10,0.2)',
-          }}
-          transition={{ type: 'spring', stiffness: 500, damping: 30 }}
-        />
-      )}
-    </motion.button>
+    </button>
   );
 }

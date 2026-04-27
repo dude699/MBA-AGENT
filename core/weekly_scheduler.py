@@ -1030,6 +1030,22 @@ class WeeklyAgentScheduler:
         )
         self._job_count += 1
 
+        # ─────────────────────────────────────────────────────────────
+        # NEXUS v0.2 — score-tiered TTL retention
+        # Low-score listings (<60) purged after 15 days,
+        # high-score (>=60) after 25 days. Configurable via
+        # JOB_LOW_TTL_DAYS / JOB_HIGH_TTL_DAYS env vars.
+        # Applied jobs are NEVER auto-purged.
+        # ─────────────────────────────────────────────────────────────
+        self._scheduler.add_job(
+            self._score_tiered_retention,
+            CronTrigger(hour=4, minute=30, timezone='Asia/Kolkata'),
+            id='score_tiered_retention',
+            name='[SYS] Score-Tiered Job Retention (15d low / 25d high)',
+            misfire_grace_time=3600,
+        )
+        self._job_count += 1
+
         # Start scheduler
         self._scheduler.start()
         self._running = True
@@ -1789,6 +1805,29 @@ class WeeklyAgentScheduler:
                 })
 
             batch_id = f"sync_{trigger}_{datetime.now(IST).strftime('%Y%m%d_%H%M')}"
+
+            # ─────────────────────────────────────────────────────────
+            # NEXUS v0.2 — route legacy-scraped listings through the
+            # 10-layer pipeline (L7 dedup + L3 scoring) BEFORE upload.
+            # Falls back silently if NEXUS is unavailable / disabled.
+            # ─────────────────────────────────────────────────────────
+            try:
+                if os.getenv("NEXUS_ENABLED", "true").lower() in ("1","true","yes","on"):
+                    from core.nexus_runtime import get_runtime as _get_nexus
+                    rt = _get_nexus() if callable(_get_nexus) else None
+                    if rt is not None and hasattr(rt, "ingest_scraped_jobs"):
+                        nexus_stats = await rt.ingest_scraped_jobs(jobs)
+                        if nexus_stats:
+                            logger.info(
+                                f"[WEEKLY-SCHEDULER-v7] NEXUS pipeline: "
+                                f"received={nexus_stats.get('received',0)} "
+                                f"unique={nexus_stats.get('unique',0)} "
+                                f"enqueued={nexus_stats.get('enqueued',0)} "
+                                f"rejected={nexus_stats.get('rejected',0)}"
+                            )
+            except Exception as _nx_err:
+                logger.debug(f"[WEEKLY-SCHEDULER-v7] NEXUS ingest skipped: {_nx_err}")
+
             count = await async_insert_latest_jobs(jobs, batch_id)
             logger.info(f"[WEEKLY-SCHEDULER-v7] Supabase sync: {count}/{len(jobs)} ({trigger})")
 
@@ -1834,6 +1873,30 @@ class WeeklyAgentScheduler:
             logger.info(f"[WEEKLY-SCHEDULER-v7] Cleanup: {deleted} expired")
         except Exception as e:
             logger.error(f"[WEEKLY-SCHEDULER-v7] Cleanup error: {e}")
+
+    async def _score_tiered_retention(self):
+        """
+        NEXUS v0.2 retention policy:
+          - match_score < 60 → 15-day TTL
+          - match_score >= 60 → 25-day TTL
+          - applied=true   → NEVER auto-purged
+        Configurable via JOB_LOW_TTL_DAYS / JOB_HIGH_TTL_DAYS env.
+        """
+        try:
+            from core.job_retention import async_purge_stale_jobs
+            stats = await async_purge_stale_jobs()
+            logger.info(
+                f"[WEEKLY-SCHEDULER-v7] Retention sweep: "
+                f"{stats.total_purged} rows purged "
+                f"(low={stats.low_score_purged_supabase}, "
+                f"high={stats.high_score_purged_supabase}, "
+                f"legacy={stats.legacy_purged_supabase}, "
+                f"latest={stats.latest_jobs_purged}, "
+                f"sqlite={stats.sqlite_purged}, "
+                f"applied-protected={stats.applied_protected})"
+            )
+        except Exception as e:
+            logger.error(f"[WEEKLY-SCHEDULER-v7] Retention error: {e}")
 
     # ================================================================
     # INFRASTRUCTURE

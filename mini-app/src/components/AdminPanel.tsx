@@ -139,6 +139,29 @@ export default function AdminPanel() {
     }
   };
 
+  const triggerPurge = async () => {
+    if (!confirm('Run TTL retention sweep?\n• Low-score (<60) jobs older than 15 days will be deleted\n• High-score (≥60) jobs older than 25 days will be deleted\n• Applied jobs are PROTECTED.')) return;
+    setBusy('purge');
+    hapticFeedback('medium');
+    try {
+      const r = await adminFetch('/admin/trigger-purge', {
+        method: 'POST', body: JSON.stringify({}),
+      });
+      if (r.success) {
+        const s = r.stats || {};
+        const total = (s.low_score_purged_supabase||0)+(s.high_score_purged_supabase||0)+(s.legacy_purged_supabase||0)+(s.latest_jobs_purged||0)+(s.sqlite_purged||0);
+        alert(`✅ Retention sweep complete\n\n• Low-score (Supabase): ${s.low_score_purged_supabase||0}\n• High-score (Supabase): ${s.high_score_purged_supabase||0}\n• Legacy unscored: ${s.legacy_purged_supabase||0}\n• latest_jobs: ${s.latest_jobs_purged||0}\n• SQLite: ${s.sqlite_purged||0}\n\nTotal: ${total}\nApplied protected: ${s.applied_protected||0}`);
+        refresh();
+      } else {
+        alert(`❌ ${r.error || 'purge failed'}`);
+      }
+    } catch (e: any) {
+      alert(`❌ ${e.message}`);
+    } finally {
+      setBusy('');
+    }
+  };
+
   if (loading) {
     return (
       <div className="px-4 py-12 flex flex-col items-center text-center">
@@ -376,6 +399,31 @@ export default function AdminPanel() {
             </div>
           )}
         </div>
+      </Section>
+
+      {/* Retention */}
+      <Section title="Retention policy" icon={<Database className="w-4 h-4" />}>
+        <p className="text-[11px] text-primary-500 mb-2 leading-relaxed">
+          Score-tiered TTL purge. Low-score (&lt;60) jobs older than <b>15 days</b> are
+          deleted; high-score (≥60) older than <b>25 days</b>. Applied jobs are
+          NEVER auto-purged. Runs daily at 04:30 IST.
+        </p>
+        <button
+          onClick={triggerPurge}
+          disabled={busy === 'purge'}
+          className="w-full py-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 disabled:opacity-50 transition-all"
+          style={{
+            background: 'linear-gradient(135deg, #f3e8ff 0%, #ede9fe 100%)',
+            color: '#5b21b6',
+            border: '1px solid #c4b5fd',
+          }}
+        >
+          {busy === 'purge'
+            ? <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+            : <Trash2 className="w-3.5 h-3.5" />
+          }
+          Run retention sweep now
+        </button>
       </Section>
 
       {/* Danger zone */}
