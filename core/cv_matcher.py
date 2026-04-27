@@ -203,6 +203,11 @@ class CVMatcher:
         """
         Re-read the user's CV and tokenize. Call this after /api/user/upload-cv.
         Returns True if CV was loaded, False if no CV available.
+
+        NEXUS v0.2 fix: if the local PDF is missing (Render's free tier
+        wipes `data/` on every redeploy), transparently restore it from
+        the Supabase `user_cvs` mirror before tokenising. This keeps the
+        "For You" tab personalised across restarts.
         """
         with self._lock:
             safe_id = str(telegram_id or 'anonymous').replace('/', '').replace('..', '')[:20]
@@ -211,17 +216,30 @@ class CVMatcher:
             profile = self._load_profile(safe_id)
 
             if not os.path.isfile(cv_path):
-                # Still cache profile so profile-only matching works
-                self._cache[safe_id] = {
-                    'tokens': set(),
-                    'keywords': {},
-                    'cv_mtime': 0,
-                    'cv_text_preview': '',
-                    'profile': profile,
-                    'has_cv': False,
-                    'loaded_at': time.time(),
-                }
-                return False
+                # NEXUS v0.2 — try restoring from Supabase before giving up.
+                restored = False
+                try:
+                    from core.cv_storage import restore_local_cv
+                    restored = restore_local_cv(safe_id, cv_path)
+                except Exception as restore_err:
+                    logger.debug(
+                        f"[{MODULE_ID}] cv_storage restore unavailable: {restore_err}"
+                    )
+
+                if not restored:
+                    # Still cache profile so profile-only matching works
+                    self._cache[safe_id] = {
+                        'tokens': set(),
+                        'keywords': {},
+                        'cv_mtime': 0,
+                        'cv_text_preview': '',
+                        'profile': profile,
+                        'has_cv': False,
+                        'loaded_at': time.time(),
+                    }
+                    return False
+                # Else: file is now on disk, fall through to the regular
+                # extraction path below.
 
             try:
                 mtime = os.path.getmtime(cv_path)

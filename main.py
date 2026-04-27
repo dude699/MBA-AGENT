@@ -443,8 +443,14 @@ class Application:
         # To wipe Supabase too, use admin endpoint or Telegram /admin_reset.
         force_reset = os.getenv('FORCE_DB_RESET', '').lower() in ('true', '1', 'yes')
         if force_reset:
-            logger.warning("[Phase 3] *** FORCE_DB_RESET=true detected ***")
-            logger.warning("[Phase 3] *** Only wiping LOCAL SQLite. Supabase data is SAFE. ***")
+            logger.warning("=" * 70)
+            logger.warning("[Phase 3] !!! FORCE_DB_RESET=true — DESTRUCTIVE BOOT !!!")
+            logger.warning("[Phase 3] This wipes LOCAL SQLite (clean_listings, raw_listings,")
+            logger.warning("[Phase 3] auto_apply_queue, outcomes, ghost_scores, packages).")
+            logger.warning("[Phase 3] Supabase (latest_jobs, all_jobs, user_cvs) is SAFE.")
+            logger.warning("[Phase 3] >>> If you didn't intend to wipe data, STOP the service")
+            logger.warning("[Phase 3] >>> NOW and remove FORCE_DB_RESET from Render env vars.")
+            logger.warning("=" * 70)
             try:
                 counts = db.delete_all_listings()
                 logger.warning(f"[Phase 3] SQLite wiped: {counts}")
@@ -453,8 +459,11 @@ class Application:
 
             # v0.2: DO NOT wipe Supabase on redeploy. Supabase is persistent storage.
             # clear_all_jobs() has its own FORCE_DB_RESET safety gate now.
+            logger.warning("=" * 70)
             logger.warning("[Phase 3] *** SQLite RESET COMPLETE — Supabase data preserved ***")
-            logger.warning("[Phase 3] *** REMOVE FORCE_DB_RESET env var to prevent re-wipe ***")
+            logger.warning("[Phase 3] *** REMOVE FORCE_DB_RESET env var NOW — every restart ***")
+            logger.warning("[Phase 3] *** is otherwise re-wiping the local scrape cache.    ***")
+            logger.warning("=" * 70)
         # ─────────────────────────────────────────────────────────
 
         try:
