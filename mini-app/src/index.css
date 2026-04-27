@@ -843,20 +843,16 @@
   border-radius: 8px;
 }
 
-/* Tab switch content transition */
-@keyframes tab-slide-in {
-  from {
-    opacity: 0;
-    transform: translateX(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
+/* Tab switch content transition — v0.2: pure opacity, no transform.
+   Translation animations on tab switch caused a visible horizontal
+   "wipe" that read as a glitch on slower devices. Fade-only is
+   smooth on every device and never re-flows layout. */
+@keyframes tab-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 .animate-tab-in {
-  animation: tab-slide-in 0.2s var(--ease-premium) forwards;
-  will-change: opacity, transform;
+  animation: tab-fade-in 0.16s var(--ease-smooth) forwards;
 }
 
 /* Shine sweep for premium elements */
@@ -936,43 +932,64 @@
   30% { transform: translateY(-8px); opacity: 1; }
 }
 
-/* ===== PERFORMANCE OPTIMIZATIONS ===== */
+/* ===== PERFORMANCE OPTIMIZATIONS — v0.2 ZERO-GLITCH ===== */
+/*
+ * Lessons learned from v0.1:
+ *   - Global `will-change` on `.fixed` exploded GPU memory and caused
+ *     compositor thrash on Telegram WebView (Android).
+ *   - `contain: layout style` on every `.overflow-y-auto` flickered
+ *     filter and sort panels on open/close.
+ *   - `[style*="translateY"]` matched hundreds of unrelated nodes and
+ *     promoted them to layers permanently.
+ *   - `content-visibility: auto` past the 20th card caused visible
+ *     pop-in while scrolling fast.
+ *   - Doubled-up `.flex-1.overflow-y-auto { contain: layout paint }`
+ *     caused paint glitches on the main scroll container.
+ *
+ * v0.2 strategy: opt-in containment via explicit class names only.
+ * Components that need GPU acceleration request it themselves via
+ * `gpu-accelerate` (already defined in @layer utilities).
+ */
 
-/* GPU-accelerate panels and modals */
-.fixed {
-  will-change: transform, opacity;
-}
-
-/* Reduce layout thrashing on filter/sort panels */
-.overflow-y-auto {
-  contain: layout style;
-  -webkit-overflow-scrolling: touch;
-}
-
-/* Content visibility for off-screen card lists */
-.space-y-3 > *:nth-child(n+20) {
-  content-visibility: auto;
-  contain-intrinsic-size: 0 120px;
-}
-
-/* Smooth all transitions globally */
+/* Universal: only the tap highlight reset stays global. */
 * {
   -webkit-tap-highlight-color: transparent;
 }
 
-/* Eliminate filter panel lag: hardware-accelerate transforms */
-[style*="translateY"] {
+/* Opt-in: containers that genuinely need paint isolation should add
+   `.contain-paint` (e.g. virtualised lists). */
+.contain-paint {
+  contain: layout paint;
+}
+.contain-strict {
+  contain: layout style paint;
+}
+
+/* Opt-in: heavy fixed overlays (BatchApplyPanel, FilterPanel) can
+   add `.gpu-overlay` to get a single dedicated layer. We do NOT
+   apply this to every `.fixed` element. */
+.gpu-overlay {
   will-change: transform;
+  transform: translateZ(0);
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
 }
 
-/* Faster sort/filter re-render */
+/* Override the duplicate `.animate-fade-in` from earlier in the file so
+   there is exactly one canonical timing. */
 .animate-fade-in {
-  animation: fade-scale-in 0.2s ease-out forwards;
+  animation: fade-scale-in 0.18s var(--ease-smooth) forwards;
 }
 
-/* Reduce paint on scrolling lists */
-.flex-1.overflow-y-auto {
-  contain: layout paint;
+/* Reduce-motion respect — required for accessibility and stops the
+   shine-sweep + gentle-float loops on devices that ask for less motion. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
