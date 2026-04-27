@@ -3072,6 +3072,37 @@ async def handle_admin_trigger_scrape(request: web.Request) -> web.Response:
 
 
 @_admin_only
+async def handle_admin_trigger_purge(request: web.Request) -> web.Response:
+    """
+    POST /api/admin/trigger-purge — on-demand score-tiered TTL sweep.
+    Body (optional): { "low_ttl_days": 15, "high_ttl_days": 25 }
+                     overrides for THIS run only — does not change env.
+    Returns the RetentionStats dict.
+    """
+    try:
+        body = await request.json() if request.can_read_body else {}
+    except Exception:
+        body = {}
+    # Per-run overrides (kept narrow scope so we don't accidentally
+    # clobber the long-lived env config)
+    if isinstance(body.get("low_ttl_days"), int):
+        os.environ["JOB_LOW_TTL_DAYS"] = str(body["low_ttl_days"])
+    if isinstance(body.get("high_ttl_days"), int):
+        os.environ["JOB_HIGH_TTL_DAYS"] = str(body["high_ttl_days"])
+    try:
+        # IMPORTANT: re-import so module-level constants pick up the
+        # env override (job_retention reads them at import time).
+        import importlib
+        from core import job_retention as jr
+        importlib.reload(jr)
+        stats = await jr.async_purge_stale_jobs()
+        return _json_response({"success": True, "stats": stats.as_dict()})
+    except Exception as e:
+        logger.error(f"[{MODULE_ID}] trigger-purge error: {e}")
+        return _json_response({"success": False, "error": str(e)[:200]}, status=500)
+
+
+@_admin_only
 async def handle_admin_audit_log(request: web.Request) -> web.Response:
     """GET /api/admin/audit?limit=200 — last N audit log entries."""
     try:
@@ -3168,6 +3199,7 @@ def register_miniapp_routes(app):
     app.router.add_get ('/api/admin/credentials',        handle_admin_credentials_list)
     app.router.add_post('/api/admin/credentials/revoke', handle_admin_credentials_revoke)
     app.router.add_post('/api/admin/trigger-scrape',     handle_admin_trigger_scrape)
+    app.router.add_post('/api/admin/trigger-purge',      handle_admin_trigger_purge)
     app.router.add_get ('/api/admin/audit',              handle_admin_audit_log)
     app.router.add_get ('/api/admin/whoami',             handle_admin_whoami)
     # Public truthful "are you the admin?" probe used to toggle the
