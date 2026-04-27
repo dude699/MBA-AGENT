@@ -51,14 +51,17 @@ class StackEndpoints:
     supabase_service_key: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
 
     # Cloudflare relay worker (Layer 0 IP continuity)
-    cf_worker_url      : str = os.getenv("CF_RELAY_WORKER_URL", "")
+    # Accepts either CF_WORKER_URL (canonical, used by core/config.py) or
+    # CF_RELAY_WORKER_URL (older alias). Same for the secret.
+    cf_worker_url      : str = os.getenv("CF_WORKER_URL", "") or os.getenv("CF_RELAY_WORKER_URL", "")
+    cf_relay_secret    : str = os.getenv("CF_RELAY_SECRET", "")
 
     # Render keep-alive
     render_keepalive_url: str = os.getenv("RENDER_KEEPALIVE_URL", "")
 
-    # Telegram
-    telegram_bot_token : str = os.getenv("TELEGRAM_BOT_TOKEN", "")
-    telegram_chat_id   : str = os.getenv("TELEGRAM_CHAT_ID", "")
+    # Telegram — accept both naming conventions; Render uses TG_*, older code TELEGRAM_*
+    telegram_bot_token : str = os.getenv("TG_BOT_TOKEN", "") or os.getenv("TELEGRAM_BOT_TOKEN", "")
+    telegram_chat_id   : str = os.getenv("TG_CHAT_ID", "") or os.getenv("TELEGRAM_CHAT_ID", "")
 
 
 STACK = StackEndpoints()

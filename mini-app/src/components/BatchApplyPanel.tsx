@@ -1,7 +1,7 @@
 // ============================================================
 // BATCH APPLY PANEL — v9.0: TRUE Single-Click Auto-Apply
 // ============================================================
-// PRISM v9.0: Zero manual intervention.
+// NEXUS v9.0: Zero manual intervention.
 //   1. User fills profile ONCE (saved permanently)
 //   2. User logs into Internshala ONCE (session lasts weeks)
 //   3. Then just: select jobs → click "Apply" → DONE
@@ -519,7 +519,7 @@ export default function BatchApplyPanel() {
                     <button
                       onClick={handleLogin}
                       disabled={isLoggingIn || !credData.password?.trim()}
-                      className="w-full py-2.5 bg-[#0a0a0a] text-white rounded-xl text-xs font-semibold active:scale-[0.98] transition-transform flex items-center justify-center gap-2 disabled:opacity-50 mb-2"
+                      className="w-full py-2.5 bg-[#000000] text-white rounded-xl text-xs font-semibold active:scale-[0.98] transition-transform flex items-center justify-center gap-2 disabled:opacity-50 mb-2"
                     >
                       {isLoggingIn ? (
                         <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Logging in...</>
@@ -575,7 +575,7 @@ export default function BatchApplyPanel() {
 
                 {!showLoginForm && (
                   <p className="text-[10px] text-amber-600 mt-1.5 mx-1">
-                    Without login, PRISM generates AI cover letters but you apply manually via links.
+                    Without login, NEXUS generates AI cover letters but you apply manually via links.
                   </p>
                 )}
               </>
@@ -821,7 +821,7 @@ export default function BatchApplyPanel() {
             disabled={selectedIds.size === 0}
             className={`w-full py-3.5 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all active:scale-[0.98] ${
               selectedIds.size > 0
-                ? 'bg-[#0a0a0a] text-white shadow-lg hover:shadow-xl'
+                ? 'bg-[#000000] text-white shadow-lg hover:shadow-xl'
                 : 'bg-gray-200 text-gray-500 cursor-not-allowed'
             }`}
           >
@@ -838,7 +838,7 @@ export default function BatchApplyPanel() {
         {selectedIds.size > 0 && batch.status === 'idle' && (
           <p className="text-[10px] text-primary-400 text-center mt-1.5">
             {isLoggedIn
-              ? 'PRISM will auto-submit all applications. Zero manual work.'
+              ? 'NEXUS will auto-submit all applications. Zero manual work.'
               : 'Login above for full automation, or apply in assisted mode now.'}
           </p>
         )}

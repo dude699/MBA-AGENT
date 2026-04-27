@@ -610,7 +610,7 @@ export async function fetchSupabaseStats(): Promise<APIResponse<any>> {
   }
 }
 
-// ===== PRISM v11: CV-MATCHED JOBS ("For You" tab) =====
+// ===== NEXUS v11: CV-MATCHED JOBS ("For You" tab) =====
 
 export interface CVStatus {
   has_cv: boolean;

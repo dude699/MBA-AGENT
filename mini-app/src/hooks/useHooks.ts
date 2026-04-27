@@ -199,7 +199,7 @@ export function useBatchApply() {
         const storeJobs = useAppStore.getState().internships;
         const allJobs = [...storeJobs, ...sbCache];
 
-        // PRISM v4.0: Track assisted-apply links with cover letters
+        // NEXUS v4.0: Track assisted-apply links with cover letters
         const assistedApplyLinks: Array<{ id: string; url: string; title: string; company: string; coverLetter: string }> = [];
 
         for (let i = 0; i < results.length; i++) {

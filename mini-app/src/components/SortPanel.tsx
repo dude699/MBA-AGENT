@@ -98,7 +98,7 @@ export default function SortPanel() {
                 <div
                   className="w-8 h-8 rounded-lg flex items-center justify-center"
                   style={{
-                    background: active ? '#0a0a0a' : '#f3f4f6',
+                    background: active ? '#000000' : '#f3f4f6',
                     color: active ? '#ffffff' : '#9ca3af',
                   }}
                 >
@@ -112,7 +112,7 @@ export default function SortPanel() {
                 </div>
                 {active && (
                   <div className="w-5 h-5 rounded-full flex items-center justify-center"
-                    style={{ background: 'linear-gradient(135deg, #0a0a0a 0%, #374151 100%)' }}>
+                    style={{ background: 'linear-gradient(135deg, #000000 0%, #374151 100%)' }}>
                     <Check className="w-3 h-3 text-white" />
                   </div>
                 )}

@@ -1,5 +1,5 @@
 // ============================================================
-// INTERNSHIP CARD — PRISM v0.1 Ultra Premium Card
+// INTERNSHIP CARD — NEXUS v0.1 Ultra Premium Card
 // Smooth entrance, depth hover, micro-interactions
 // ============================================================
 
@@ -127,8 +127,8 @@ const InternshipCard = memo(function InternshipCard({ internship, index }: Props
                 width: '32px',
                 height: '32px',
                 minWidth: '32px',
-                borderColor: isSelected ? '#0a0a0a' : canSelect ? '#9ca3af' : '#d1d5db',
-                background: isSelected ? '#0a0a0a' : canSelect ? '#ffffff' : '#f9fafb',
+                borderColor: isSelected ? '#000000' : canSelect ? '#9ca3af' : '#d1d5db',
+                background: isSelected ? '#000000' : canSelect ? '#ffffff' : '#f9fafb',
                 opacity: !canSelect && !isSelected ? 0.5 : 1,
                 transition: 'border-color 0.15s, background 0.15s',
               }}
@@ -182,7 +182,7 @@ const InternshipCard = memo(function InternshipCard({ internship, index }: Props
             <span
               className="text-sm font-bold"
               style={{
-                color: isHighPay ? '#059669' : '#0a0a0a',
+                color: isHighPay ? '#059669' : '#000000',
               }}
             >
               {formatStipend(internship.stipend || 0)}

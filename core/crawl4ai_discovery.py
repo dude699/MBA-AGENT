@@ -384,9 +384,25 @@ def _parse_iso(value: Any) -> datetime | None:
 
 
 def build_default_crawler() -> Any:
-    """Construct a Crawl4AI crawler with stealth + JS rendering enabled."""
+    """Construct a Crawl4AI crawler with stealth + JS rendering enabled.
+
+    NEXUS v0.2: crawl4ai uses Camoufox underneath for stealth. The
+    Cloudflare relay (CF_WORKER_URL/CF_RELAY_SECRET) is a JSON
+    request-relay, not an HTTP CONNECT proxy, so it is wired into the
+    legacy `core.stealth_engine` HTTP fetch path (used for portals that
+    don't need a real browser). For pages that DO need JS rendering we
+    rely on Camoufox + Webshare proxy rotation handled by crawl4ai
+    natively.
+    """
     if not CRAWL4AI_AVAILABLE:
         raise RuntimeError("crawl4ai not installed")
+
+    if STACK.cf_worker_url and STACK.cf_relay_secret:
+        log.info(
+            "crawl4ai.cf_relay_available "
+            "(used by stealth_engine for HTTP fetches; not by browser)"
+        )
+
     browser_cfg = BrowserConfig(
         browser_type="firefox",      # Camoufox underneath
         headless=True,

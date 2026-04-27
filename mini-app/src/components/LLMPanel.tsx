@@ -1,5 +1,5 @@
 // ============================================================
-// LLM CHAT PANEL — PRISM v0.1 Next-Level AI Assistant
+// LLM CHAT PANEL — NEXUS v0.1 Next-Level AI Assistant
 // 4 Deep AI Profiles with system awareness, premium animations,
 // streaming text, thinking indicators, rich markdown rendering
 // ============================================================
@@ -23,13 +23,13 @@ import { hapticFeedback } from '@/utils/helpers';
 const AI_PROFILES = [
   {
     id: 'generalist',
-    name: 'PRISM Advisor',
+    name: 'NEXUS Advisor',
     shortName: 'Advisor',
     icon: Brain,
     color: '#7c3aed',
     gradient: 'linear-gradient(135deg, #7c3aed 0%, #a855f7 50%, #c084fc 100%)',
     glowColor: 'rgba(124,58,237,0.15)',
-    description: 'Your personal AI strategist powered by 20 autonomous PRISM agents. Analyzes live job data, your CV, ghost detection signals, and Blue Ocean opportunities in real-time to deliver razor-sharp career intelligence.',
+    description: 'Your personal AI strategist powered by 20 autonomous NEXUS agents. Analyzes live job data, your CV, ghost detection signals, and Blue Ocean opportunities in real-time to deliver razor-sharp career intelligence.',
     tagline: 'Multi-Agent Career Intelligence',
     capabilities: [
       'Cross-agent job matching (A-03/A-04/A-08 data)',
@@ -39,7 +39,7 @@ const AI_PROFILES = [
       'Market momentum analysis (A-01)',
       'Application priority ranking',
     ],
-    systemContext: `You are PRISM Advisor — the central AI intelligence of the PRISM system (Precision Recruitment Intelligence & Scoring Machine). You have awareness of:
+    systemContext: `You are NEXUS Advisor — the central AI intelligence of the NEXUS system (Precision Recruitment Intelligence & Scoring Machine). You have awareness of:
 - 20 autonomous agents running 24/7 finding internships
 - PPO scoring engine with 11 variables (company tier, applicant count, stipend, duration, CIRS score, sector momentum, intent signals, historic callback, recency, semantic CV match)
 - Blue Ocean detection (high prestige + low competition)
@@ -68,7 +68,7 @@ You provide strategic career advice backed by real data from the system. Be spec
       'LinkedIn headline & summary optimizer',
       'SOP drafting with quantified achievements',
     ],
-    systemContext: `You are Elite Resume Lab — the CV intelligence engine of the PRISM system. You are an expert in:
+    systemContext: `You are Elite Resume Lab — the CV intelligence engine of the NEXUS system. You are an expert in:
 - Harvard Business School resume format
 - ISB/IIM/XLRI placement document standards
 - ATS (Applicant Tracking System) optimization
@@ -103,7 +103,7 @@ When the user asks about their CV:
       'Resume parser simulation',
       'Optimal keyword density calculator',
     ],
-    systemContext: `You are ATS War Room — the Applicant Tracking System specialist in the PRISM system. You have deep knowledge of:
+    systemContext: `You are ATS War Room — the Applicant Tracking System specialist in the NEXUS system. You have deep knowledge of:
 - How Greenhouse ATS parses resumes (JSON API format, section detection)
 - How Lever ATS scores candidates (keyword matching, experience weighting)
 - How Workday ATS filters applications (form fields, resume parsing)
@@ -125,17 +125,17 @@ When analyzing a CV:
     color: '#dc2626',
     gradient: 'linear-gradient(135deg, #dc2626 0%, #f87171 50%, #fca5a5 100%)',
     glowColor: 'rgba(220,38,38,0.15)',
-    description: 'India MBA placement specialist with AMU/IIM/ISB benchmarks, sector momentum data, stipend intelligence by company tier, and week-by-week PPO conversion strategies backed by PRISM real-time data.',
+    description: 'India MBA placement specialist with AMU/IIM/ISB benchmarks, sector momentum data, stipend intelligence by company tier, and week-by-week PPO conversion strategies backed by NEXUS real-time data.',
     tagline: 'Placement & PPO Intelligence',
     capabilities: [
       'AMU/IIM/ISB placement pattern analysis',
-      'Sector momentum tracking (PRISM A-01 data)',
+      'Sector momentum tracking (NEXUS A-01 data)',
       'Stipend benchmark by role & company tier',
       'PPO conversion strategy (week-by-week)',
       'Interview preparation for target company',
       'Career path mapping (short + long term)',
     ],
-    systemContext: `You are MBA Strategy Desk — the career counselor in the PRISM system, specialized in Indian MBA internship placements. You know:
+    systemContext: `You are MBA Strategy Desk — the career counselor in the NEXUS system, specialized in Indian MBA internship placements. You know:
 - AMU MBA 2025 batch specifics and placement expectations
 - IIM/ISB/XLRI/MDI/FMS placement data and benchmarks
 - Sector momentum: which industries are actively hiring MBA interns in India (2026)
@@ -144,7 +144,7 @@ When analyzing a CV:
 - Interview prep for consulting case studies, finance technicals, product management frameworks
 
 When advising:
-1. Reference real companies and stipend ranges from the PRISM database
+1. Reference real companies and stipend ranges from the NEXUS database
 2. Use sector momentum data from A-01 (Intent Scanner) and A-07 (Enricher)
 3. Be specific about Indian context: placement season timelines, summer intern windows, PPO processes
 4. Give week-by-week action plans, not abstract advice
@@ -174,8 +174,8 @@ const PROFILE_PROMPTS: Record<string, Array<{ icon: React.ReactNode; label: stri
     { icon: <Hash className="w-3.5 h-3.5" />, label: 'Optimize for role', prompt: 'Pick the #1 best matching job from the database for my profile. Show me EXACTLY how to optimize my CV for that specific role: which keywords to add where, which bullets to rewrite, which skills to highlight. Give me a before → after transformation.' },
   ],
   career_counselor: [
-    { icon: <Award className="w-3.5 h-3.5" />, label: 'Career roadmap', prompt: 'Based on my CV, skills, and the current market data from PRISM, create a comprehensive career roadmap: 1) Best-fit roles (short-term), 2) Career trajectory (3-5 year), 3) Skills to develop, 4) Target companies in the database, 5) Salary/stipend expectations by tier.' },
-    { icon: <BarChart3 className="w-3.5 h-3.5" />, label: 'Stipend intel', prompt: 'Using the current PRISM database and market data: 1) What stipend range should I expect given my profile? 2) How does AMU MBA compare to IIM/ISB for internship stipends? 3) Which sectors pay the most? 4) What can I negotiate? Give specific numbers from the data.' },
+    { icon: <Award className="w-3.5 h-3.5" />, label: 'Career roadmap', prompt: 'Based on my CV, skills, and the current market data from NEXUS, create a comprehensive career roadmap: 1) Best-fit roles (short-term), 2) Career trajectory (3-5 year), 3) Skills to develop, 4) Target companies in the database, 5) Salary/stipend expectations by tier.' },
+    { icon: <BarChart3 className="w-3.5 h-3.5" />, label: 'Stipend intel', prompt: 'Using the current NEXUS database and market data: 1) What stipend range should I expect given my profile? 2) How does AMU MBA compare to IIM/ISB for internship stipends? 3) Which sectors pay the most? 4) What can I negotiate? Give specific numbers from the data.' },
     { icon: <Clock className="w-3.5 h-3.5" />, label: 'PPO playbook', prompt: 'Create a detailed week-by-week PPO conversion strategy. Week 1: First impressions. Week 2-3: Demonstrating value. Week 4-8: Building relationships and delivering results. Include specific tactics, communication templates, and common pitfalls for Indian MBA internships.' },
     { icon: <MessageSquare className="w-3.5 h-3.5" />, label: 'Interview prep', prompt: 'Based on the top 3 matching jobs for my profile in the database, prepare me for interviews: 1) Likely questions for each role type, 2) Framework answers (STAR/case study), 3) Company-specific research points, 4) Questions I should ask, 5) Red flags to watch for.' },
   ],
@@ -274,7 +274,7 @@ function ThinkingIndicator({ profileColor, profileName }: { profileColor: string
   const [thinkingPhase, setThinkingPhase] = useState(0);
 
   const phases = [
-    'Connecting to PRISM intelligence',
+    'Connecting to NEXUS intelligence',
     'Scanning live job database',
     'Cross-referencing your profile',
     'Running multi-agent analysis',
@@ -375,7 +375,7 @@ function ConfigPanel({ profile, onClose }: { profile: typeof AI_PROFILES[0]; onC
       {/* Connection Status */}
       <div className="flex items-center gap-2 p-2 rounded-lg" style={{ background: '#ecfdf5' }}>
         <Database className="w-3.5 h-3.5 text-emerald-500" />
-        <span className="text-[10px] font-medium text-emerald-700">Connected to Supabase + 20 PRISM Agents</span>
+        <span className="text-[10px] font-medium text-emerald-700">Connected to Supabase + 20 NEXUS Agents</span>
         <span className="ml-auto w-2 h-2 bg-emerald-400 rounded-full" style={{ boxShadow: '0 0 6px rgba(52,211,153,0.5)' }} />
       </div>
     </motion.div>
@@ -619,7 +619,7 @@ export default function LLMPanel() {
                       <div className="flex flex-col items-center gap-1">
                         <div className="flex items-center gap-1.5">
                           <Database className="w-3 h-3 text-emerald-500" />
-                          <span className="text-[10px] font-medium text-emerald-600">PRISM database connected</span>
+                          <span className="text-[10px] font-medium text-emerald-600">NEXUS database connected</span>
                           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" style={{ boxShadow: '0 0 4px rgba(52,211,153,0.5)' }} />
                         </div>
                         {cvName ? (

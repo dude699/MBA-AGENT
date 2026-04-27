@@ -198,7 +198,7 @@ export default function App() {
   }, [cvJobs]);
 
   return (
-    <div className="app-root" style={{ background: '#ffffff', color: '#0a0a0a', minHeight: '100vh', touchAction: 'pan-y pan-x' }}>
+    <div className="app-root" style={{ background: '#ffffff', color: '#000000', minHeight: '100vh', touchAction: 'pan-y pan-x' }}>
       {/* Header with Search + Filters */}
       <Header />
 
@@ -214,7 +214,7 @@ export default function App() {
                     onClick={() => { setBrowseMode('live'); hapticFeedback('light'); }}
                     className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-[11px] font-bold transition-all ${
                       browseMode === 'live'
-                        ? 'bg-white text-[#0a0a0a] shadow-sm'
+                        ? 'bg-white text-[#000000] shadow-sm'
                         : 'text-[#9ca3af]'
                     }`}
                   >
@@ -225,7 +225,7 @@ export default function App() {
                     onClick={() => { setBrowseMode('foryou'); hapticFeedback('light'); }}
                     className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-[11px] font-bold transition-all relative ${
                       browseMode === 'foryou'
-                        ? 'bg-white text-[#0a0a0a] shadow-sm'
+                        ? 'bg-white text-[#000000] shadow-sm'
                         : 'text-[#9ca3af]'
                     }`}
                   >
@@ -239,7 +239,7 @@ export default function App() {
                     onClick={() => { setBrowseMode('archive'); hapticFeedback('light'); }}
                     className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-[11px] font-bold transition-all ${
                       browseMode === 'archive'
-                        ? 'bg-white text-[#0a0a0a] shadow-sm'
+                        ? 'bg-white text-[#000000] shadow-sm'
                         : 'text-[#9ca3af]'
                     }`}
                   >

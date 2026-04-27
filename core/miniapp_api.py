@@ -2095,7 +2095,7 @@ async def handle_cv_matched_jobs(request: web.Request) -> web.Response:
     """
     GET /api/cv-matched-jobs?telegram_id=...&page=1&per_page=20&min_score=30
 
-    PRISM v11 — "For You" tab data source.
+    NEXUS v0.2 — "For You" tab data source.
 
     Fetches a broad pool of recent listings (SQLite + Supabase latest_jobs),
     scores each against the user's uploaded CV via zero-cost rapidfuzz
@@ -2227,31 +2227,38 @@ async def handle_cv_matched_jobs(request: web.Request) -> web.Response:
             )
 
         # ===== 3. Score every candidate against the CV =====
+        # NEXUS v0.2 critical fix (2026-04): when the user has NOT uploaded
+        # a CV, the previous implementation returned the entire candidate
+        # pool sorted by description-length / stipend with a placeholder
+        # match_score of 50. That caused the "For You" tab to display the
+        # same garbage listings to every account regardless of CV status,
+        # because the frontend's empty-state banner only fires when
+        # `cvJobs.length === 0`. We now short-circuit and return an empty
+        # data array with `hasCV: false`, so the mini-app shows the
+        # "Upload your CV" empty-state instead of arbitrary jobs.
+        has_cv = bool(cv_status.get('has_cv', False))
+
+        if not has_cv:
+            return _json_response({
+                "success": True,
+                "data": [],
+                "meta": {
+                    "total": 0,
+                    "page": page,
+                    "pageSize": per_page,
+                    "hasMore": False,
+                    "hasCV": False,
+                    "topKeywords": [],
+                    "keywordCount": 0,
+                    "warning": "Upload your CV in Settings to unlock personalised ranking.",
+                },
+                "timestamp": datetime.now(IST).isoformat(),
+            })
+
+        # CV is present — score all candidates and apply the optional floor
         scored = matcher.score_listings_batch(candidates, telegram_id)
 
-        # NEXUS v0.2 fix: when the user has NOT uploaded a CV, every
-        # listing receives the placeholder score 50.0 — sorting by that
-        # produces an arbitrary order, which is exactly the "Tally
-        # Accountant in Agra" garbage the user was seeing. In that case,
-        # fall back to a deterministic, useful order instead:
-        #   1. Listings with a non-empty description (richer info)
-        #   2. Higher stipend
-        #   3. Recency by posted_at (newest first)
-        # The match_score returned to the UI stays at 50 so we don't
-        # imply a personalised ranking we can't deliver — the UI banner
-        # already prompts the user to upload a CV.
-        has_cv = bool(cv_status.get('has_cv', False))
-        if not has_cv:
-            def _no_cv_sort_key(item):
-                desc_len = len((item.get('description_text') or '')[:1000])
-                stipend = int(item.get('stipend') or 0)
-                posted = (item.get('posted_at') or '')
-                # Negate stipend so higher comes first; desc_len > 0 boosts; posted DESC
-                return (-(1 if desc_len > 50 else 0), -stipend, -1 * len(posted), posted)
-            scored = sorted(scored, key=_no_cv_sort_key)
-
-        # Apply min_score filter (only meaningful when a CV exists)
-        if min_score > 0 and has_cv:
+        if min_score > 0:
             scored = [s for s in scored if s.get('cv_match_score', 0) >= min_score]
 
         total = len(scored)

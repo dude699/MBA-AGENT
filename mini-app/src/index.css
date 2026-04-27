@@ -2,28 +2,46 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ===== ROOT VARIABLES — PRISM v0.1 Ultra Premium White Theme ===== */
+/* ===== ROOT VARIABLES — NEXUS v0.2 Deep-Black Premium Theme =====
+ *
+ * Palette redesigned for NEXUS: every dark colour is now a true deep
+ * black (#000–#070710 range). The previous theme used #000000 + #0d0d10
+ * which trended towards charcoal/navy and read as "soft black" on OLED.
+ *
+ * Hard rules:
+ *   - Pure black surfaces:      #000000  (header, BottomBar, primary btn)
+ *   - Deep black ink (text):    #050507
+ *   - Carbon (one step lighter, for hover/border): #0d0d10
+ *   - Slate (used as gradient pair, never alone):  #14141a
+ * ============================================================ */
 :root {
   --tg-theme-bg-color: #ffffff;
-  --tg-theme-text-color: #0a0a0a;
+  --tg-theme-text-color: #050507;
   --tg-theme-hint-color: #6b7280;
-  --tg-theme-button-color: #0a0a0a;
+  --tg-theme-button-color: #000000;
   --tg-theme-button-text-color: #ffffff;
   --tg-theme-secondary-bg-color: #f8f9fa;
   --safe-area-top: env(safe-area-inset-top, 0px);
   --safe-area-bottom: env(safe-area-inset-bottom, 0px);
   --tg-header-height: 0px;
 
-  /* Premium gradients — refined palette */
-  --gradient-primary: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 100%);
-  --gradient-accent: linear-gradient(135deg, #0a0a0a 0%, #374151 100%);
+  /* Deep-black NEXUS palette */
+  --nexus-black:    #000000;   /* pure black */
+  --nexus-ink:      #050507;   /* deep black, used for text */
+  --nexus-carbon:   #0d0d10;   /* one step lighter, for hover */
+  --nexus-slate:    #14141a;   /* used only inside gradients */
+  --nexus-graphite: #1c1c24;   /* still dark, used on cards over black bg */
+
+  /* Premium gradients — deep-black NEXUS palette */
+  --gradient-primary: linear-gradient(135deg, #000000 0%, #0d0d10 100%);
+  --gradient-accent:  linear-gradient(135deg, #000000 0%, #1c1c24 100%);
   --gradient-success: linear-gradient(135deg, #059669 0%, #10b981 100%);
   --gradient-warning: linear-gradient(135deg, #d97706 0%, #f59e0b 100%);
-  --gradient-premium: linear-gradient(135deg, #0a0a0a 0%, #1e3a5f 50%, #0a0a0a 100%);
-  --gradient-glass: linear-gradient(135deg, rgba(255,255,255,0.98) 0%, rgba(248,249,250,0.95) 100%);
-  --gradient-card: linear-gradient(145deg, #ffffff 0%, #fafbfc 100%);
-  --gradient-dark: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 50%, #0a0a0a 100%);
-  --gradient-ai: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a78bfa 100%);
+  --gradient-premium: linear-gradient(135deg, #000000 0%, #14141a 50%, #000000 100%);
+  --gradient-glass:   linear-gradient(135deg, rgba(255,255,255,0.98) 0%, rgba(248,249,250,0.95) 100%);
+  --gradient-card:    linear-gradient(145deg, #ffffff 0%, #fafbfc 100%);
+  --gradient-dark:    linear-gradient(135deg, #000000 0%, #0d0d10 50%, #000000 100%);
+  --gradient-ai:      linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a78bfa 100%);
   --gradient-shimmer: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.4) 50%, transparent 100%);
 
   /* Layout */
@@ -35,20 +53,20 @@
   --surface-muted: #f3f4f6;
   --surface-border: #e5e7eb;
   --surface-hover: #f9fafb;
-  --text-primary: #0a0a0a;
+  --text-primary:   #050507;   /* was #000000 — now true deep black */
   --text-secondary: #4b5563;
-  --text-tertiary: #9ca3af;
-  --accent-primary: #0a0a0a;
-  --accent-green: #059669;
-  --accent-blue: #2563eb;
-  --accent-red: #dc2626;
-  --accent-amber: #d97706;
+  --text-tertiary:  #9ca3af;
+  --accent-primary: #000000;   /* was #000000 — now pure black */
+  --accent-green:   #059669;
+  --accent-blue:    #2563eb;
+  --accent-red:     #dc2626;
+  --accent-amber:   #d97706;
 
   /* Premium easing curves */
   --ease-premium: cubic-bezier(0.22, 1, 0.36, 1);
-  --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
-  --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
-  --ease-spring: cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  --ease-bounce:  cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-smooth:  cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-spring:  cubic-bezier(0.175, 0.885, 0.32, 1.275);
 }
 
 /* ===== BASE STYLES ===== */
@@ -84,7 +102,7 @@
     min-height: 100vh;
     min-height: 100dvh;
     background: #ffffff;
-    color: #0a0a0a;
+    color: #000000;
     font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
     /* Premium smooth scroll */
     scroll-behavior: smooth;
@@ -207,7 +225,7 @@
   /* Buttons — premium with micro-interactions */
   .btn-primary {
     @apply font-semibold px-6 py-3 rounded-xl;
-    background: #0a0a0a;
+    background: #000000;
     color: #ffffff;
     box-shadow: 0 2px 8px rgba(0,0,0,0.15), 0 1px 2px rgba(0,0,0,0.1);
     transition: all 0.3s var(--ease-premium);
@@ -238,7 +256,7 @@
   .btn-secondary {
     @apply font-medium px-5 py-2.5 rounded-xl;
     background: #f3f4f6;
-    color: #0a0a0a;
+    color: #000000;
     border: 1px solid #e5e7eb;
     transition: all 0.25s var(--ease-premium);
   }
@@ -256,13 +274,13 @@
   }
   .btn-ghost:hover {
     background: #f3f4f6;
-    color: #0a0a0a;
+    color: #000000;
   }
   .btn-ghost:active { transform: scale(0.97); }
 
   .btn-gradient {
     @apply font-semibold px-6 py-3 rounded-xl;
-    background: #0a0a0a;
+    background: #000000;
     color: #ffffff;
     box-shadow: 0 2px 8px rgba(0,0,0,0.12);
     transition: all 0.3s var(--ease-premium);
@@ -273,13 +291,13 @@
     @apply w-full px-4 py-3 rounded-xl;
     background: #ffffff;
     border: 1.5px solid #e5e7eb;
-    color: #0a0a0a;
+    color: #000000;
     transition: all 0.25s var(--ease-premium);
   }
   .input-field::placeholder { color: #9ca3af; }
   .input-field:focus {
     outline: none;
-    border-color: #0a0a0a;
+    border-color: #000000;
     box-shadow: 0 0 0 3px rgba(10,10,10,0.06), 0 2px 8px rgba(0,0,0,0.04);
   }
 
@@ -312,7 +330,7 @@
 
   .chip-active {
     @apply chip border-transparent;
-    background: #0a0a0a;
+    background: #000000;
     color: #ffffff;
     box-shadow: 0 2px 8px rgba(0,0,0,0.12);
   }
@@ -391,7 +409,7 @@
     -webkit-backface-visibility: hidden;
   }
   .internship-card.selected {
-    border-color: #0a0a0a;
+    border-color: #000000;
     box-shadow: 0 0 0 2px rgba(10,10,10,0.1), 0 2px 8px rgba(0,0,0,0.06);
   }
 
@@ -409,7 +427,7 @@
   /* AI Chat bubbles — premium with subtle shadow */
   .chat-bubble-user {
     @apply px-4 py-3 rounded-2xl rounded-tr-md text-sm leading-relaxed;
-    background: #0a0a0a;
+    background: #000000;
     color: #ffffff;
     box-shadow: 0 2px 12px rgba(0,0,0,0.15);
     word-break: break-word;
@@ -419,7 +437,7 @@
   .chat-bubble-ai {
     @apply px-4 py-3 rounded-2xl rounded-tl-md text-sm leading-relaxed;
     background: linear-gradient(135deg, #f8f9fa 0%, #f3f4f6 100%);
-    color: #0a0a0a;
+    color: #000000;
     border: 1px solid rgba(229,231,235,0.7);
     box-shadow: 0 1px 4px rgba(0,0,0,0.02);
     word-break: break-word;
@@ -427,7 +445,7 @@
   }
 
   /* Chat markdown */
-  .chat-markdown b, .chat-markdown strong { @apply font-bold; color: #0a0a0a; }
+  .chat-markdown b, .chat-markdown strong { @apply font-bold; color: #000000; }
   .chat-markdown i, .chat-markdown em { @apply italic; }
   .chat-markdown code {
     @apply text-[10px] font-mono px-1.5 py-0.5 rounded;
@@ -472,7 +490,7 @@
   }
   .profile-toggle:active { transform: scale(0.95); }
   .profile-toggle.active {
-    background: #0a0a0a;
+    background: #000000;
     color: #ffffff;
     box-shadow: 0 2px 8px rgba(0,0,0,0.15);
   }
@@ -491,7 +509,7 @@
   .thinking-dots { @apply flex items-center gap-1.5; }
   .thinking-dot {
     @apply w-2 h-2 rounded-full;
-    background: #0a0a0a;
+    background: #000000;
     animation: thinking-wave 1.4s ease-in-out infinite;
   }
 
@@ -574,14 +592,14 @@
   .line-clamp-3 { overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
 
   .gradient-text {
-    background: linear-gradient(135deg, #0a0a0a, #374151);
+    background: linear-gradient(135deg, #000000, #374151);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
   }
 
   .gradient-text-dark {
-    background: #0a0a0a;
+    background: #000000;
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
@@ -591,7 +609,7 @@
   .bg-surface-white { background: #ffffff; }
   .bg-surface-muted { background: #f3f4f6; }
   .bg-surface-border { background: #e5e7eb; }
-  .text-primary-900 { color: #0a0a0a; }
+  .text-primary-900 { color: #050507; }
   .text-primary-800 { color: #1f2937; }
   .text-primary-700 { color: #374151; }
   .text-primary-600 { color: #4b5563; }
@@ -604,7 +622,7 @@
   .bg-primary-50 { background: #f9fafb; }
   .bg-primary-100 { background: #f3f4f6; }
   .border-primary-200\/60 { border-color: rgba(229,231,235,0.6); }
-  .text-accent { color: #0a0a0a; }
+  .text-accent { color: #000000; }
   .shadow-elevated { box-shadow: 0 4px 24px rgba(0,0,0,0.06); }
 
   /* Premium GPU-accelerated animations */
@@ -753,7 +771,7 @@
   animation: smooth-spin 1s linear infinite;
 }
 
-/* ===== PRISM v0.1 ENHANCED ANIMATIONS ===== */
+/* ===== NEXUS v0.1 ENHANCED ANIMATIONS ===== */
 
 /* Staggered card entrance — each card delays slightly */
 .card-stagger-enter {
@@ -919,7 +937,7 @@
 .typing-indicator span {
   width: 8px;
   height: 8px;
-  background: #0a0a0a;
+  background: #000000;
   border-radius: 50%;
   opacity: 0.3;
   animation: typing-bounce 1.4s ease-in-out infinite;
