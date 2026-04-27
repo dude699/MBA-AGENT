@@ -296,9 +296,12 @@ class WebServer:
         app.router.add_get('/status', self._handle_status)
         app.router.add_get('/ping', self._handle_ping)
         app.router.add_get('/telegram-status', self._handle_telegram_status)
+        # NEXUS v0.2 — public layer snapshot (returns 503 when disabled).
+        app.router.add_get('/nexus', self._handle_nexus)
         app.router.add_route('HEAD', '/', self._handle_ping)
         app.router.add_route('HEAD', '/health', self._handle_ping)
         app.router.add_route('HEAD', '/ping', self._handle_ping)
+        app.router.add_route('HEAD', '/nexus', self._handle_ping)
         
         # Register auth API routes for Mini-App security
         try:
@@ -401,6 +404,51 @@ class WebServer:
         }
         return web.Response(
             text=json.dumps(status),
+            content_type='application/json',
+        )
+
+    async def _handle_nexus(self, request: web.Request) -> web.Response:
+        """NEXUS v0.2 layer-status endpoint.
+
+        Returns 200 + JSON snapshot when the runtime is live, 503 + reason
+        when NEXUS is disabled or hasn't booted yet. Safe to call publicly —
+        no secrets or session data is exposed.
+        """
+        self.health.record_request()
+        try:
+            from core.nexus_runtime import get_runtime
+        except Exception as e:
+            return web.Response(
+                status=503,
+                text=json.dumps({"enabled": False, "reason": f"import_error: {e}"}),
+                content_type='application/json',
+            )
+
+        rt = get_runtime()
+        if rt is None:
+            return web.Response(
+                status=503,
+                text=json.dumps({
+                    "enabled": False,
+                    "reason": "NEXUS_ENABLED is not set or runtime has not booted",
+                    "hint":   "Set NEXUS_ENABLED=true in env (and restart) to opt-in.",
+                }),
+                content_type='application/json',
+            )
+
+        try:
+            snap = await rt.snapshot()
+        except Exception as e:
+            return web.Response(
+                status=503,
+                text=json.dumps({"enabled": True, "error": str(e)}),
+                content_type='application/json',
+            )
+
+        snap["enabled"]   = True
+        snap["timestamp"] = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S IST")
+        return web.Response(
+            text=json.dumps(snap, default=str),
             content_type='application/json',
         )
 

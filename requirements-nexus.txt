@@ -1,0 +1,28 @@
+# ============================================================
+# NEXUS v0.2 — Heavy Worker Requirements (Stealth Triad + Crawl4AI + Skyvern)
+# ============================================================
+# Install ONLY on a worker dyno with >= 2GB RAM.
+# Render free 512MB tier keeps requirements.txt (PRISM stack).
+#
+# Apply with:
+#   pip install -r requirements-nexus.txt
+#   python -m camoufox fetch
+#   crawl4ai-setup && crawl4ai-doctor
+#   skyvern quickstart        # choose LOCAL mode (no cloud)
+# ============================================================
+
+# Inherit base PRISM dependencies
+-r requirements.txt
+
+# === Layer 1 — Stealth Browser Triad ===
+# Camoufox (coryking active fork — Firefox 142.0.1, C++ fingerprint spoof)
+camoufox @ git+https://github.com/coryking/camoufox.git@v142.0.1-fork.27#subdirectory=pythonlib
+
+# Browser-Use v2.0 (Jan 2026, MIT, 79K stars)
+browser-use>=0.2.0
+
+# Skyvern 2.0 (YC S23, Apache 2.0)
+skyvern>=2.0.0
+
+# === Layer 2 — Universal Job Discovery ===
+crawl4ai>=0.5.0

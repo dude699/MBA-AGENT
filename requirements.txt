@@ -73,3 +73,37 @@ python-jobspy>=1.1         # LinkedIn/Naukri/Indeed multi-portal scraper — ~5M
 # === PRISM v11: CV Parsing (lightweight fallback) ===
 # pdftotext is preferred (used if available in PATH), pypdf is the pure-python fallback.
 pypdf>=4.0                 # Pure-python PDF text extraction — ~2MB
+
+# ============================================================
+# NEXUS v0.2 — Stealth Browser Triad + Universal Discovery + RPA
+# Verified April 26, 2026 — every package live & free
+# Install separately on a beefier worker (these are heavy):
+#   pip install -r requirements-nexus.txt
+# Render free tier (512MB) keeps PRISM stack only.
+# ============================================================
+
+# === Layer 1 — Stealth Browser Triad ===
+# Camoufox: coryking active fork, FF142 (the documented apr-2026 fork)
+# camoufox @ git+https://github.com/coryking/camoufox.git@v142.0.1-fork.27#subdirectory=pythonlib
+# Uncomment above on a worker dyno that can handle Firefox + C++ fingerprint spoofing.
+
+# Browser-Use v2.0 (Jan 2026) — MIT, 79K stars
+# browser-use>=0.2.0
+
+# Skyvern 2.0 (YC S23) — Apache 2.0, generates + caches Playwright code
+# skyvern>=2.0.0
+
+# === Layer 2 — Universal Job Discovery ===
+# Crawl4AI — #1 GitHub crawler, Apache 2.0
+# crawl4ai>=0.5.0
+
+# === Layer 3/4 — Vector Embeddings & RAG ===
+# pgvector via Supabase (no python pkg needed; SQL extension only)
+# Embeddings via Groq endpoint (already in groq>=0.9 above)
+
+# === Layer 0 — AES-256 vault helpers ===
+cryptography>=42.0         # Fernet/AES-GCM for session_vault encryption — ~5MB
+
+# === Layer 5 — CAPTCHA tier helpers ===
+# Pillow comes via aiohttp/lxml chain on most images; explicit:
+Pillow>=10.0               # Screenshot relay (T3 Telegram) — ~5MB
