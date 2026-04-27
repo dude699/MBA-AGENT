@@ -85,10 +85,16 @@ export default function Header() {
             </div>
             <div>
               <h1
-                className="text-[15px] font-bold leading-tight tracking-tight"
-                style={{ color: '#ffffff', letterSpacing: '-0.01em' }}
+                className="text-[16px] font-extrabold leading-tight tracking-tight"
+                style={{ color: '#ffffff', letterSpacing: '0.01em' }}
               >
-                InternHub <span style={{ color: 'rgba(255,255,255,0.55)', fontWeight: 600 }}>Pro</span>
+                NEXUS
+                <span
+                  className="ml-1.5 text-[10px] font-semibold align-middle"
+                  style={{ color: 'rgba(255,255,255,0.45)', letterSpacing: '0.08em' }}
+                >
+                  v0.2
+                </span>
               </h1>
               <div className="flex items-center gap-1.5">
                 <span
@@ -96,10 +102,10 @@ export default function Header() {
                   style={{ boxShadow: '0 0 6px rgba(52,211,153,0.6)' }}
                 />
                 <p
-                  className="text-[10px] font-bold tracking-[0.18em] uppercase"
+                  className="text-[9.5px] font-semibold tracking-[0.14em] uppercase"
                   style={{ color: 'rgba(255,255,255,0.55)' }}
                 >
-                  NEXUS · v0.2
+                  Networked Engine for eXecutive Upskilling Search
                 </p>
               </div>
             </div>

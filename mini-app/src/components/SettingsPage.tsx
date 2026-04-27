@@ -486,10 +486,10 @@ export default function SettingsPage() {
       {/* App Info */}
       <div className="text-center pb-8">
         <p className="text-[10px] text-primary-400 font-medium tracking-wide">
-          NEXUS v0.1 — InternHub Pro
+          NEXUS · v0.2
         </p>
         <p className="text-[10px] text-primary-300">
-          Precision Recruitment Intelligence & Scoring Machine
+          Networked Engine for eXecutive Upskilling Search
         </p>
       </div>
     </div>
