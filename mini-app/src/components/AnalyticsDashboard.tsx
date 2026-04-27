@@ -55,7 +55,7 @@ export default function AnalyticsDashboard() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <BarChart3 className="w-5 h-5" style={{ color: '#0a0a0a' }} />
+          <BarChart3 className="w-5 h-5" style={{ color: '#000000' }} />
           <h2 className="text-base font-bold text-primary-900">Analytics Dashboard</h2>
         </div>
         <button
@@ -77,11 +77,11 @@ export default function AnalyticsDashboard() {
           accent="#3b82f6"
         />
         <MetricCard
-          icon={<Send className="w-5 h-5" style={{ color: '#0a0a0a' }} />}
+          icon={<Send className="w-5 h-5" style={{ color: '#000000' }} />}
           label="Applied"
           value={Math.max(analytics.totalApplied, appliedIds.size).toString()}
           bg="#f3f4f6"
-          accent="#0a0a0a"
+          accent="#000000"
         />
         <MetricCard
           icon={<CheckCircle2 className="w-5 h-5 text-emerald-500" />}

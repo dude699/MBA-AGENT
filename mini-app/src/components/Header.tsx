@@ -1,5 +1,5 @@
 // ============================================================
-// HEADER — PRISM v0.2 Zero-Glitch Frosted Glass Header
+// HEADER — NEXUS v0.2 Zero-Glitch Frosted Glass Header
 // ------------------------------------------------------------
 // Changes vs v0.1:
 //   - Replaced every motion.* element with plain HTML.
@@ -50,45 +50,56 @@ export default function Header() {
       className="sticky z-40"
       style={{
         top: 'calc(env(safe-area-inset-top, 0px) + var(--tg-header-height, 0px))',
-        background: 'rgba(5,5,8,0.97)',
-        backdropFilter: 'blur(24px) saturate(180%)',
-        WebkitBackdropFilter: 'blur(24px) saturate(180%)',
-        borderBottom: '1px solid rgba(255,255,255,0.08)',
+        // Deep-black NEXUS header — pure black with the faintest indigo
+        // tint for compositor depth.
+        background: 'rgba(0,0,0,0.98)',
+        backdropFilter: 'blur(28px) saturate(200%)',
+        WebkitBackdropFilter: 'blur(28px) saturate(200%)',
+        borderBottom: '1px solid rgba(255,255,255,0.06)',
       }}
     >
       {/* Top Bar */}
       <div className="px-4 pt-3 pb-2">
         <div className="flex items-center justify-between mb-3">
-          {/* Brand */}
+          {/* Brand — NEXUS logomark on deep black */}
           <div className="flex items-center gap-3">
             <div
               className="w-10 h-10 rounded-xl flex items-center justify-center relative overflow-hidden active:scale-[0.92] transition-transform"
               style={{
-                background: 'linear-gradient(135deg, #ffffff 0%, #f0f0f0 100%)',
-                boxShadow: '0 2px 12px rgba(255,255,255,0.15)',
+                // Inverted: pure black square with white glyph + thin
+                // luminous border. Reads as "premium dark" not "shiny".
+                background: 'linear-gradient(135deg, #0d0d10 0%, #000000 100%)',
+                border: '1px solid rgba(255,255,255,0.12)',
+                boxShadow: '0 2px 12px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.08)',
                 transitionDuration: '120ms',
               }}
             >
-              <Zap className="w-5 h-5 text-black" strokeWidth={2.5} />
+              <Zap className="w-5 h-5" style={{ color: '#ffffff' }} strokeWidth={2.5} />
               <div
                 aria-hidden="true"
-                className="absolute inset-0 opacity-30"
+                className="absolute inset-0 opacity-20"
                 style={{
-                  background: 'linear-gradient(135deg, transparent 40%, rgba(255,255,255,0.8) 50%, transparent 60%)',
+                  background: 'linear-gradient(135deg, transparent 30%, rgba(255,255,255,0.4) 50%, transparent 70%)',
                 }}
               />
             </div>
             <div>
-              <h1 className="text-[15px] font-bold leading-tight tracking-tight" style={{ color: '#ffffff' }}>
-                InternHub Pro
+              <h1
+                className="text-[15px] font-bold leading-tight tracking-tight"
+                style={{ color: '#ffffff', letterSpacing: '-0.01em' }}
+              >
+                InternHub <span style={{ color: 'rgba(255,255,255,0.55)', fontWeight: 600 }}>Pro</span>
               </h1>
               <div className="flex items-center gap-1.5">
                 <span
                   className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-micro-pulse"
-                  style={{ boxShadow: '0 0 6px rgba(52,211,153,0.5)' }}
+                  style={{ boxShadow: '0 0 6px rgba(52,211,153,0.6)' }}
                 />
-                <p className="text-[10px] font-medium tracking-wide" style={{ color: 'rgba(255,255,255,0.45)' }}>
-                  PRISM Intelligence Active
+                <p
+                  className="text-[10px] font-bold tracking-[0.18em] uppercase"
+                  style={{ color: 'rgba(255,255,255,0.55)' }}
+                >
+                  NEXUS · v0.2
                 </p>
               </div>
             </div>
@@ -192,7 +203,7 @@ export default function Header() {
             <span
               className="text-[10px] px-1.5 py-0.5 rounded-full font-bold min-w-[18px] text-center"
               style={{
-                background: filterActive ? '#0a0a0a' : 'rgba(255,255,255,0.15)',
+                background: filterActive ? '#000000' : 'rgba(255,255,255,0.15)',
                 color: '#fff',
               }}
             >

@@ -133,7 +133,7 @@ export default function FilterPanel() {
             <h2 className="text-base font-bold text-gray-900 tracking-tight">Filters</h2>
             {activeFilterCount > 0 && (
               <span className="text-white text-[10px] font-bold px-2 py-0.5 rounded-full min-w-[20px] text-center"
-                style={{ background: 'linear-gradient(135deg, #0a0a0a 0%, #374151 100%)' }}>
+                style={{ background: 'linear-gradient(135deg, #000000 0%, #374151 100%)' }}>
                 {activeFilterCount}
               </span>
             )}
@@ -247,7 +247,7 @@ export default function FilterPanel() {
                     }`}
                     style={
                       filters.stipendMin === range.min && filters.stipendMax === range.max
-                        ? { background: 'linear-gradient(135deg, #0a0a0a 0%, #374151 100%)' } : {}
+                        ? { background: 'linear-gradient(135deg, #000000 0%, #374151 100%)' } : {}
                     }
                   >
                     {range.label}
@@ -287,7 +287,7 @@ export default function FilterPanel() {
                         ? 'text-white shadow-sm'
                         : 'bg-white text-gray-600 border border-gray-200'
                     }`}
-                    style={filters.durationMax === m ? { background: 'linear-gradient(135deg, #0a0a0a 0%, #374151 100%)' } : {}}
+                    style={filters.durationMax === m ? { background: 'linear-gradient(135deg, #000000 0%, #374151 100%)' } : {}}
                   >
                     {m}mo
                   </button>
@@ -337,7 +337,7 @@ export default function FilterPanel() {
                         ? 'text-white shadow-sm'
                         : 'bg-white text-gray-600 border border-gray-200'
                     }`}
-                    style={filters.locationTypes.includes(type) ? { background: 'linear-gradient(135deg, #0a0a0a 0%, #374151 100%)' } : {}}
+                    style={filters.locationTypes.includes(type) ? { background: 'linear-gradient(135deg, #000000 0%, #374151 100%)' } : {}}
                   >
                     {type}
                   </button>
@@ -436,7 +436,7 @@ export default function FilterPanel() {
                       ? 'text-white shadow-sm'
                       : 'bg-white text-gray-600 border border-gray-200'
                   }`}
-                  style={filters.postedWithin === opt.value ? { background: 'linear-gradient(135deg, #0a0a0a 0%, #374151 100%)' } : {}}
+                  style={filters.postedWithin === opt.value ? { background: 'linear-gradient(135deg, #000000 0%, #374151 100%)' } : {}}
                 >
                   {opt.label}
                 </button>
@@ -564,7 +564,7 @@ function FilterSection({
           <span className="text-sm font-semibold text-gray-800">{title}</span>
           {count > 0 && (
             <span className="text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full min-w-[16px] text-center"
-              style={{ background: 'linear-gradient(135deg, #0a0a0a 0%, #374151 100%)' }}>
+              style={{ background: 'linear-gradient(135deg, #000000 0%, #374151 100%)' }}>
               {count}
             </span>
           )}
@@ -617,7 +617,7 @@ function ChipGrid({
                 ? 'text-white shadow-sm'
                 : 'bg-white text-gray-600 border border-gray-200 active:bg-gray-50'
             }`}
-            style={active ? { background: 'linear-gradient(135deg, #0a0a0a 0%, #374151 100%)' } : {}}
+            style={active ? { background: 'linear-gradient(135deg, #000000 0%, #374151 100%)' } : {}}
           >
             {item}
           </button>
@@ -643,7 +643,7 @@ function ToggleSwitch({
       <div
         className="w-9 h-5 rounded-full relative"
         style={{
-          background: checked ? '#0a0a0a' : '#e5e7eb',
+          background: checked ? '#000000' : '#e5e7eb',
           transition: 'background 0.2s ease',
         }}
       >

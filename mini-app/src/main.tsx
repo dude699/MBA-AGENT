@@ -29,7 +29,7 @@ try {
     if (tg.enableClosingConfirmation) {
       tg.enableClosingConfirmation();
     }
-    // CRITICAL FIX (PRISM v0.1): Disable Telegram's viewport height management
+    // CRITICAL FIX (NEXUS v0.1): Disable Telegram's viewport height management
     // which locks the webview height and prevents native scrolling.
     if (tg.requestFullscreen) {
       tg.requestFullscreen();
@@ -39,11 +39,11 @@ try {
     if (tg.disableVerticalSwipes) {
       tg.disableVerticalSwipes();
     }
-    // PRISM FIX: Force viewport to be correct height
+    // NEXUS FIX: Force viewport to be correct height
     if (tg.isExpanded === false) {
       tg.expand();
     }
-    // PRISM FIX: Set viewport height CSS variable for proper layout
+    // NEXUS FIX: Set viewport height CSS variable for proper layout
     // CRITICAL: Do NOT set body.style.height to a fixed pixel value!
     // That creates a fixed-height scroll container that fights with content.
     // Instead, set min-height and let body expand naturally with content.
@@ -59,7 +59,7 @@ try {
     tg.onEvent?.('viewportChanged', setVH);
     window.addEventListener('resize', setVH);
 
-    // PRISM FIX v3.0: Handle Telegram native header overlap
+    // NEXUS FIX v3.0: Handle Telegram native header overlap
     // Telegram Mini Apps have a native header bar (back/close buttons) that
     // can overlap with app content. We need to account for this extra height.
     const setTgSafeArea = () => {
@@ -90,7 +90,7 @@ try {
   console.log('Telegram WebApp SDK not available (running in browser)');
 }
 
-// PRISM v0.1: Global touch scroll fix for Telegram WebApp
+// NEXUS v0.1: Global touch scroll fix for Telegram WebApp
 // Ensures that touch events on the body always result in scrolling,
 // not being consumed by Telegram's gesture system.
 (function fixTelegramScrolling() {

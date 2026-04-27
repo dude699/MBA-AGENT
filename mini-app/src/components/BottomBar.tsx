@@ -1,5 +1,5 @@
 // ============================================================
-// BOTTOM BAR — PRISM v0.2 Zero-Glitch Navigation
+// BOTTOM BAR — NEXUS v0.2 Zero-Glitch Navigation
 // ------------------------------------------------------------
 // Changes vs v0.1:
 //   - Removed `layoutId` spring on the active indicator. The
@@ -45,7 +45,7 @@ export default function BottomBar({ activeTab, onTabChange, isAdmin = false }: B
             onClick={() => { setBatchPanelOpen(true); hapticFeedback('medium'); }}
             className="w-full py-3.5 rounded-2xl font-bold text-sm flex items-center justify-center gap-2.5 active:scale-[0.97] transition-transform"
             style={{
-              background: 'linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 100%)',
+              background: 'linear-gradient(135deg, #000000 0%, #0d0d10 100%)',
               color: '#ffffff',
               boxShadow: '0 8px 32px rgba(0,0,0,0.25), 0 2px 8px rgba(0,0,0,0.15)',
               transitionDuration: '120ms',
@@ -134,7 +134,7 @@ function NavItem({ icon, label, active, onClick, badge, hasIndicator }: NavItemP
         style={{
           width: 20,
           height: 3,
-          background: 'linear-gradient(90deg, #0a0a0a, #374151)',
+          background: 'linear-gradient(90deg, #000000, #374151)',
           borderRadius: '0 0 4px 4px',
           boxShadow: active ? '0 2px 8px rgba(10,10,10,0.2)' : 'none',
           opacity: active ? 1 : 0,
@@ -147,7 +147,7 @@ function NavItem({ icon, label, active, onClick, badge, hasIndicator }: NavItemP
           className: 'w-[20px] h-[20px]',
           strokeWidth: active ? 2.4 : 1.8,
           style: {
-            color: active ? '#0a0a0a' : '#9ca3af',
+            color: active ? '#000000' : '#9ca3af',
             transition: 'color 140ms ease',
           },
         })}
@@ -173,7 +173,7 @@ function NavItem({ icon, label, active, onClick, badge, hasIndicator }: NavItemP
       <span
         className="text-[10px] font-semibold"
         style={{
-          color: active ? '#0a0a0a' : '#9ca3af',
+          color: active ? '#000000' : '#9ca3af',
           transition: 'color 140ms ease',
         }}
       >

@@ -486,7 +486,7 @@ export default function SettingsPage() {
       {/* App Info */}
       <div className="text-center pb-8">
         <p className="text-[10px] text-primary-400 font-medium tracking-wide">
-          PRISM v0.1 — InternHub Pro
+          NEXUS v0.1 — InternHub Pro
         </p>
         <p className="text-[10px] text-primary-300">
           Precision Recruitment Intelligence & Scoring Machine
@@ -496,7 +496,7 @@ export default function SettingsPage() {
   );
 }
 
-// ===== PRISM SYSTEM STATUS (real-time intelligence matrix) =====
+// ===== NEXUS SYSTEM STATUS (real-time intelligence matrix) =====
 function RealSystemStatus() {
   const [health, setHealth] = useState<any>(null);
   const [loading, setLoading] = useState(false);
@@ -554,7 +554,7 @@ function RealSystemStatus() {
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
             <Activity className="w-4 h-4 text-primary-500" />
-            <h3 className="text-xs font-bold text-primary-800">PRISM System Intelligence</h3>
+            <h3 className="text-xs font-bold text-primary-800">NEXUS System Intelligence</h3>
             {health?.backend && (
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-micro-pulse" 
                 style={{ boxShadow: '0 0 4px rgba(16,185,129,0.5)' }} />

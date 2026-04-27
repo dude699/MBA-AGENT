@@ -204,7 +204,7 @@ export default function AdminPanel() {
       <div className="flex items-center justify-between pt-2">
         <div className="flex items-center gap-2.5">
           <div className="w-9 h-9 rounded-xl flex items-center justify-center"
-               style={{ background: 'linear-gradient(135deg, #0a0a0a 0%, #1f2937 100%)' }}>
+               style={{ background: 'linear-gradient(135deg, #000000 0%, #1f2937 100%)' }}>
             <Shield className="w-4.5 h-4.5 text-white" />
           </div>
           <div>
@@ -339,7 +339,7 @@ export default function AdminPanel() {
             <div key={u.telegram_id}
                  className="flex items-center gap-2 p-2 rounded-xl bg-white border border-gray-100">
               <div className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white"
-                   style={{ background: u.is_admin ? '#0a0a0a' : '#9ca3af' }}>
+                   style={{ background: u.is_admin ? '#000000' : '#9ca3af' }}>
                 {(u.username || '?').slice(0, 1).toUpperCase()}
               </div>
               <div className="min-w-0 flex-1">
@@ -488,7 +488,7 @@ function Section({ title, icon, children, danger }: {
     <div className="rounded-2xl bg-white border p-3"
          style={{ borderColor: danger ? '#fca5a5' : '#f3f4f6' }}>
       <div className="flex items-center gap-2 mb-3">
-        <span style={{ color: danger ? '#dc2626' : '#0a0a0a' }}>{icon}</span>
+        <span style={{ color: danger ? '#dc2626' : '#000000' }}>{icon}</span>
         <h3 className="text-[11px] font-bold uppercase tracking-wider"
             style={{ color: danger ? '#991b1b' : '#1f2937' }}>
           {title}

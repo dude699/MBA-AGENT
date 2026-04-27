@@ -304,7 +304,7 @@ export const SOURCE_CONFIG: Record<string, {
 
 // ===== CREDENTIAL REQUIREMENTS =====
 export const CREDENTIAL_REQUIREMENTS: CredentialRequirement[] = [
-  // PRISM v8.0: Internshala auto-apply with auto reCAPTCHA solving
+  // NEXUS v8.0: Internshala auto-apply with auto reCAPTCHA solving
   // User just enters email + password. Optionally adds a captcha API key
   // for fully automated login (capsolver.com ~$3/1000 solves).
   // Once logged in, session is saved for weeks — zero manual work.
@@ -317,7 +317,7 @@ export const CREDENTIAL_REQUIREMENTS: CredentialRequirement[] = [
       { key: 'session_cookie', label: 'Session Cookie (advanced)', type: 'textarea', required: false, placeholder: 'Paste cookies here (only if login fails)...', helpText: 'Fallback: paste cookies from browser DevTools if auto-login fails.' },
     ],
     loginUrl: 'https://internshala.com/login',
-    notes: 'Enter your Internshala email & password. PRISM auto-handles CAPTCHA and submits applications. For 100% automation, add a capsolver.com API key (~$0.003 per login).',
+    notes: 'Enter your Internshala email & password. NEXUS auto-handles CAPTCHA and submits applications. For 100% automation, add a capsolver.com API key (~$0.003 per login).',
   },
   {
     source: 'linkedin',
