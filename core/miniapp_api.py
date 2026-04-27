@@ -51,12 +51,78 @@ def _get_user_id(request) -> Optional[int]:
     return request.get('telegram_id')
 
 
+def _get_auth_telegram_id(request) -> Optional[str]:
+    """
+    Resolve the caller's telegram_id from (in priority order):
+      1. auth_middleware (request['telegram_id'])
+      2. X-Telegram-Id header  — Telegram WebApp sends this from
+         window.Telegram.WebApp.initDataUnsafe.user.id
+      3. ?telegram_id=… query string (fallback)
+    Returns None if nothing trustworthy is available.
+    """
+    via_mw = request.get('telegram_id')
+    if via_mw:
+        return str(via_mw)
+    hdr = request.headers.get('X-Telegram-Id', '').strip()
+    if hdr:
+        return hdr
+    qs = (request.query.get('telegram_id', '') or '').strip()
+    return qs or None
+
+
+def _is_super_admin(telegram_id: Any) -> bool:
+    """Single source of truth for super-admin identity."""
+    if not telegram_id:
+        return False
+    try:
+        admin_id = int(os.getenv("NEXUS_SUPER_ADMIN_ID", "0") or 0)
+    except ValueError:
+        admin_id = 0
+    if admin_id == 0:
+        try:
+            admin_id = int(os.getenv("ADMIN_TELEGRAM_ID", "0") or 0)
+        except ValueError:
+            admin_id = 0
+    if admin_id == 0:
+        return False
+    try:
+        return int(str(telegram_id).strip()) == admin_id
+    except ValueError:
+        return False
+
+
+def _admin_only(handler):
+    """
+    Decorator: bounce non-super-admin callers with 403 BEFORE the
+    handler runs. Used on /api/admin/* endpoints. Logs every denied
+    attempt with caller IP so we can spot probing.
+    """
+    async def _wrapped(request: web.Request) -> web.Response:
+        caller = _get_auth_telegram_id(request)
+        if not _is_super_admin(caller):
+            ip = request.remote or "?"
+            logger.warning(
+                f"[{MODULE_ID}] ADMIN GATE: rejected non-admin caller "
+                f"id={caller!r} ip={ip} path={request.path}"
+            )
+            return _json_response({
+                "success": False,
+                "error": "Forbidden — super-admin only",
+                "code": "NOT_ADMIN",
+            }, status=403)
+        return await handler(request)
+    _wrapped.__name__ = getattr(handler, '__name__', 'admin_handler')
+    return _wrapped
+
+
 def _json_response(data: Any, status: int = 200) -> web.Response:
     """Create a JSON response with CORS headers for Mini App."""
     resp = web.json_response(data, status=status)
     resp.headers['Access-Control-Allow-Origin'] = '*'
-    resp.headers['Access-Control-Allow-Headers'] = 'Content-Type, X-Session-Token, Authorization'
-    resp.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+    resp.headers['Access-Control-Allow-Headers'] = (
+        'Content-Type, X-Session-Token, Authorization, X-Telegram-Id'
+    )
+    resp.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS, DELETE'
     return resp
 
 
@@ -2062,12 +2128,24 @@ async def handle_cv_matched_jobs(request: web.Request) -> web.Response:
         candidates: List[Dict[str, Any]] = []
         seen_urls: set = set()
 
+        # NEXUS v0.2 — coverage budget. Earlier this was 200+200 (=400)
+        # but Supabase already holds 800–1500 active records, so the
+        # user only saw match scores against a 25% slice. The match
+        # algorithm is O(n) rapidfuzz at < 50ms / 500 listings, so we
+        # can comfortably score against the full pool. Cap at 5000 for
+        # safety — that's an upper bound the keyword path handles in
+        # well under 1s on the 512MB Render dyno.
+        CV_POOL_HARD_CAP = 5000
+        CV_POOL_SQLITE_CAP = 2000
+        CV_POOL_SUPABASE_CAP = 3000
+
         # ===== 1. SQLite clean_listings (recent, high-quality) =====
         try:
             from core.database import get_db
             db = get_db()
             sqlite_listings, _ = db.get_management_internships(
-                limit=200, offset=0, max_duration_months=12, sort_by='date',
+                limit=CV_POOL_SQLITE_CAP, offset=0,
+                max_duration_months=12, sort_by='date',
             )
             for l in sqlite_listings:
                 url = (l.get('source_url', '') or l.get('url', '') or '').strip()
@@ -2096,7 +2174,7 @@ async def handle_cv_matched_jobs(request: web.Request) -> web.Response:
         # ===== 2. Supabase latest_jobs (broader, current session) =====
         try:
             from core.supabase_db import SupabaseJobDB
-            sb_result = SupabaseJobDB.get_latest_jobs(limit=200)
+            sb_result = SupabaseJobDB.get_latest_jobs(limit=CV_POOL_SUPABASE_CAP)
             # get_latest_jobs returns (list, total) tuple
             if isinstance(sb_result, tuple):
                 sb_jobs = sb_result[0] or []
@@ -2136,6 +2214,17 @@ async def handle_cv_matched_jobs(request: web.Request) -> web.Response:
                 or search in (c['company'] or '').lower()
                 or search in (c['description_text'] or '').lower()[:1000]
             ]
+
+        # Safety net — if for any reason we end up with > hard cap
+        # candidates, slice deterministically (newest first via posted_at
+        # desc) so we never blow the request budget.
+        if len(candidates) > CV_POOL_HARD_CAP:
+            candidates.sort(key=lambda c: c.get('posted_at', '') or '', reverse=True)
+            candidates = candidates[:CV_POOL_HARD_CAP]
+            logger.info(
+                f"[{MODULE_ID}] CV-match pool capped {CV_POOL_HARD_CAP} "
+                f"(had {len(candidates)} after filters)"
+            )
 
         # ===== 3. Score every candidate against the CV =====
         scored = matcher.score_listings_batch(candidates, telegram_id)
@@ -2507,10 +2596,16 @@ async def handle_canonical_count(request: web.Request) -> web.Response:
     })
 
 
+@_admin_only
 async def handle_admin_reset_db(request):
     """Admin endpoint to reset all database listings for fresh start.
     POST /api/admin/reset-db
     Body: { "confirm": true, "clear_supabase": true }
+
+    SECURITY: gated by @_admin_only — only the configured super-admin
+    (NEXUS_SUPER_ADMIN_ID / ADMIN_TELEGRAM_ID) can hit this. Before
+    this PR the endpoint was OPEN and could wipe Supabase from any
+    unauthenticated curl. CVE-class issue.
     """
     try:
         body = await request.json() if request.can_read_body else {}
@@ -2664,7 +2759,12 @@ async def handle_internshala_login(request: web.Request) -> web.Response:
                 "error": "Email and password are required",
             }, status=400)
 
-        # Store captcha API key in DB if provided (for reuse in batch-apply)
+        # NEXUS v0.2 SECURITY HARDENING:
+        #  - Per-user credentials encrypted with Fernet (AES-128-CBC + HMAC)
+        #    in core.credential_vault → mirrored to Supabase
+        #    `user_portal_credentials`. Plaintext NEVER hits SQLite or logs.
+        #  - Captcha API key + provider are not user secrets, so they stay
+        #    in the global user_settings table (admin-shared utility).
         if captcha_api_key:
             try:
                 from core.database import get_db
@@ -2674,15 +2774,38 @@ async def handle_internshala_login(request: web.Request) -> web.Response:
             except Exception:
                 pass
 
-        # PRISM v9.0: Store credentials for auto-reuse across batches
-        # This is the key to single-click: user logs in ONCE, we remember forever
+        # Resolve which user is saving these creds. Prefer the
+        # auth-middleware-attached telegram_id; fall back to the body
+        # so the existing UI flow keeps working until middleware is on
+        # for /api/internshala-login.
+        actor_id = (
+            _get_auth_telegram_id(request)
+            or str(body.get('telegram_id', '') or '').strip()
+            or 'anonymous'
+        )
+
         try:
-            from core.database import get_db
-            db = get_db()
-            db.set_setting('internshala_email', email)
-            db.set_setting('internshala_password', password)
-        except Exception:
-            pass
+            from core.credential_vault import save_portal_credentials
+            saved_ok = save_portal_credentials(
+                actor_id, 'internshala',
+                {
+                    'email': email,
+                    'password': password,
+                    # Capsolver key stays alongside the creds so we can
+                    # solve recaptcha during the user's auto-apply runs
+                    # without a second prompt. Still encrypted.
+                    'captcha_api_key': captcha_api_key,
+                    'captcha_provider': captcha_provider,
+                },
+                risk_level='medium',
+            )
+            if not saved_ok:
+                logger.warning(
+                    f"[{MODULE_ID}] credential vault save failed for "
+                    f"{actor_id} — falling back to in-memory only"
+                )
+        except Exception as vault_err:
+            logger.warning(f"[{MODULE_ID}] vault unavailable: {vault_err}")
 
         # Attempt login via A-13 InternshalaApplicator
         from agents.a13_auto_apply import get_auto_apply_orchestrator
@@ -2733,6 +2856,265 @@ async def handle_internshala_login(request: web.Request) -> web.Response:
 
 
 # ============================================================
+# SUPER-ADMIN ENDPOINTS (mini-app Admin Panel data source)
+# ============================================================
+# Every endpoint here is gated by @_admin_only — silently 403s
+# anyone who isn't NEXUS_SUPER_ADMIN_ID. The mini-app uses these
+# to render the "Admin" tab that's only visible to you.
+
+@_admin_only
+async def handle_admin_overview(request: web.Request) -> web.Response:
+    """GET /api/admin/overview — single-shot dashboard for the admin tab."""
+    try:
+        from core.database import get_db
+        db = get_db()
+
+        # Listings counts
+        sqlite_counts: Dict[str, int] = {}
+        try:
+            sqlite_counts = db.count_listings_by_table() if hasattr(db, 'count_listings_by_table') else {}
+        except Exception:
+            sqlite_counts = {}
+
+        # Live Supabase counts
+        supabase_counts: Dict[str, int] = {}
+        try:
+            from core.supabase_db import SupabaseJobDB
+            _, latest_total = SupabaseJobDB.get_latest_jobs(limit=1)
+            supabase_counts['latest_jobs'] = int(latest_total or 0)
+        except Exception as e:
+            supabase_counts['error'] = str(e)[:120]
+
+        # User registry
+        users_summary: Dict[str, Any] = {"total": 0, "admins": 0, "users": []}
+        try:
+            from core.security import get_security_manager
+            sec = get_security_manager()
+            all_users = sec.list_all_users() if hasattr(sec, 'list_all_users') else []
+            users_summary = {
+                "total":  len(all_users),
+                "admins": sum(1 for u in all_users if u.get('is_admin')),
+                "users":  [
+                    {
+                        "telegram_id": u.get('telegram_id'),
+                        "username":    u.get('username'),
+                        "is_admin":    bool(u.get('is_admin', False)),
+                        "last_seen":   u.get('last_seen', ''),
+                    }
+                    for u in all_users[:50]
+                ],
+            }
+        except Exception as e:
+            users_summary['error'] = str(e)[:120]
+
+        # NEXUS layer health
+        nexus_snapshot: Dict[str, Any] = {}
+        try:
+            from core.nexus_runtime import get_runtime
+            rt = get_runtime()
+            if rt and hasattr(rt, 'snapshot'):
+                snap = rt.snapshot()
+                nexus_snapshot = {
+                    "version":     getattr(snap, 'version', None) or snap.get('version'),
+                    "layers_ok":   getattr(snap, 'layers_ok', None) or snap.get('layers_ok', []),
+                    "layers_fail": getattr(snap, 'layers_fail', None) or snap.get('layers_fail', {}),
+                    "triad_live":  getattr(snap, 'triad_live', None) or snap.get('triad_live', False),
+                }
+        except Exception as e:
+            nexus_snapshot = {"error": str(e)[:120]}
+
+        # Force_db_reset env detection — surface this in the UI so
+        # the admin can never miss it again.
+        force_reset = os.getenv("FORCE_DB_RESET", "").lower() in ("true", "1", "yes")
+
+        return _json_response({
+            "success": True,
+            "data": {
+                "sqlite":   sqlite_counts,
+                "supabase": supabase_counts,
+                "users":    users_summary,
+                "nexus":    nexus_snapshot,
+                "env_warnings": {
+                    "force_db_reset_enabled": force_reset,
+                    "vault_key_set": bool(
+                        os.getenv("CREDENTIAL_VAULT_KEY") or
+                        os.getenv("SESSION_VAULT_KEY")
+                    ),
+                    "supabase_configured": bool(
+                        os.getenv("SUPABASE_URL") and (
+                            os.getenv("SUPABASE_SERVICE_ROLE_KEY") or
+                            os.getenv("SUPABASE_ANON_KEY")
+                        )
+                    ),
+                },
+                "timestamp": datetime.now(IST).isoformat(),
+            },
+        })
+    except Exception as e:
+        logger.error(f"[{MODULE_ID}] /api/admin/overview error: {e}")
+        return _json_response({"success": False, "error": str(e)[:200]}, status=500)
+
+
+@_admin_only
+async def handle_admin_users_list(request: web.Request) -> web.Response:
+    """GET /api/admin/users — full user registry (admin-only)."""
+    try:
+        from core.security import get_security_manager
+        sec = get_security_manager()
+        users = sec.list_all_users() if hasattr(sec, 'list_all_users') else []
+        return _json_response({"success": True, "data": users})
+    except Exception as e:
+        logger.error(f"[{MODULE_ID}] /api/admin/users error: {e}")
+        return _json_response({"success": False, "error": str(e)[:200]}, status=500)
+
+
+@_admin_only
+async def handle_admin_credentials_list(request: web.Request) -> web.Response:
+    """
+    GET /api/admin/credentials?telegram_id=xxx
+        — list which portals a user has saved (NO plaintext returned).
+    GET /api/admin/credentials  (no telegram_id)
+        — list every user's saved-portal summary across the org.
+    """
+    try:
+        from core.credential_vault import get_credential_vault
+        v = get_credential_vault()
+        if v is None:
+            return _json_response({"success": False, "error": "vault not initialised"}, status=500)
+
+        target = (request.query.get('telegram_id', '') or '').strip()
+        if target:
+            return _json_response({
+                "success": True,
+                "telegram_id": target,
+                "portals": v.list_portals(target),
+            })
+
+        # Whole-org sweep — query Supabase for the (telegram_id, portal) pairs.
+        try:
+            from core.supabase_client import get_supabase
+            sb = get_supabase()
+            if sb is None:
+                return _json_response({"success": True, "rows": []})
+            resp = sb.table('user_portal_credentials').select(
+                "telegram_id, portal, risk_level, updated_at"
+            ).execute()
+            return _json_response({"success": True, "rows": resp.data or []})
+        except Exception as e:
+            return _json_response({"success": False, "error": str(e)[:200]}, status=500)
+    except Exception as e:
+        logger.error(f"[{MODULE_ID}] /api/admin/credentials error: {e}")
+        return _json_response({"success": False, "error": str(e)[:200]}, status=500)
+
+
+@_admin_only
+async def handle_admin_credentials_revoke(request: web.Request) -> web.Response:
+    """
+    POST /api/admin/credentials/revoke
+    Body: { "telegram_id": "...", "portal": "internshala" | "*" }
+    """
+    try:
+        body = await request.json() if request.can_read_body else {}
+    except Exception:
+        body = {}
+    target = str(body.get('telegram_id', '') or '').strip()
+    portal = (body.get('portal', '') or '').strip().lower()
+    if not target:
+        return _json_response({"success": False, "error": "telegram_id required"}, status=400)
+
+    try:
+        from core.credential_vault import get_credential_vault
+        v = get_credential_vault()
+        if v is None:
+            return _json_response({"success": False, "error": "vault unavailable"}, status=500)
+        if portal in ("", "*", "all"):
+            n = v.delete_all_for_user(target)
+        else:
+            n = 1 if v.delete(target, portal) else 0
+        return _json_response({"success": True, "revoked": n})
+    except Exception as e:
+        logger.error(f"[{MODULE_ID}] revoke error: {e}")
+        return _json_response({"success": False, "error": str(e)[:200]}, status=500)
+
+
+@_admin_only
+async def handle_admin_trigger_scrape(request: web.Request) -> web.Response:
+    """POST /api/admin/trigger-scrape — kick off a scrape wave on demand."""
+    try:
+        body = await request.json() if request.can_read_body else {}
+    except Exception:
+        body = {}
+    wave = (body.get('wave', 'auto') or 'auto').lower()
+
+    try:
+        from core.weekly_scheduler import get_weekly_scheduler
+        sched = get_weekly_scheduler()
+        if sched is None:
+            return _json_response({"success": False, "error": "scheduler not running"}, status=503)
+        # Best-effort dispatch — the scheduler exposes wave-start helpers.
+        method = {
+            'morning':  '_run_wave1_morning',
+            'afternoon': '_run_wave2_afternoon',
+            'evening':  '_run_wave3_evening',
+            'auto':     '_run_startup_pipeline',
+        }.get(wave, '_run_startup_pipeline')
+        fn = getattr(sched, method, None)
+        if fn is None:
+            return _json_response({"success": False, "error": f"unknown wave {wave}"}, status=400)
+        # Fire-and-forget — these are sync methods spawning their own threads.
+        import asyncio as _asyncio
+        loop = _asyncio.get_event_loop()
+        loop.run_in_executor(None, fn)
+        return _json_response({"success": True, "wave": wave, "kicked_off": True})
+    except Exception as e:
+        logger.error(f"[{MODULE_ID}] trigger-scrape error: {e}")
+        return _json_response({"success": False, "error": str(e)[:200]}, status=500)
+
+
+@_admin_only
+async def handle_admin_audit_log(request: web.Request) -> web.Response:
+    """GET /api/admin/audit?limit=200 — last N audit log entries."""
+    try:
+        limit = min(1000, max(10, int(request.query.get('limit', '200'))))
+    except ValueError:
+        limit = 200
+    try:
+        from core.security import get_security_manager
+        sec = get_security_manager()
+        rows = sec.get_audit_log(limit=limit) if hasattr(sec, 'get_audit_log') else []
+        return _json_response({"success": True, "data": rows})
+    except Exception as e:
+        logger.error(f"[{MODULE_ID}] audit log error: {e}")
+        return _json_response({"success": False, "error": str(e)[:200]}, status=500)
+
+
+@_admin_only
+async def handle_admin_whoami(request: web.Request) -> web.Response:
+    """GET /api/admin/whoami — quick admin-status check for the UI."""
+    caller = _get_auth_telegram_id(request)
+    return _json_response({
+        "success": True,
+        "is_admin": True,            # passed the gate
+        "telegram_id": caller,
+    })
+
+
+async def handle_whoami(request: web.Request) -> web.Response:
+    """
+    GET /api/whoami — public version (NOT admin-gated, but truthful).
+    Returns {is_admin: bool} so the mini-app can decide whether to
+    even render the Admin tab. Lying here gains the user nothing
+    because the admin endpoints have their own @_admin_only gate.
+    """
+    caller = _get_auth_telegram_id(request)
+    return _json_response({
+        "success": True,
+        "telegram_id": caller,
+        "is_admin": _is_super_admin(caller),
+    })
+
+
+# ============================================================
 # ROUTE REGISTRATION
 # ============================================================
 
@@ -2779,8 +3161,19 @@ def register_miniapp_routes(app):
     # Canonical job count — single source of truth for all surfaces
     app.router.add_get('/api/canonical-count', handle_canonical_count)
 
-    # Admin: Database reset (clears all listings for fresh start)
-    app.router.add_post('/api/admin/reset-db', handle_admin_reset_db)
+    # ── Admin endpoints (every one of these is @_admin_only gated) ──
+    app.router.add_post('/api/admin/reset-db',           handle_admin_reset_db)
+    app.router.add_get ('/api/admin/overview',           handle_admin_overview)
+    app.router.add_get ('/api/admin/users',              handle_admin_users_list)
+    app.router.add_get ('/api/admin/credentials',        handle_admin_credentials_list)
+    app.router.add_post('/api/admin/credentials/revoke', handle_admin_credentials_revoke)
+    app.router.add_post('/api/admin/trigger-scrape',     handle_admin_trigger_scrape)
+    app.router.add_get ('/api/admin/audit',              handle_admin_audit_log)
+    app.router.add_get ('/api/admin/whoami',             handle_admin_whoami)
+    # Public truthful "are you the admin?" probe used to toggle the
+    # Admin tab in the mini-app — the actual admin endpoints don't
+    # rely on this (they self-check), so lying here is harmless.
+    app.router.add_get ('/api/whoami',                   handle_whoami)
 
     # Mini-app: All static file serving is DYNAMIC (not add_static)
     # This way, even if dist/ is built AFTER server startup, files will be served.
