@@ -122,6 +122,24 @@ from core.config import get_config, IST
 from core.database import get_db, DatabaseManager
 from core.ai_router import get_router, AIRouter
 
+# ────────────────────────────────────────────────────────────────────────────
+# NEXUS v0.2 — soft hooks (dedup + scoring). Optional; if unavailable, A-13
+# falls back to legacy behaviour. Enable by setting NEXUS_ENABLED=true.
+# ────────────────────────────────────────────────────────────────────────────
+try:
+    from core.dedup_semantic import DedupEngine as _NexusDedup            # type: ignore
+    _NEXUS_DEDUP_AVAILABLE = True
+except Exception:                                                          # noqa: BLE001
+    _NexusDedup = None                                                     # type: ignore
+    _NEXUS_DEDUP_AVAILABLE = False
+
+try:
+    from core.nexus_runtime import get_runtime as _get_nexus_runtime       # type: ignore
+    _NEXUS_RUNTIME_AVAILABLE = True
+except Exception:                                                          # noqa: BLE001
+    _get_nexus_runtime = None                                              # type: ignore
+    _NEXUS_RUNTIME_AVAILABLE = False
+
 AGENT_ID = "A-13"
 AGENT_NAME = "Auto-Apply Orchestrator"
 
@@ -2753,6 +2771,22 @@ class AutoApplyOrchestrator:
                         stats.skipped += 1
                         continue
 
+                # ===== NEXUS v0.2: SEMANTIC DEDUP PRE-CHECK =====
+                # Layer 7 — pgvector cosine ≥ 0.88 against last 60 days of
+                # applied JDs. Cheap (one cosine query); blocks duplicates that
+                # slipped past the legacy URL/title hash path.
+                if self._nexus_should_skip_duplicate(listing_data):
+                    self.queue_manager.record_result(
+                        queue_id, False,
+                        error="nexus_dedup: semantic duplicate of recent application"
+                    )
+                    stats.skipped += 1
+                    logger.info(
+                        f"[{AGENT_ID}] NEXUS dedup skipped duplicate: "
+                        f"{listing_data.get('company','?')} — {listing_data.get('title','?')[:40]}"
+                    )
+                    continue
+
                 # Update status to applying
                 self.db.update_application_status(queue_id, 'applying')
 
@@ -2846,6 +2880,59 @@ class AutoApplyOrchestrator:
                 )
         except Exception as e:
             logger.debug(f"[{AGENT_ID}] ATS simulation pre-check error: {e}")
+
+    def _nexus_should_skip_duplicate(self, listing: Dict) -> bool:
+        """
+        NEXUS v0.2 Layer 7 — semantic dedup pre-check.
+
+        Returns True when the JD is ≥ 0.88 cosine-similar to a successfully
+        applied job in the last 60 days. Falls back to False (legacy behaviour)
+        when NEXUS isn't enabled or the runtime DB isn't bound yet.
+
+        This is a *cheap* synchronous wrapper: a13 runs sync, so we use the
+        runtime's get_event_loop().run_until_complete on a tight one-cosine
+        query. If anything errors, we never block the apply — log and proceed.
+        """
+        if not _NEXUS_DEDUP_AVAILABLE or not _NEXUS_RUNTIME_AVAILABLE:
+            return False
+        if os.getenv("NEXUS_ENABLED", "").lower() not in ("1", "true", "yes", "on"):
+            return False
+        try:
+            runtime = _get_nexus_runtime()
+        except Exception:
+            return False
+        if runtime is None:
+            return False
+        dedup = getattr(runtime, "_dedup", None)
+        if dedup is None:
+            return False
+        jd = (
+            (listing.get("description_text") or "")
+            + " "
+            + (listing.get("title") or "")
+            + " "
+            + (listing.get("company") or "")
+        ).strip()
+        if len(jd) < 50:
+            return False
+        try:
+            import asyncio
+            check = getattr(dedup, "is_duplicate", None)
+            if check is None:
+                return False
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    return False  # avoid re-entry from within an async context
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            return bool(loop.run_until_complete(
+                check(jd_text=jd, company=listing.get("company") or "")
+            ))
+        except Exception as e:                                              # noqa: BLE001
+            logger.debug(f"[{AGENT_ID}] NEXUS dedup check failed (non-fatal): {e}")
+            return False
 
     def _ensure_cv_tailoring(self, listing_id: int):
         """

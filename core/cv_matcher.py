@@ -1,30 +1,30 @@
 """
 ============================================================
 PRISM v11.0 — CV MATCHING ENGINE
+NEXUS v0.2 upgrade — pgvector semantic blend
 ============================================================
-Scores job listings against the user's uploaded CV using
-zero-cost, zero-RAM fuzzy keyword overlap + TF-IDF-lite.
+Scores job listings against the user's uploaded CV.
 
-Design goals:
-    - No torch / no embeddings / no network calls
-    - < 5MB added memory (uses rapidfuzz already in requirements)
-    - < 50ms to score 500 listings against a 2KB CV
-    - Graceful degrade: if no CV, returns neutral 50.0 score for everything
+Two-layer engine (selected automatically per request):
+    1. NEXUS pgvector path  (preferred when NEXUS_ENABLED=true and the
+       runtime has stored a 1024-dim Groq embedding for this user)
+       → cosine similarity with the cached JD embeddings (Layer 3a).
+       → richer, learns dimension weights from user taps.
+    2. Legacy keyword path  (always-available fallback)
+       → rapidfuzz partial_ratio + token overlap, no network calls.
+       → < 5MB RAM, < 50ms for 500 listings.
 
-Architecture:
-    1. Extract CV text on upload → cache tokenized keywords in memory + disk
-    2. For each listing, compute:
-         - Skill-token overlap (rapidfuzz partial_ratio) — 50% weight
-         - Title/role keyword match — 25% weight
-         - Description TF keyword match — 15% weight
-         - Location/category fit from profile — 10% weight
-    3. Return 0-100 score + matched keywords for UI display
+The legacy path remains for the mini-app's "For You" tab on the 512MB
+Render dyno and for users who haven't uploaded a CV through the new
+Telegram /cv flow yet. Plan A migration: same public API, internals
+upgraded, callers in core/miniapp_api.py unchanged.
 
-Public API:
+Public API (unchanged):
     get_cv_matcher() → singleton CVMatcher
     matcher.score_listing(listing) → {score, matched_keywords, reasons}
     matcher.score_listings_batch(listings) → list of annotated listings
     matcher.refresh_from_cv(telegram_id) → reload CV, invalidate cache
+    matcher.get_cv_status(telegram_id) → {has_cv, keywords, ...}
 ============================================================
 """
 
@@ -307,6 +307,10 @@ class CVMatcher:
         """
         Score a single listing against the cached CV.
 
+        NEXUS v0.2: When NEXUS_ENABLED=true, blends the legacy keyword score
+        (60% weight) with the pgvector cosine score from the user's stored
+        embedding (40% weight). Falls back to pure keyword scoring otherwise.
+
         Returns:
             {
                 'match_score': 0-100 float,
@@ -435,12 +439,104 @@ class CVMatcher:
 
         matched_keywords = sorted(overlap, key=lambda k: -cv_keywords.get(k, 0))[:8]
 
+        # ────────────────────────────────────────────────────────────────
+        # NEXUS v0.2 — pgvector blend (60% keyword / 40% cosine)
+        # Only kicks in when NEXUS_ENABLED=true AND a runtime is bound AND
+        # the user has a stored embedding. ANY error → silent fallback to
+        # the legacy keyword score (never break the mini-app).
+        # ────────────────────────────────────────────────────────────────
+        nexus_score = self._nexus_pgvector_score(safe_id, listing)
+        if nexus_score is not None:
+            blended = round(min(100.0, max(0.0, total * 0.6 + nexus_score * 0.4)), 1)
+            reasons.insert(0, f"Semantic match: {nexus_score:.0f}/100 (NEXUS pgvector)")
+            total = blended
+
         return {
             'match_score': total,
             'matched_keywords': matched_keywords,
             'reasons': reasons,
             'has_cv': has_cv,
         }
+
+    # ────────────────────────────────────────────────────────────────────
+    # NEXUS v0.2 helper — pgvector cosine on the user's stored embedding
+    # ────────────────────────────────────────────────────────────────────
+    def _nexus_pgvector_score(self, safe_id: str, listing: Dict[str, Any]) -> Optional[float]:
+        """
+        Returns 0..100 cosine score against the user's stored 1024-dim Groq
+        embedding, or None when unavailable. Synchronous wrapper — refuses
+        to run inside a running event loop to avoid re-entry."""
+        if os.getenv("NEXUS_ENABLED", "").lower() not in ("1", "true", "yes", "on"):
+            return None
+        try:
+            from core.nexus_runtime import get_runtime               # type: ignore
+        except Exception:
+            return None
+        runtime = None
+        try:
+            runtime = get_runtime()
+        except Exception:
+            return None
+        if runtime is None:
+            return None
+
+        # Build the JD text once; cheap fields only
+        jd = (
+            (listing.get("description_text") or listing.get("jd_text") or "")
+            + " " + (listing.get("title") or "")
+            + " " + (listing.get("company") or "")
+        ).strip()
+        if len(jd) < 30:
+            return None
+
+        # Resolve user_id from telegram handle via the access DAO.
+        # If the runtime has no DAO bound yet (light-mode boot), bail.
+        db = getattr(runtime, "_db", None) or getattr(runtime, "db", None)
+        if db is None:
+            return None
+
+        try:
+            import asyncio
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    return None     # re-entry guard (we're inside web handler)
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+
+            async def _go() -> Optional[float]:
+                # 1. Resolve user_id from telegram handle
+                getter = getattr(db, "get_user_id_by_telegram_handle", None)
+                if getter is None:
+                    return None
+                uid = await getter(safe_id)
+                if uid is None:
+                    return None
+                # 2. Compute cosine via pgvector_matcher.match_with_jd_embedding
+                from core.pgvector_matcher import (
+                    embed_text as _embed,
+                    cosine as _cos,
+                    cosine_to_score as _to_score,
+                )
+                # 3. Fetch user embedding
+                user_emb_getter = getattr(db, "get_user_cv_embedding", None)
+                if user_emb_getter is None:
+                    return None
+                user_emb = await user_emb_getter(uid)
+                if not user_emb or all(v == 0.0 for v in user_emb):
+                    return None
+                # 4. Compute JD embedding (cached if already in jobs table)
+                jd_emb = await _embed(jd[:6000])
+                if not jd_emb or all(v == 0.0 for v in jd_emb):
+                    return None
+                sim = _cos(user_emb, jd_emb)
+                return float(_to_score(sim))
+
+            return loop.run_until_complete(_go())
+        except Exception as e:                                          # noqa: BLE001
+            logger.debug(f"[{MODULE_ID}] NEXUS pgvector blend skipped: {e}")
+            return None
 
     def score_listings_batch(self, listings: List[Dict[str, Any]],
                              telegram_id: str = 'anonymous') -> List[Dict[str, Any]]:
