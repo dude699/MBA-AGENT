@@ -599,9 +599,18 @@ export interface CVStatus {
   top_keywords: string[];
   has_profile: boolean;
   text_preview: string;
+  /** NEXUS v0.2 — true when the CV is also stored in Supabase
+   *  so it survives Render redeploys/restarts. */
+  remote_backup?: boolean;
+  /** Human-readable hint to render in the UI. Empty string when all good. */
+  warning?: string;
 }
 
 export async function fetchCVStatus(telegramId: string = 'anonymous'): Promise<APIResponse<CVStatus>> {
+  const fallback: CVStatus = {
+    has_cv: false, keyword_count: 0, top_keywords: [], has_profile: false,
+    text_preview: '', remote_backup: false, warning: '',
+  };
   try {
     const params = new URLSearchParams({ telegram_id: telegramId });
     const resp = await fetch(`${getApiUrl('/cv/status')}?${params.toString()}`, { headers: getHeaders() });
@@ -609,13 +618,13 @@ export async function fetchCVStatus(telegramId: string = 'anonymous'): Promise<A
     const data = await resp.json();
     return {
       success: data.success,
-      data: data.data || { has_cv: false, keyword_count: 0, top_keywords: [], has_profile: false, text_preview: '' },
+      data: { ...fallback, ...(data.data || {}) },
       timestamp: new Date().toISOString(),
     };
   } catch (error) {
     return {
       success: false,
-      data: { has_cv: false, keyword_count: 0, top_keywords: [], has_profile: false, text_preview: '' },
+      data: fallback,
       timestamp: new Date().toISOString(),
     };
   }

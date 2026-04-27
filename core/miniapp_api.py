@@ -1888,6 +1888,19 @@ async def handle_user_upload_cv(request: web.Request) -> web.Response:
 
         logger.info(f"[{MODULE_ID}] CV uploaded for user {safe_id}: {len(cv_data)} bytes")
 
+        # NEXUS v0.2 fix — mirror the CV to Supabase so it survives
+        # Render redeploys / restarts (data/ is ephemeral on free tier).
+        # Without this every restart silently dropped the CV and the
+        # "For You" tab fell back to neutral scores → irrelevant jobs.
+        mirrored_to_supabase = False
+        try:
+            from core.cv_storage import save_cv as _save_cv_remote
+            mirrored_to_supabase = _save_cv_remote(
+                safe_id, cv_data, cv_filename or 'resume.pdf'
+            )
+        except Exception as mirror_err:
+            logger.warning(f"[{MODULE_ID}] CV Supabase mirror failed (non-fatal): {mirror_err}")
+
         # PRISM v11: Immediately refresh the CV matcher so "For You" tab
         # starts returning scored results on the very next request.
         cv_status_info: Dict[str, Any] = {}
@@ -1906,6 +1919,7 @@ async def handle_user_upload_cv(request: web.Request) -> web.Response:
                 "size": len(cv_data),
                 "telegram_id": telegram_id,
                 "stored": True,
+                "mirrored_to_supabase": mirrored_to_supabase,
                 "cv_status": cv_status_info,
             },
         })
@@ -1973,12 +1987,38 @@ async def handle_cv_status(request: web.Request) -> web.Response:
     GET /api/cv/status?telegram_id=...
     Returns whether user has a CV + preview of extracted keywords.
     Used by the 'For You' tab to show appropriate empty states.
+
+    NEXUS v0.2 — also reports `remote_backup` so the UI can warn the
+    user when their CV exists locally but has NOT been mirrored to
+    Supabase (i.e. it will be lost on the next Render restart).
     """
     try:
         telegram_id = request.query.get('telegram_id', 'anonymous')
         from core.cv_matcher import get_cv_matcher
         matcher = get_cv_matcher()
         status = matcher.get_cv_status(telegram_id)
+
+        # Augment with remote-backup telemetry. Best-effort, never fails.
+        remote_backup = False
+        try:
+            from core.cv_storage import has_remote_cv
+            remote_backup = has_remote_cv(telegram_id)
+        except Exception:
+            remote_backup = False
+        status['remote_backup'] = remote_backup
+        # Surface a single string the UI can render verbatim.
+        if status.get('has_cv') and not remote_backup:
+            status['warning'] = (
+                "CV is on the server but not yet backed up to Supabase — "
+                "re-upload after the next deploy if it disappears."
+            )
+        elif not status.get('has_cv'):
+            status['warning'] = (
+                "Upload your CV in Settings to unlock personalised ranking."
+            )
+        else:
+            status['warning'] = ""
+
         return _json_response({"success": True, "data": status})
     except Exception as e:
         logger.error(f"[{MODULE_ID}] /api/cv/status error: {e}")
@@ -2100,8 +2140,29 @@ async def handle_cv_matched_jobs(request: web.Request) -> web.Response:
         # ===== 3. Score every candidate against the CV =====
         scored = matcher.score_listings_batch(candidates, telegram_id)
 
-        # Apply min_score filter
-        if min_score > 0:
+        # NEXUS v0.2 fix: when the user has NOT uploaded a CV, every
+        # listing receives the placeholder score 50.0 — sorting by that
+        # produces an arbitrary order, which is exactly the "Tally
+        # Accountant in Agra" garbage the user was seeing. In that case,
+        # fall back to a deterministic, useful order instead:
+        #   1. Listings with a non-empty description (richer info)
+        #   2. Higher stipend
+        #   3. Recency by posted_at (newest first)
+        # The match_score returned to the UI stays at 50 so we don't
+        # imply a personalised ranking we can't deliver — the UI banner
+        # already prompts the user to upload a CV.
+        has_cv = bool(cv_status.get('has_cv', False))
+        if not has_cv:
+            def _no_cv_sort_key(item):
+                desc_len = len((item.get('description_text') or '')[:1000])
+                stipend = int(item.get('stipend') or 0)
+                posted = (item.get('posted_at') or '')
+                # Negate stipend so higher comes first; desc_len > 0 boosts; posted DESC
+                return (-(1 if desc_len > 50 else 0), -stipend, -1 * len(posted), posted)
+            scored = sorted(scored, key=_no_cv_sort_key)
+
+        # Apply min_score filter (only meaningful when a CV exists)
+        if min_score > 0 and has_cv:
             scored = [s for s in scored if s.get('cv_match_score', 0) >= min_score]
 
         total = len(scored)
