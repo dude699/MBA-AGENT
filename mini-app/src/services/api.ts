@@ -426,7 +426,7 @@ export async function loginToInternshala(
   email: string,
   password: string,
   captchaApiKey: string = '',
-  captchaProvider: string = 'capsolver',
+  captchaProvider: string = '',
 ): Promise<APIResponse<{ session_valid: boolean; message: string; username: string; needs_captcha_key?: boolean }>> {
   try {
     const resp = await fetch(getApiUrl('/internshala-login'), {

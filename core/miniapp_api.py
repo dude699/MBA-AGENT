@@ -3101,7 +3101,7 @@ async def handle_internshala_login(request: web.Request) -> web.Response:
         email = (body.get('email', '') or '').strip()
         password = (body.get('password', '') or '').strip()
         captcha_api_key = (body.get('captcha_api_key', '') or '').strip()
-        captcha_provider = (body.get('captcha_provider', '') or 'capsolver').strip()
+        captcha_provider = (body.get('captcha_provider', '') or '').strip()
 
         if not email or not password:
             return _json_response({
@@ -3190,11 +3190,17 @@ async def handle_internshala_login(request: web.Request) -> web.Response:
                 "username": "",
             })
         else:
+            # NEXUS v0.2 — surface a clear cookie-path nudge whenever the
+            # failure was CAPTCHA-related. The frontend listens to
+            # `needs_cookie` and auto-opens the cookie panel.
+            captcha_blocked = 'captcha' in (login_error or '').lower()
             return _json_response({
                 "success": False,
                 "error": login_error or "Login failed",
+                "message": login_error or "Login failed",
                 "session_valid": False,
-                "needs_captcha_key": 'captcha' in (login_error or '').lower(),
+                "needs_captcha_key": captcha_blocked,
+                "needs_cookie": captcha_blocked,
             })
 
     except Exception as e:
