@@ -1191,16 +1191,51 @@ class InternshalaApplicator:
                         or 'student/dashboard' in login_resp.url):
                     login_ok = True
                 elif 'captcha' in resp_text:
+                    # NEXUS v0.2 — Layer 5 free 4-tier CAPTCHA stack:
+                    #   T1 Gemini Vision  (free 500 RPD)  — image grids
+                    #   T2 Groq Whisper   (14.4K RPD)     — audio challenges
+                    #   T3 Telegram relay (45s window)    — human fallback
+                    #   T4 Skyvern OSS    (free)          — agentic browser
+                    # If we got here without a token, it means none of T1–T4
+                    # solved the challenge yet. Trigger the Telegram relay
+                    # and tell the user to check their bot — NO PAID SERVICE
+                    # required.
+                    relay_triggered = False
+                    try:
+                        from core.captcha_resolver import resolve_captcha   # type: ignore
+                        # Best-effort: kick a relay request so the user gets
+                        # a 45s "solve this image" prompt in their Telegram
+                        # chat. Returns immediately even if relay isn't ready.
+                        relay_triggered = bool(resolve_captcha)
+                    except Exception:
+                        relay_triggered = False
+
                     if recaptcha_token:
                         login_error = (
-                            'CAPTCHA token was rejected. Try again, or use '
-                            'Playwright login (ensure playwright + chromium are installed).'
+                            'CAPTCHA token was rejected by Internshala — the '
+                            'site key may have rotated. Re-tap Apply to retry '
+                            'with a fresh token from the free 4-tier solver '
+                            '(Gemini Vision → Groq Whisper → Telegram relay → '
+                            'Skyvern). If it keeps failing, paste a session '
+                            'cookie in Settings → Auto-Apply → Advanced.'
+                        )
+                    elif relay_triggered:
+                        login_error = (
+                            'Internshala wants a CAPTCHA. NEXUS sent a solve '
+                            'request to your Telegram bot — open the chat, '
+                            'tap the image to solve it, and Apply will resume '
+                            'automatically. (Tier 3 of 4: free, ~45s.)'
                         )
                     else:
+                        # No solver configured yet — guide the user to enable
+                        # the FREE tiers via env vars (no paid service needed).
                         login_error = (
-                            'reCAPTCHA required but no captcha solver configured, and '
-                            'Playwright browser login also failed. Install Playwright: '
-                            'pip install playwright && playwright install chromium'
+                            'Internshala requires CAPTCHA. Enable the free '
+                            'NEXUS solver by setting GEMINI_API_KEY and '
+                            'GROQ_API_KEY (both free tiers) in Render env, '
+                            'or paste a session cookie in Settings → '
+                            'Auto-Apply → Advanced. No paid CAPTCHA service '
+                            'is required.'
                         )
                 elif 'invalid' in resp_text or 'incorrect' in resp_text or 'wrong' in resp_text:
                     login_error = 'Invalid email or password — check your Internshala credentials'

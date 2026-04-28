@@ -1985,7 +1985,7 @@ async def handle_user_upload_cv(request: web.Request) -> web.Response:
         except Exception as mirror_err:
             logger.warning(f"[{MODULE_ID}] CV Supabase mirror failed (non-fatal): {mirror_err}")
 
-        # PRISM v11: Immediately refresh the CV matcher so "For You" tab
+        # NEXUS v0.2: Immediately refresh the CV matcher so "For You" tab
         # starts returning scored results on the very next request.
         cv_status_info: Dict[str, Any] = {}
         try:
@@ -1996,6 +1996,74 @@ async def handle_user_upload_cv(request: web.Request) -> web.Response:
         except Exception as matcher_err:
             logger.warning(f"[{MODULE_ID}] CV matcher refresh failed: {matcher_err}")
 
+        # NEXUS v0.2 — kick off a FULL backfill rescore in the background.
+        # Without this, all 929 listings keep their stale "neutral CV"
+        # PPO scores from before the upload (visible in 18:20:45 log:
+        # `[A-08] V11: No CV text found, using neutral scores`). User
+        # uploads CV → opens For You → still sees random/SWE jobs
+        # ranked highest because nothing re-scored them against the new CV.
+        rescore_scheduled = False
+        try:
+            import asyncio as _asyncio
+
+            async def _backfill_rescore() -> None:
+                # 1. Preferred path: NEXUS scoring_loop priority queue.
+                #    This is what the architecture spec mandates — runs in
+                #    off-hours window OR when orchestrator idle, scores via
+                #    9-dim engine, persists to clean_listings.semantic_cv_score.
+                try:
+                    from core.nexus_runtime import get_runtime
+                    rt = get_runtime()
+                    if rt is not None:
+                        # Resolve numeric user_id from telegram handle.
+                        db = getattr(rt, "_db", None) or getattr(rt, "db", None)
+                        uid = None
+                        if db is not None and hasattr(db, "get_user_id_by_telegram_handle"):
+                            try:
+                                uid = await db.get_user_id_by_telegram_handle(safe_id)
+                            except Exception:
+                                uid = None
+                        if uid is not None and hasattr(rt, "_on_cv_ready_trigger_rescore"):
+                            await rt._on_cv_ready_trigger_rescore(uid)
+                            return
+                except Exception as nexus_err:
+                    logger.debug(
+                        f"[{MODULE_ID}] NEXUS rescore hook unavailable: {nexus_err}"
+                    )
+
+                # 2. Fallback: legacy A-08 PPO full re-optimization. Force
+                #    the optimizer to drop its cached neutral CV embedding
+                #    and re-read from disk before rescoring.
+                try:
+                    from agents.a08_ppo_optimizer import get_ppo_optimizer
+                    ppo = get_ppo_optimizer()
+                    for attr in ("_cv_embedding", "_cv_text", "_cv_keywords"):
+                        if hasattr(ppo, attr):
+                            try:
+                                setattr(ppo, attr, None)
+                            except Exception:
+                                pass
+                    if hasattr(ppo, "run_optimization"):
+                        try:
+                            ppo.run_optimization(rescore_all=True)
+                        except TypeError:
+                            ppo.run_optimization()
+                except Exception as e:
+                    logger.debug(
+                        f"[{MODULE_ID}] backfill rescore (legacy) failed: {e}"
+                    )
+
+            # Schedule on the running event loop — handler is async so this
+            # call is safe and non-blocking.
+            try:
+                loop = _asyncio.get_running_loop()
+            except RuntimeError:
+                loop = _asyncio.get_event_loop()
+            loop.create_task(_backfill_rescore())
+            rescore_scheduled = True
+        except Exception as e:
+            logger.debug(f"[{MODULE_ID}] could not schedule backfill rescore: {e}")
+
         return _json_response({
             "success": True,
             "data": {
@@ -2005,6 +2073,7 @@ async def handle_user_upload_cv(request: web.Request) -> web.Response:
                 "stored": True,
                 "mirrored_to_supabase": mirrored_to_supabase,
                 "cv_status": cv_status_info,
+                "rescore_scheduled": rescore_scheduled,
             },
         })
 
@@ -2273,8 +2342,88 @@ async def handle_cv_matched_jobs(request: web.Request) -> web.Response:
                 "timestamp": datetime.now(IST).isoformat(),
             })
 
-        # CV is present — score all candidates and apply the optional floor
+        # ===== NEXUS v0.2 — prefer 9-dim Layer-3 scores from job_scores =====
+        # Architecture (NEXUS_v0.2_Architecture.docx, Layer 3) requires the
+        # full 9-dim weighted breakdown (profile_match, role_type_match,
+        # cultural_fit, trajectory, …) computed by core.scoring_engine_v2
+        # via the off-hours scoring loop and stored in `job_scores`.
+        #
+        # When a NEXUS DAO is bound (DATABASE_URL set) AND the user has a
+        # row in `nexus_users`, we look up bulk scores by `source_url`
+        # (used as the canonical job_id in the scoring loop). For any job
+        # missing a NEXUS row we fall back to the keyword matcher so the
+        # feed still ranks something while the loop catches up.
+        nexus_scores: Dict[str, Dict[str, Any]] = {}
+        nexus_user_id: Optional[int] = None
+        try:
+            from core.nexus_runtime import get_runtime               # type: ignore
+            rt = get_runtime()
+            db = getattr(rt, "_db", None) or getattr(rt, "db", None) if rt else None
+            # Resolve the user (telegram_id is a numeric string for real
+            # users; "anonymous" or non-numeric values short-circuit).
+            try:
+                tg_int = int(telegram_id)
+            except (TypeError, ValueError):
+                tg_int = None
+            if db is not None and tg_int is not None and hasattr(db, "get_user_by_telegram"):
+                user = await db.get_user_by_telegram(tg_int)
+                if user is not None:
+                    nexus_user_id = user.user_id
+                    job_keys = [
+                        (c.get('source_url') or '').strip()
+                        for c in candidates
+                        if (c.get('source_url') or '').strip()
+                    ]
+                    if job_keys and hasattr(db, "fetch_user_scores_bulk"):
+                        nexus_scores = await db.fetch_user_scores_bulk(
+                            nexus_user_id, job_keys,
+                        )
+                        logger.info(
+                            f"[{MODULE_ID}] NEXUS scores user={nexus_user_id} "
+                            f"hits={len(nexus_scores)}/{len(job_keys)}"
+                        )
+        except Exception as nexus_err:
+            logger.debug(f"[{MODULE_ID}] NEXUS bulk-score lookup skipped: {nexus_err}")
+
+        # CV is present — score all candidates and apply the optional floor.
+        # Keyword scoring runs unconditionally as the fallback for jobs
+        # the NEXUS loop has not yet processed. NO HARD CAPS — the AI
+        # decides relevance via the 9-dim weighted blend.
         scored = matcher.score_listings_batch(candidates, telegram_id)
+
+        # Overlay NEXUS scores where available (final_score from Layer 3
+        # always wins over keyword overlap because it's the AI-computed
+        # weighted blend across 9 dimensions, not a token match).
+        if nexus_scores:
+            for s in scored:
+                key = (s.get('source_url') or '').strip()
+                row = nexus_scores.get(key)
+                if not row:
+                    continue
+                s['cv_match_score'] = float(row['final_score'])
+                s['nexus_routing'] = row.get('routing', '')
+                s['nexus_breakdown'] = {
+                    'profile_match':    int(row.get('profile_match', 0) or 0),
+                    'role_type_match':  int(row.get('role_type_match', 0) or 0),
+                    'company_tier':     int(row.get('company_tier', 0) or 0),
+                    'location_fit':     int(row.get('location_fit', 0) or 0),
+                    'recency':          int(row.get('recency', 0) or 0),
+                    'competitive_pos':  int(row.get('competitive_pos', 0) or 0),
+                    'cultural_fit':     int(row.get('cultural_fit', 0) or 0),
+                    'trajectory':       int(row.get('trajectory', 0) or 0),
+                    'compensation_fit': int(row.get('compensation_fit', 0) or 0),
+                }
+                # Prepend a single human-readable reason so the UI badges
+                # show the AI verdict, not just the keyword overlap.
+                reasons = list(s.get('cv_match_reasons') or [])
+                reasons.insert(
+                    0,
+                    f"NEXUS 9-dim: {int(row['final_score'])}/100 "
+                    f"({row.get('routing', '?')}) — variant={row.get('resume_variant', 'master')}"
+                )
+                s['cv_match_reasons'] = reasons[:5]
+            # Re-sort after NEXUS overlay
+            scored.sort(key=lambda s: s.get('cv_match_score', 0), reverse=True)
 
         if min_score > 0:
             scored = [s for s in scored if s.get('cv_match_score', 0) >= min_score]
@@ -2305,6 +2454,11 @@ async def handle_cv_matched_jobs(request: web.Request) -> web.Response:
                 'cvMatchScore': s.get('cv_match_score', 0),
                 'cvMatchedKeywords': s.get('cv_matched_keywords', []),
                 'cvMatchReasons': s.get('cv_match_reasons', []),
+                # NEXUS v0.2 — surface the AI's routing decision so the UI
+                # can render the band (AUTO_APPLY / MANUAL_REVIEW / REJECT)
+                # and the 9-dim breakdown badges.
+                'nexusRouting':   s.get('nexus_routing', ''),
+                'nexusBreakdown': s.get('nexus_breakdown', {}),
                 'skills': s.get('cv_matched_keywords', [])[:6],
                 'tags': s.get('cv_matched_keywords', [])[:4],
                 'locationType': 'remote' if 'remote' in (s.get('location', '') or '').lower() or 'work from home' in (s.get('location', '') or '').lower() else 'onsite',
@@ -2413,6 +2567,177 @@ def _read_user_profile(telegram_id: str) -> dict:
     except Exception:
         pass
     return {}
+
+
+# ============================================================
+# NEXUS v0.2 — Layer 6 orchestrator queue inspection
+# ============================================================
+
+async def handle_nexus_queue(request: web.Request) -> web.Response:
+    """
+    GET /api/nexus/queue?telegram_id=...&band=auto|digest|manual&limit=50
+
+    Returns the user's pending auto-apply queue grouped by routing band:
+      • auto    — score >= 80, queued for immediate apply (Layer 6 priority)
+      • digest  — score 60-79, daily digest (user can tap [Apply] / [Skip])
+      • manual  — score 40-59, requires explicit selection in the UI
+    """
+    try:
+        telegram_id = request.query.get('telegram_id', '').strip()
+        try:
+            tg_int = int(telegram_id)
+        except (TypeError, ValueError):
+            return _json_response({"success": False, "error": "telegram_id required"}, 400)
+        band = (request.query.get('band', '') or '').lower().strip()
+        limit = min(200, max(1, int(request.query.get('limit', '50'))))
+
+        try:
+            from core.nexus_runtime import get_runtime               # type: ignore
+            rt = get_runtime()
+            db = getattr(rt, "_db", None) or getattr(rt, "db", None) if rt else None
+        except Exception:
+            db = None
+
+        if db is None or not hasattr(db, "get_user_by_telegram"):
+            return _json_response({
+                "success": True,
+                "data": {"auto": [], "digest": [], "manual": []},
+                "meta": {"backend": "stub", "warning": "NEXUS DAO not bound (DATABASE_URL not set)"},
+            })
+
+        user = await db.get_user_by_telegram(tg_int)
+        if user is None:
+            return _json_response({
+                "success": True,
+                "data": {"auto": [], "digest": [], "manual": []},
+                "meta": {"backend": "nexus_db", "warning": "User not registered yet — open the bot once."},
+            })
+
+        # Auto band — score >= 80
+        # Digest band — 60-79
+        # Manual band — 40-59
+        auto_rows: List[Dict[str, Any]] = []
+        digest_rows: List[Dict[str, Any]] = []
+        manual_rows: List[Dict[str, Any]] = []
+        try:
+            if band in ('', 'auto'):
+                auto_rows = await db.fetch_top_scored_for_user(
+                    user.user_id, min_score=80, limit=limit,
+                )
+            if band in ('', 'digest'):
+                rows = await db.fetch_top_scored_for_user(
+                    user.user_id, min_score=60, limit=limit + 50,
+                )
+                digest_rows = [r for r in rows if 60 <= int(r.get('final_score', 0)) < 80][:limit]
+            if band in ('', 'manual'):
+                rows = await db.fetch_top_scored_for_user(
+                    user.user_id, min_score=40, limit=limit + 100,
+                )
+                manual_rows = [r for r in rows if 40 <= int(r.get('final_score', 0)) < 60][:limit]
+        except Exception as e:
+            logger.error(f"[{MODULE_ID}] /api/nexus/queue fetch failed: {e}")
+            return _json_response({"success": False, "error": str(e)[:200]}, 500)
+
+        def _shape(r: Dict[str, Any]) -> Dict[str, Any]:
+            return {
+                "id":            str(r.get('job_id', '')),
+                "title":         r.get('title', ''),
+                "company":       r.get('company', ''),
+                "source":        (r.get('source', '') or '').lower(),
+                "sourceUrl":     r.get('source_url', ''),
+                "location":      r.get('location', '') or 'Not specified',
+                "stipend":       int(r.get('stipend', 0) or 0),
+                "matchScore":    int(r.get('final_score', 0) or 0),
+                "routing":       r.get('routing', ''),
+                "resumeVariant": r.get('resume_variant', 'master'),
+                "deadline":      r['deadline'].isoformat() if r.get('deadline') else '',
+                "postedDate":    r['posted_at'].isoformat() if r.get('posted_at') else '',
+                "scoredAt":      r['scored_at'].isoformat() if r.get('scored_at') else '',
+                "breakdown": {
+                    "profile_match":    int(r.get('profile_match', 0) or 0),
+                    "role_type_match":  int(r.get('role_type_match', 0) or 0),
+                    "company_tier":     int(r.get('company_tier', 0) or 0),
+                    "location_fit":     int(r.get('location_fit', 0) or 0),
+                    "recency":          int(r.get('recency', 0) or 0),
+                    "competitive_pos":  int(r.get('competitive_pos', 0) or 0),
+                    "cultural_fit":     int(r.get('cultural_fit', 0) or 0),
+                    "trajectory":       int(r.get('trajectory', 0) or 0),
+                    "compensation_fit": int(r.get('compensation_fit', 0) or 0),
+                },
+            }
+
+        return _json_response({
+            "success": True,
+            "data": {
+                "auto":   [_shape(r) for r in auto_rows],
+                "digest": [_shape(r) for r in digest_rows],
+                "manual": [_shape(r) for r in manual_rows],
+            },
+            "meta": {
+                "backend":   "nexus_db",
+                "user_id":   user.user_id,
+                "thresholds": {"AUTO_APPLY_PRIORITY": 80, "AUTO_APPLY_DIGEST": 60, "MANUAL_REVIEW": 40},
+            },
+            "timestamp": datetime.now(IST).isoformat(),
+        })
+    except Exception as e:
+        logger.error(f"[{MODULE_ID}] /api/nexus/queue error: {e}")
+        return _json_response({"success": False, "error": str(e)[:200]}, 500)
+
+
+async def handle_nexus_status(request: web.Request) -> web.Response:
+    """
+    GET /api/nexus/status?telegram_id=...
+    Returns the scoring-loop snapshot + per-user queue counters.
+    """
+    try:
+        telegram_id = (request.query.get('telegram_id', '') or '').strip()
+        try:
+            tg_int = int(telegram_id) if telegram_id else None
+        except (TypeError, ValueError):
+            tg_int = None
+
+        try:
+            from core.nexus_runtime import get_runtime               # type: ignore
+            rt = get_runtime()
+        except Exception:
+            rt = None
+
+        loop_snapshot: Dict[str, Any] = {}
+        scoring_loop = getattr(rt, "_scoring_loop", None) if rt else None
+        if scoring_loop and hasattr(scoring_loop, "snapshot"):
+            try:
+                loop_snapshot = scoring_loop.snapshot()
+            except Exception:
+                loop_snapshot = {}
+
+        snap: Dict[str, Any] = {}
+        db = getattr(rt, "_db", None) or getattr(rt, "db", None) if rt else None
+        if db is not None and hasattr(db, "status_snapshot"):
+            user_id = None
+            if tg_int is not None and hasattr(db, "get_user_by_telegram"):
+                try:
+                    u = await db.get_user_by_telegram(tg_int)
+                    user_id = u.user_id if u else None
+                except Exception:
+                    user_id = None
+            try:
+                snap = await db.status_snapshot(user_id=user_id)
+            except Exception:
+                snap = {}
+
+        return _json_response({
+            "success": True,
+            "data": {
+                "scoring_loop":  loop_snapshot,
+                "queue_counts":  snap,
+                "version":       "NEXUS v0.2.0",
+            },
+            "timestamp": datetime.now(IST).isoformat(),
+        })
+    except Exception as e:
+        logger.error(f"[{MODULE_ID}] /api/nexus/status error: {e}")
+        return _json_response({"success": False, "error": str(e)[:200]}, 500)
 
 
 # ============================================================
@@ -3225,6 +3550,10 @@ def register_miniapp_routes(app):
     # PRISM v11: CV-matched jobs ("For You" tab) + CV status
     app.router.add_get('/api/cv/status', handle_cv_status)
     app.router.add_get('/api/cv-matched-jobs', handle_cv_matched_jobs)
+
+    # NEXUS v0.2 — Layer 6 orchestrator queue inspection
+    app.router.add_get('/api/nexus/queue', handle_nexus_queue)
+    app.router.add_get('/api/nexus/status', handle_nexus_status)
 
     # System health check
     app.router.add_get('/api/system/health', handle_system_health)

@@ -449,6 +449,57 @@ class NexusDB:
                 user_id, dimension, delta, sample_size,
             )
 
+    async def fetch_user_scores_bulk(
+        self, user_id: int, job_keys: list[str],
+    ) -> dict[str, dict]:
+        """
+        Bulk-fetch the 9-dim breakdown for a list of job_ids for one user.
+        Returns {job_id: {final_score, profile_match, ..., routing}}.
+        Used by the mini-app /api/cv-matched-jobs endpoint to surface
+        NEXUS Layer-3 scores (instead of falling back to keyword overlap).
+        """
+        if not job_keys:
+            return {}
+        async with self._pool.acquire() as c:                            # type: ignore[union-attr]
+            rows = await c.fetch(
+                """
+                SELECT job_id, profile_match, compensation_fit, role_type_match,
+                       company_tier, location_fit, recency, competitive_pos,
+                       cultural_fit, trajectory, final_score, routing,
+                       resume_variant, scored_at
+                FROM job_scores
+                WHERE user_id = $1 AND job_id = ANY($2::text[])
+                """,
+                user_id, job_keys,
+            )
+        return {r["job_id"]: dict(r) for r in rows}
+
+    async def fetch_top_scored_for_user(
+        self, user_id: int, *, min_score: int = 0, limit: int = 200,
+    ) -> list[dict]:
+        """Top-N scored jobs for a user, with the joined job row.
+        Used by the For-You feed when DATABASE_URL is set."""
+        async with self._pool.acquire() as c:                            # type: ignore[union-attr]
+            rows = await c.fetch(
+                """
+                SELECT js.job_id, js.final_score, js.routing,
+                       js.profile_match, js.role_type_match, js.company_tier,
+                       js.location_fit, js.recency, js.competitive_pos,
+                       js.cultural_fit, js.trajectory, js.compensation_fit,
+                       js.resume_variant, js.scored_at,
+                       j.title, j.company, j.portal AS source, j.raw_url AS source_url,
+                       j.jd_text AS description, j.location, j.deadline,
+                       j.stipend_inr_monthly AS stipend, j.discovered_at AS posted_at
+                FROM job_scores js
+                JOIN jobs j ON j.job_id = js.job_id
+                WHERE js.user_id = $1 AND js.final_score >= $2
+                ORDER BY js.final_score DESC, js.scored_at DESC
+                LIMIT $3
+                """,
+                user_id, min_score, limit,
+            )
+        return [dict(r) for r in rows]
+
     async def get_user_action_history(
         self, user_id: int, last_n: int = 200,
     ) -> list[dict]:
