@@ -1,13 +1,18 @@
 """
 ============================================================
-PRISM v0.1 — MAIN ENTRY POINT (20-AGENT ORCHESTRATOR)
+NEXUS v0.2 — MAIN ENTRY POINT (10-LAYER ORCHESTRATOR)
 ============================================================
-Precision Recruitment Intelligence & Scoring Machine
-Zero-cost MBA Hunt Agent system orchestrator.
+Networked Execution System for Unified eXternal Applications.
+Zero-Selector · Zero-Ban · Full Automation MBA Hunt platform.
+
+Legacy PRISM v0.1 agents (A-01..A-20) remain wired as the
+light-mode fallback discovery layer until the heavy NEXUS
+stack (Camoufox + Browser-Use v2.0 + Skyvern 2.0 + Crawl4AI)
+is bootstrapped on a worker dyno via scripts/nexus_bootstrap.sh.
 
 Architecture:
     - Phased startup with dependency ordering & circuit breakers
-    - 20-agent heartbeat system (PRISM: was 12 agents)
+    - NEXUS 10-layer stealth apply runtime (Phase 10) + 20 legacy agents
     - 5-provider AI routing (Groq, Cerebras, OpenRouter, Groq Compound, Mistral)
     - Structured health probing at every init stage
     - Graceful degradation: each subsystem can fail independently
@@ -16,26 +21,26 @@ Architecture:
     - Watchdog: monitors subsystem health
     - Startup diagnostic report to Telegram on success
 
-Startup Phases (PRISM v0.1 — dependency-ordered):
+Startup Phases (NEXUS v0.2 — dependency-ordered):
     Phase 1 — FOUNDATION:  Config, Logging, Data dirs
     Phase 2 — STORAGE:     Database init, schema v3 migration, WAL
     Phase 3 — DATA SEED:   Company DB (1081), 20 agent heartbeats
     Phase 3.5 — SECURITY:  Admin, user whitelist, access codes
-    Phase 4 — AI LAYER:    AI Router (5-provider PRISM architecture)
+    Phase 4 — AI LAYER:    AI Router (5-provider NEXUS architecture)
     Phase 5 — WEB LAYER:   aiohttp server, health endpoints
     Phase 6 — COMMS:       Telegram bot (delayed on Render)
-    Phase 7 — SCHEDULER:   APScheduler (3-wave weekly PRISM cycle)
+    Phase 7 — SCHEDULER:   APScheduler (3-wave NEXUS cycle, NEXUS-routed)
     Phase 8 — WATCHDOG:    Background monitor loop
-    Phase 8.5 — TELETHON:  [PRISM] A-16 real-time TG listener (optional)
-    Phase 9 — EMBEDDINGS:  [PRISM] Warmup sentence-transformers (lazy)
+    Phase 8.5 — TELETHON:  A-16 real-time TG listener (optional)
+    Phase 9 — EMBEDDINGS:  Warmup tfidf-rapidfuzz / sentence-transformers
 
-PRISM v0.1 Changes from OFM v5.x:
-    - 20-agent heartbeat seeds (was 12)
-    - 5-provider AI router init status
-    - Phase 8.5: Telethon MTProto listener for A-16
-    - Phase 9: Embedding engine lazy warmup
-    - PRISM banner with 20-agent / 5-provider display
-    - Updated startup report with PRISM provider status
+NEXUS v0.2 Changes from PRISM v0.1:
+    - Phase 10: NEXUS 10-Layer runtime (vault, triad, Crawl4AI, scoring,
+      RAG answers, CAPTCHA cascade, orchestrator, dedup, intel, dashboard)
+    - PRISM A-03/A-04 demoted to fallback when Crawl4AI unavailable
+    - A-13 auto-apply rerouted through NEXUS Orchestrator queue
+    - Mini-app rebranded NEXUS, zero-glitch UI, deep-black palette
+    - Multi-tenant CV intake + per-user pgvector match (off-hours scoring)
 ============================================================
 """
 
@@ -98,7 +103,7 @@ except ImportError:
 # CONSTANTS
 # ============================================================
 
-VERSION = "0.1.0-prism"
+VERSION = "0.2.0-nexus"
 RENDER_OVERLAP_GRACE_SEC = int(os.getenv('RENDER_OVERLAP_GRACE_SEC', '20'))
 WATCHDOG_INTERVAL_SEC = 120
 STARTUP_TIMEOUT_SEC = 120
@@ -107,13 +112,13 @@ GC_INTERVAL_SEC = 120
 BANNER = """
 +============================================================+
 |                                                              |
-|   PRISM v0.1 — Precision Recruitment Intelligence            |
-|                & Scoring Machine                             |
+|   NEXUS v0.2 — Networked Execution System                    |
+|                for Unified eXternal Applications             |
 |                                                              |
-|   20 AI Agents | 5 AI Providers | 1081 Companies            |
-|   Groq + Cerebras + OpenRouter + Compound + Mistral          |
-|   Telegram Command Center | InternHub Pro Mini App           |
-|   3-Wave Weekly Schedule | PPO V11 | Total Daily Cost: $0    |
+|   10-Layer Stealth Apply | Zero Selectors | Zero Bans        |
+|   Camoufox + Browser-Use v2.0 + Skyvern 2.0 + Crawl4AI       |
+|   pgvector dedup | 9-dim scoring | RAG answers | CAPTCHA T1-4|
+|   Telegram Cockpit | Mini-App | Cost: $0 (free-tier verified)|
 |                                                              |
 +============================================================+
 """
@@ -476,7 +481,7 @@ class Application:
                 detail = f"already seeded ({existing} companies)"
 
             db.seed_agent_heartbeats()
-            detail += ", heartbeats A-01..A-20 (PRISM)"
+            detail += ", heartbeats A-01..A-20 (NEXUS legacy fallback layer)"
 
             # NOTE: Supabase data is NEVER auto-cleared on startup.
             # Supabase is the persistent store — clearing it loses all scraped data.
@@ -527,7 +532,7 @@ class Application:
                 if prov_info.get('api_key_set', False):
                     providers_ready.append(prov_name)
 
-            detail = f"PRISM 5-provider: {len(providers_ready)}/5 configured ({', '.join(providers_ready)})"
+            detail = f"NEXUS 5-provider: {len(providers_ready)}/5 configured ({', '.join(providers_ready)})"
             self._status.mark_ok('ai_router', detail)
             logger.info(f"[Phase 4] AI Router ready — {detail}")
             return router
@@ -753,7 +758,7 @@ class Application:
     async def start(self):
         print(BANNER)
         logger.info("=" * 60)
-        logger.info(f"  PRISM v{VERSION} -- STARTING")
+        logger.info(f"  NEXUS v{VERSION} -- STARTING")
         logger.info(f"  Mode: {'Render' if self._is_render else 'Local'} Web Service")
         logger.info(f"  PID: {os.getpid()}")
         logger.info("=" * 60)
@@ -827,7 +832,7 @@ class Application:
             logger.debug(f"[Phase 8/11] Supabase keepalive skip: {e}")
 
         # ============================================================
-        # PRISM v0.1: Phase 8.5 — Telethon A-16 Real-time Listener
+        # NEXUS v0.2: Phase 8.5 — Telethon A-16 Real-time Listener (legacy)
         # ============================================================
         logger.info("[Phase 8.5/11] Initializing A-16 Telethon listener...")
         try:
@@ -845,9 +850,9 @@ class Application:
             logger.info(f"[Phase 8.5/11] A-16 Telethon: skipped ({e})")
 
         # ============================================================
-        # PRISM v0.1: Phase 9 — Embedding Engine (Lightweight)
+        # NEXUS v0.2: Phase 9 — Embedding Engine (Lightweight)
         # ============================================================
-        logger.info("[Phase 9/11] PRISM embedding engine init...")
+        logger.info("[Phase 9/11] NEXUS embedding engine init...")
         try:
             from core.embedding_engine import get_embedding_engine
             embed_engine = get_embedding_engine()
@@ -891,21 +896,21 @@ class Application:
 
                 # ─────────────────────────────────────────────────────
                 # NEXUS Telegram bridge — mount NEXUS commands onto the
-                # existing PRISM bot (single polling loop, no conflicts).
+                # existing legacy bot (single polling loop, no conflicts).
                 # ─────────────────────────────────────────────────────
                 try:
                     if (self._telegram is not None
                             and getattr(self._telegram, "_app", None) is not None
                             and self._nexus._dash is not None):                # noqa: SLF001
-                        from core.telegram_bridge import attach_nexus_to_prism_app
-                        added = attach_nexus_to_prism_app(
+                        from core.telegram_bridge import attach_nexus_to_prism_app as _attach_nexus_handlers
+                        added = _attach_nexus_handlers(
                             self._telegram._app,                                # noqa: SLF001
                             dashboard=self._nexus._dash,                         # noqa: SLF001
                             runtime=self._nexus,
                         )
                         logger.info(
                             f"[Phase 10/11] NEXUS Telegram bridge mounted: "
-                            f"{added} handlers attached to PRISM bot"
+                            f"{added} handlers attached to legacy bot"
                         )
                         self._status.mark_ok(
                             'nexus_tg_bridge', f'{added} handlers'
@@ -913,7 +918,7 @@ class Application:
                     else:
                         logger.info(
                             "[Phase 10/11] NEXUS Telegram bridge: skipped "
-                            "(PRISM bot not running or NEXUS dashboard absent)"
+                            "(legacy bot not running or NEXUS dashboard absent)"
                         )
                 except Exception as bridge_err:
                     logger.warning(
@@ -937,7 +942,7 @@ class Application:
         mini_app_url = os.getenv('MINI_APP_URL', '')
 
         logger.info("=" * 60)
-        logger.info(f"  PRISM v{VERSION} STARTUP COMPLETE in {duration:.1f}s")
+        logger.info(f"  NEXUS v{VERSION} STARTUP COMPLETE in {duration:.1f}s")
         logger.info(f"  Status: {'ALL OK' if self._status.all_ok else 'DEGRADED'}")
         logger.info(f"  Web: http://0.0.0.0:{port}")
         if render_url:
@@ -946,7 +951,7 @@ class Application:
             logger.info(f"  Mini App: {render_url}/app/")
         if mini_app_url:
             logger.info(f"  Mini App URL: {mini_app_url}")
-        logger.info(f"  Architecture: 20 Agents | 5 AI Providers")
+        logger.info(f"  Architecture: NEXUS 10-Layer | Triad + Crawl4AI | 5 AI Providers")
         logger.info(f"  Keep-Alive: 5 layers active")
         logger.info(f"  Version: {VERSION}")
         logger.info("=" * 60)
@@ -973,12 +978,12 @@ class Application:
             miniapp_line = f"📱 Mini App: {'✅ ' + mini_app_url if mini_app_url else '❌ Not configured'}"
             
             msg = (
-                f"🚀 <b>PRISM v0.1 SYSTEM STARTUP COMPLETE</b>\n"
+                f"🚀 <b>NEXUS v0.2 SYSTEM STARTUP COMPLETE</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
                 f"⏱ Duration: <b>{duration:.1f}s</b>\n"
                 f"🔗 {render_url}\n"
                 f"📦 Version: {VERSION}\n"
-                f"🤖 Architecture: 20 Agents | 5 AI Providers\n"
+                f"🤖 Architecture: NEXUS 10-Layer Stealth Apply\n"
                 f"{miniapp_line}\n\n"
                 f"<b>Subsystem Status:</b>\n"
                 f"{self._status.to_telegram_msg()}\n\n"

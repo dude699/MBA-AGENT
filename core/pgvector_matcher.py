@@ -84,18 +84,50 @@ def _client() -> "AsyncGroq":
     return _groq_client
 
 
+def _hash_embed(payload: str, dim: int = EMBED_DIM) -> list[float]:
+    """
+    Deterministic local hash-bucket embedding fallback. Token-level
+    hashing-trick projection — costs $0, runs anywhere, never 404s.
+    Quality is well below a real model, but it gives a stable, non-zero
+    vector so downstream cosine similarity actually discriminates.
+    """
+    import hashlib
+
+    vec = [0.0] * dim
+    if not payload:
+        return vec
+    tokens = [t for t in payload.lower().split() if t]
+    if not tokens:
+        return vec
+    for tok in tokens:
+        h = hashlib.blake2b(tok.encode("utf-8"), digest_size=8).digest()
+        # Two independent hash functions (sign + bucket) — feature hashing
+        bucket = int.from_bytes(h[:4], "big") % dim
+        sign   = 1.0 if (h[4] & 1) else -1.0
+        vec[bucket] += sign
+    # L2-normalise so cosine downstream works as expected
+    norm = math.sqrt(sum(x * x for x in vec))
+    if norm > 0.0:
+        vec = [x / norm for x in vec]
+    return vec
+
+
 async def embed_text(text: str, model: str | None = None) -> list[float]:
     """
-    Single-string embedding.  Truncates to ~2000 chars (well under Groq's
-    8192 token limit) and returns a list of EMBED_DIM floats.
+    Single-string embedding.  Truncates to ~2000 chars and returns a list of
+    EMBED_DIM floats.
+
+    Resolution order:
+      1. Groq embeddings endpoint (when GROQ_API_KEY is set AND the model
+         name in STACK.groq_embed is actually hosted by Groq).
+      2. Deterministic local hash-bucket fallback — never raises, never 404s.
     """
     if not text or not text.strip():
         return [0.0] * EMBED_DIM
     payload = text.strip()[:2000]
 
-    if not GROQ_AVAILABLE:
-        log.debug("embed.stub — groq missing, returning zero vector")
-        return [0.0] * EMBED_DIM
+    if not GROQ_AVAILABLE or not os.getenv("GROQ_API_KEY"):
+        return _hash_embed(payload)
 
     model = model or STACK.groq_embed
     try:
@@ -104,12 +136,25 @@ async def embed_text(text: str, model: str | None = None) -> list[float]:
             input=payload,
         )
         vec = resp.data[0].embedding                                # type: ignore[attr-defined]
-        if len(vec) != EMBED_DIM:
-            log.warning("embed.dim_mismatch got=%s want=%s", len(vec), EMBED_DIM)
-        return list(vec)
+        # Pad/truncate to EMBED_DIM — the actual model may return 768 or
+        # 1024 dims depending on what Groq currently hosts. We keep the
+        # downstream contract of EMBED_DIM stable.
+        vec = list(vec)
+        if len(vec) < EMBED_DIM:
+            vec = vec + [0.0] * (EMBED_DIM - len(vec))
+        elif len(vec) > EMBED_DIM:
+            vec = vec[:EMBED_DIM]
+        return vec
     except Exception as e:                                          # noqa: BLE001
-        log.warning("embed.fail err=%s — returning zero vector", e)
-        return [0.0] * EMBED_DIM
+        # Log once per process at WARN, then silently degrade to hash fallback.
+        global _embed_warned
+        if not _embed_warned:
+            log.warning("embed.fail err=%s — switching to hash-bucket fallback", e)
+            _embed_warned = True
+        return _hash_embed(payload)
+
+
+_embed_warned = False
 
 
 async def embed_many(texts: Iterable[str], model: str | None = None) -> list[list[float]]:

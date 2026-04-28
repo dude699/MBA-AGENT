@@ -28,8 +28,56 @@ function CVUploadSection() {
   });
   const [uploading, setUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  // NEXUS v0.2 fix — the upload prompt was sticking around for 18-20 hrs
+  // because the UI only checked localStorage. On a fresh Telegram WebView
+  // (or after the user cleared storage / opened on another device) we
+  // never asked the server whether a CV already exists. Now we do.
+  const [serverChecked, setServerChecked] = useState(false);
+  const [serverHasCV, setServerHasCV] = useState(false);
+  const [serverUploadedAt, setServerUploadedAt] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const tgUser = getTelegramUser();
+
+  // Hydrate from server on mount — single source of truth.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const tid = tgUser?.id ? String(tgUser.id) : 'anonymous';
+        const r = await fetch(`/api/cv/status?telegram_id=${encodeURIComponent(tid)}`);
+        if (!r.ok) { setServerChecked(true); return; }
+        const j = await r.json();
+        if (cancelled) return;
+        const data = j?.data || {};
+        const has = !!data.has_cv;
+        setServerHasCV(has);
+        if (has) {
+          // Hydrate name from server filename if local cache is stale/empty.
+          const remoteName: string = data.filename || data.cv_filename || 'resume.pdf';
+          setCvName((prev) => prev || remoteName);
+          try { localStorage.setItem('internhub_cv_name', remoteName); } catch {}
+          // Use server-side uploaded_at when available, else stamp now.
+          const ts: string = data.uploaded_at || new Date().toISOString();
+          setServerUploadedAt(ts);
+          try { localStorage.setItem('internhub_cv_uploaded_at', ts); } catch {}
+        } else {
+          // Server says no CV — clear stale local flags so the upload UI
+          // shows correctly instead of pretending the file is there.
+          try {
+            localStorage.removeItem('internhub_cv_name');
+            localStorage.removeItem('internhub_cv_uploaded_at');
+            localStorage.removeItem('internhub_cv_data');
+          } catch {}
+          setCvName('');
+        }
+      } catch {
+        // Network hiccup — fall back to localStorage view.
+      } finally {
+        if (!cancelled) setServerChecked(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [tgUser?.id]);
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -67,9 +115,13 @@ function CVUploadSection() {
       });
 
       if (resp.ok) {
-        const data = await resp.json();
+        await resp.json();
         setUploadStatus('success');
         setCvName(cvFile.name);
+        // NEXUS v0.2 — flip the server-state flags so the green pill
+        // appears immediately without waiting for a re-mount.
+        setServerHasCV(true);
+        setServerUploadedAt(new Date().toISOString());
         try {
           localStorage.setItem('internhub_cv_name', cvFile.name);
           localStorage.setItem('internhub_cv_uploaded_at', new Date().toISOString());
@@ -121,21 +173,36 @@ function CVUploadSection() {
     setCvFile(null);
     setCvName('');
     setUploadStatus('idle');
+    // NEXUS v0.2 — also flip server-state flags so the upload prompt
+    // returns instantly. Server-side delete is best-effort.
+    setServerHasCV(false);
+    setServerUploadedAt('');
     try {
       localStorage.removeItem('internhub_cv_data');
       localStorage.removeItem('internhub_cv_name');
       localStorage.removeItem('internhub_cv_uploaded_at');
     } catch {}
+    // Fire-and-forget server delete (endpoint is optional; tolerate 404).
+    try {
+      const tid = tgUser?.id ? String(tgUser.id) : 'anonymous';
+      fetch(`/api/user/cv?telegram_id=${encodeURIComponent(tid)}`, { method: 'DELETE' })
+        .catch(() => {});
+    } catch {}
     hapticFeedback('light');
-  }, []);
+  }, [tgUser?.id]);
 
   const uploadedAt = (() => {
     try {
-      const d = localStorage.getItem('internhub_cv_uploaded_at');
+      // Prefer the server-reported timestamp; fall back to localStorage.
+      const d = serverUploadedAt || localStorage.getItem('internhub_cv_uploaded_at') || '';
       if (d) return new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
     } catch {}
     return '';
   })();
+
+  // Effective "has CV" = server says yes OR we have a local name AND the
+  // server check has completed (so we don't flash the prompt during boot).
+  const effectiveHasCV = serverHasCV || (!!cvName && serverChecked);
 
   return (
     <div className="rounded-2xl overflow-hidden" style={{ background: '#ffffff', border: '1px solid #e5e7eb', boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
@@ -150,11 +217,18 @@ function CVUploadSection() {
           </div>
         </div>
 
-        {cvName ? (
+        {!serverChecked ? (
+          // Show a neutral skeleton while we ask the server — prevents the
+          // upload prompt from flashing on top of an existing CV.
+          <div className="flex items-center gap-3 p-3 rounded-xl" style={{ background: '#f8f9fa', border: '1px solid #e5e7eb' }}>
+            <RefreshCw className="w-4 h-4 text-primary-400 animate-spin flex-shrink-0" />
+            <p className="text-xs text-primary-500">Checking CV status…</p>
+          </div>
+        ) : effectiveHasCV ? (
           <div className="flex items-center gap-3 p-3 rounded-xl" style={{ background: '#f0fdf4', border: '1px solid #bbf7d0' }}>
             <FileText className="w-5 h-5 text-emerald-600 flex-shrink-0" />
             <div className="flex-1 min-w-0">
-              <p className="text-xs font-semibold text-emerald-700 truncate">{cvName}</p>
+              <p className="text-xs font-semibold text-emerald-700 truncate">{cvName || 'resume.pdf'}</p>
               {uploadedAt && <p className="text-[10px] text-emerald-500">Uploaded {uploadedAt}</p>}
             </div>
             <button onClick={handleRemoveCV} className="p-1.5 rounded-lg hover:bg-emerald-100 transition-colors">

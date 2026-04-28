@@ -40,7 +40,11 @@ class StackEndpoints:
     # Groq (LLM extraction + embeddings + Whisper)
     groq_llm           : str = "llama-3.3-70b-versatile"
     groq_whisper       : str = "whisper-large-v3"
-    groq_embed         : str = "text-embedding-3-large"   # 1024 dims via Groq endpoint
+    # Groq does NOT host text-embedding-3-large (that's an OpenAI-only model).
+    # Groq's free embedding model is `nomic-embed-text-v1.5` (768 dims).
+    # If GROQ_API_KEY isn't set we fall back to a deterministic local hash
+    # embedding (see core.pgvector_matcher.embed_text fallback path).
+    groq_embed         : str = os.getenv("NEXUS_EMBED_MODEL", "nomic-embed-text-v1.5")
 
     # Cerebras (custom answer generation)
     cerebras_llm       : str = "llama-3.3-70b"

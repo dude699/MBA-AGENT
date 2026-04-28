@@ -1586,10 +1586,56 @@ class WeeklyAgentScheduler:
         await self._send_scheduled_run_report('A-19 Outcome Amplifier', report_data or result)
 
     async def _run_company_intel(self):
-        """Run A-20 Deep Company Intel before auto-apply."""
+        """
+        Run A-20 Deep Company Intel before auto-apply.
+
+        NEXUS v0.2 fix: research_batch(companies: List[str], ...) requires
+        the companies list. Previously this was called with no args and
+        crashed with `TypeError: DeepCompanyIntel.research_batch() missing
+        1 required positional argument: 'companies'`.
+
+        We now pull the next-window apply targets (top-scored unapplied
+        listings) from the DB and pass their distinct company names.
+        """
         from agents.a20_company_intel import get_company_intel
         intel = get_company_intel()
-        result = await self._safe_run('A-20 Company Intel', intel.research_batch, job_timeout=1500)
+
+        # Resolve target companies for this run.
+        companies: list[str] = []
+        try:
+            from core.database import get_db
+            db = get_db()
+            with db.get_cursor() as cur:
+                cur.execute("""
+                    SELECT DISTINCT cl.company
+                    FROM clean_listings cl
+                    LEFT JOIN outcomes o ON o.listing_id = cl.id
+                    WHERE cl.company IS NOT NULL
+                      AND TRIM(cl.company) <> ''
+                      AND o.id IS NULL
+                    ORDER BY COALESCE(cl.semantic_cv_score, 0.0) DESC,
+                             cl.created_at DESC
+                    LIMIT 25
+                """)
+                companies = [r[0] for r in cur.fetchall() if r and r[0]]
+        except Exception as e:
+            logger.warning(f"[A-20] Could not load target companies for batch: {e}")
+            companies = []
+
+        if not companies:
+            logger.info("[A-20] No companies to research this cycle — skipping.")
+            await self._send_scheduled_run_report(
+                'A-20 Company Intel',
+                {'processed': 0, 'errors': ['no companies in queue']},
+            )
+            return
+
+        result = await self._safe_run(
+            'A-20 Company Intel',
+            intel.research_batch,
+            companies,
+            job_timeout=1500,
+        )
         await self._send_scheduled_run_report('A-20 Company Intel', result)
 
     async def _run_alumni_remap(self):

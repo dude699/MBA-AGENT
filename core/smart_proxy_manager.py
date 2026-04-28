@@ -380,13 +380,48 @@ class CuratedProxyList:
         self._proxies: List[Dict[str, Any]] = []
         self._last_refresh: float = 0
         self._refresh_interval: float = 3600  # 1 hour
+        # NEXUS v0.2 — emergency re-fetch threshold. When more than 60%
+        # of the pool has been marked dead we don't wait an hour to refresh,
+        # we trigger immediately. This kills the "proxy 70% dead, refreshing"
+        # warning loop seen in the 2026-04-27 19:53 → 04-28 05:32 render log.
+        self._emergency_alive_ratio: float = 0.40
+        self._min_emergency_interval: float = 300  # 5 min between emergency refreshes
+        self._last_emergency: float = 0
         self._max_pool = max_pool
         self._lock = threading.Lock()
 
-    def refresh(self) -> int:
+    def _should_emergency_refresh(self) -> bool:
+        """
+        Emergency refresh trigger — used to break out of the dead-pool
+        feedback loop where every caller sees `alive=0` and spams warnings.
+        """
+        with self._lock:
+            total = len(self._proxies)
+            if total == 0:
+                return True
+            alive = sum(1 for p in self._proxies if p['alive'])
+            ratio = alive / total
+        if ratio >= self._emergency_alive_ratio:
+            return False
+        # Rate-limit emergency refreshes to once every 5 min so we don't
+        # hammer the upstream proxy lists.
+        return (time.time() - self._last_emergency) >= self._min_emergency_interval
+
+    def refresh(self, force: bool = False) -> int:
         """Fetch fresh proxies from curated sources."""
-        if time.time() - self._last_refresh < self._refresh_interval:
+        # NEXUS v0.2 — honor emergency-refresh trigger as well as the
+        # explicit `force` kwarg (used by the orchestrator's watchdog).
+        emergency = self._should_emergency_refresh()
+        if not force and not emergency \
+                and (time.time() - self._last_refresh) < self._refresh_interval:
             return len(self._proxies)
+        if emergency:
+            self._last_emergency = time.time()
+            logger.info(
+                "[CURATED-PROXY] Emergency refresh triggered — alive pool "
+                "below %.0f%% threshold",
+                self._emergency_alive_ratio * 100,
+            )
 
         new_proxies = []
 
@@ -487,6 +522,7 @@ class CuratedProxyList:
                     break
 
     def mark_failure(self, proxy_url: str):
+        trigger_emergency = False
         with self._lock:
             for p in self._proxies:
                 if p['url'] == proxy_url:
@@ -494,6 +530,17 @@ class CuratedProxyList:
                     if p['failures'] >= 3:
                         p['alive'] = False
                     break
+            # NEXUS v0.2 — if the pool just crossed the emergency threshold,
+            # schedule an out-of-band refresh on the next get_proxy() call.
+            total = len(self._proxies)
+            if total:
+                alive = sum(1 for q in self._proxies if q['alive'])
+                if (alive / total) < self._emergency_alive_ratio:
+                    trigger_emergency = True
+        if trigger_emergency:
+            # Reset the cooldown so the very next refresh() takes the
+            # emergency branch instead of the hourly cache-hit branch.
+            self._last_refresh = 0
 
     def get_stats(self) -> Dict[str, Any]:
         with self._lock:

@@ -615,16 +615,28 @@ CREATE_TABLES_SQL: List[str] = [
     """,
 
     # ---- Table 6: outcomes ----
+    # NEXUS v0.2: company / role / source / contact_email / contact_name /
+    # followup_count / last_followup_at / followup_response are first-class
+    # columns (used by A-19 Outcome Amplifier). This was the root cause of
+    # "no such column: o.company" on fresh DB inits.
     """
     CREATE TABLE IF NOT EXISTS outcomes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         listing_id INTEGER REFERENCES clean_listings(id) ON DELETE SET NULL,
         company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+        company TEXT DEFAULT '',
+        role TEXT DEFAULT '',
+        source TEXT DEFAULT '',
+        contact_email TEXT DEFAULT '',
+        contact_name TEXT DEFAULT '',
         status TEXT DEFAULT 'applied' CHECK(status IN ('applied','pending','shortlisted','interview','rejected','offer','ppo','withdrawn')),
         applied_at DATETIME,
         outcome_at DATETIME,
         notes TEXT DEFAULT '',
         ppo_score_at_apply REAL DEFAULT 0.0,
+        followup_count INTEGER DEFAULT 0,
+        last_followup_at DATETIME,
+        followup_response TEXT DEFAULT '',
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
     """,
@@ -648,15 +660,23 @@ CREATE_TABLES_SQL: List[str] = [
     """,
 
     # ---- Table 8: alumni_contacts ----
+    # NEXUS v0.2: email + email_verified are first-class columns (used by
+    # A-15 outreach) instead of being lazy-added via migration. This was
+    # the root cause of "no such column: ac.email" on fresh DB inits.
     """
     CREATE TABLE IF NOT EXISTS alumni_contacts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+        company TEXT DEFAULT '',
         name TEXT DEFAULT '',
+        email TEXT DEFAULT '',
+        email_verified BOOLEAN DEFAULT 0,
+        email_sent_at DATETIME,
         linkedin_url TEXT DEFAULT '',
         college TEXT DEFAULT '',
         batch_year TEXT DEFAULT '',
         current_role TEXT DEFAULT '',
+        connection_type TEXT DEFAULT 'alumni',
         connection_degree INTEGER DEFAULT 3 CHECK(connection_degree BETWEEN 1 AND 3),
         outreach_draft TEXT DEFAULT '',
         outreach_status TEXT DEFAULT 'pending' CHECK(outreach_status IN ('pending','sent','replied','connected','declined')),
@@ -1334,6 +1354,10 @@ class DatabaseManager:
                     logger.warning(f"Migration v4: auto_apply_queue rebuild skipped ({e})")
 
                 # ---- Fix outcomes ----
+                # NEXUS v0.2: rebuild includes A-19 columns (company, role,
+                # source, contact_email, contact_name, last_followup_at,
+                # followup_response) so /run_outcome_followup stops failing
+                # with "no such column: o.company".
                 try:
                     cursor.execute("ALTER TABLE outcomes RENAME TO _outcomes_old")
                     cursor.execute("""
@@ -1341,26 +1365,63 @@ class DatabaseManager:
                             id INTEGER PRIMARY KEY AUTOINCREMENT,
                             listing_id INTEGER REFERENCES clean_listings(id) ON DELETE SET NULL,
                             company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+                            company TEXT DEFAULT '',
+                            role TEXT DEFAULT '',
+                            source TEXT DEFAULT '',
+                            contact_email TEXT DEFAULT '',
+                            contact_name TEXT DEFAULT '',
                             status TEXT DEFAULT 'applied' CHECK(status IN ('applied','pending','shortlisted','interview','rejected','offer','ppo','withdrawn')),
                             applied_at DATETIME,
                             outcome_at DATETIME,
                             notes TEXT DEFAULT '',
                             ppo_score_at_apply REAL DEFAULT 0.0,
-                            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                            followup_count INTEGER DEFAULT 0
+                            followup_count INTEGER DEFAULT 0,
+                            last_followup_at DATETIME,
+                            followup_response TEXT DEFAULT '',
+                            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                         )
                     """)
-                    # Migrate data — map any invalid status values to 'pending'
+                    # Migrate data — map any invalid status values to 'pending'.
+                    # We backfill company/role from clean_listings via a left
+                    # join so historical rows aren't blank for A-19.
                     cursor.execute("""
-                        INSERT OR IGNORE INTO outcomes (id, listing_id, company_id, status, applied_at, outcome_at, notes, ppo_score_at_apply, created_at)
-                        SELECT id, listing_id, company_id,
-                               CASE WHEN status IN ('applied','shortlisted','interview','rejected','offer','ppo','withdrawn') THEN status ELSE 'pending' END,
-                               applied_at, outcome_at, notes, ppo_score_at_apply, created_at
-                        FROM _outcomes_old
+                        INSERT OR IGNORE INTO outcomes
+                            (id, listing_id, company_id, company, role, source,
+                             status, applied_at, outcome_at, notes,
+                             ppo_score_at_apply, created_at)
+                        SELECT o.id, o.listing_id, o.company_id,
+                               COALESCE(cl.company, ''),
+                               COALESCE(cl.role, ''),
+                               COALESCE(cl.source, ''),
+                               CASE WHEN o.status IN ('applied','shortlisted','interview','rejected','offer','ppo','withdrawn')
+                                    THEN o.status ELSE 'pending' END,
+                               o.applied_at, o.outcome_at, o.notes,
+                               o.ppo_score_at_apply, o.created_at
+                        FROM _outcomes_old o
+                        LEFT JOIN clean_listings cl ON cl.id = o.listing_id
                     """)
                     cursor.execute("DROP TABLE _outcomes_old")
                 except Exception as e:
                     logger.warning(f"Migration v4: outcomes rebuild skipped ({e})")
+
+                # ---- Lazy-add A-19 columns on already-migrated DBs ----
+                # Idempotent: each ALTER is wrapped so it noop's if column
+                # already exists. Covers DBs that ran v4 before this patch.
+                for col_def in (
+                    ("company", "TEXT DEFAULT ''"),
+                    ("role", "TEXT DEFAULT ''"),
+                    ("source", "TEXT DEFAULT ''"),
+                    ("contact_email", "TEXT DEFAULT ''"),
+                    ("contact_name", "TEXT DEFAULT ''"),
+                    ("last_followup_at", "DATETIME"),
+                    ("followup_response", "TEXT DEFAULT ''"),
+                ):
+                    try:
+                        cursor.execute(
+                            f"ALTER TABLE outcomes ADD COLUMN {col_def[0]} {col_def[1]}"
+                        )
+                    except Exception:
+                        pass  # column already present
 
                 # Record migration
                 cursor.execute(
