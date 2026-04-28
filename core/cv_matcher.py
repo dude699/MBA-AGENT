@@ -378,6 +378,17 @@ class CVMatcher:
                 'has_cv': has_cv,
             }
 
+        # ===== NEXUS v0.2 — NO HARD CAPS =====
+        # Per the architecture doc (Layer 3, 9-dim Intelligence Scoring):
+        # the AI decides relevance via Groq/Gemini semantic classification
+        # against the candidate's full CV+profile. Hard regex blocklists are
+        # WRONG because they reject valid roles like "Customer Experience
+        # Associate Manager" (a customer-ops MBA role) just because they
+        # contain a keyword. Removed.
+        #
+        # The proper signal is _nexus_pgvector_score() at the bottom of
+        # this method, which compares the JD embedding to the user's
+        # 1024-dim CV embedding via cosine similarity. AI does the work.
         # ===== 1. Raw keyword overlap (0-50 points) =====
         overlap = cv_tokens & listing_tokens
         overlap_weighted = sum(
@@ -468,6 +479,11 @@ class CVMatcher:
             blended = round(min(100.0, max(0.0, total * 0.6 + nexus_score * 0.4)), 1)
             reasons.insert(0, f"Semantic match: {nexus_score:.0f}/100 (NEXUS pgvector)")
             total = blended
+
+        # NEXUS v0.2 — NO HARD CAPS. Final score is the AI-blended value.
+        # If the user genuinely has "python" on their CV and a listing is
+        # for an SWE role, that's a high match. The user can filter by
+        # category in the UI; we don't second-guess the AI here.
 
         return {
             'match_score': total,

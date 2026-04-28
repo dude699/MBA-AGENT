@@ -80,17 +80,75 @@ DEV_KEY_PATH = os.path.join("data", ".vault.key")
 # KEY MANAGEMENT
 # ============================================================
 
+def _coerce_to_fernet_key(raw: str) -> Optional[bytes]:
+    """
+    NEXUS v0.2 — best-effort Fernet key coercion.
+
+    Render users typically paste a random hex string or short passphrase
+    into CREDENTIAL_VAULT_KEY thinking that's enough. Fernet requires a
+    32-byte key, url-safe base64-encoded (44 chars). Rather than failing
+    forever and dumping creds to in-memory only (which is what the
+    2026-04-28 18:22:43 log showed), we try to derive a deterministic
+    valid Fernet key from whatever the user provided.
+
+    Resolution order on the raw value:
+      1. Already a valid Fernet key       → use as-is
+      2. 64-char hex (32 bytes)           → urlsafe-b64encode → valid key
+      3. Anything else (hex/passphrase)   → SHA-256(raw) → urlsafe-b64encode
+    """
+    import base64
+    import hashlib
+
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    try:
+        Fernet(raw.encode())
+        return raw.encode()
+    except Exception:
+        pass
+    try:
+        if len(raw) == 64:
+            decoded = bytes.fromhex(raw)
+            key = base64.urlsafe_b64encode(decoded)
+            Fernet(key)
+            return key
+    except Exception:
+        pass
+    try:
+        derived = hashlib.sha256(raw.encode("utf-8")).digest()
+        key = base64.urlsafe_b64encode(derived)
+        Fernet(key)
+        return key
+    except Exception:
+        return None
+
+
 def _load_master_key() -> Optional[bytes]:
     """Resolve the master Fernet key from env or fall back to a dev file."""
     for var in ("CREDENTIAL_VAULT_KEY", "SESSION_VAULT_KEY"):
         raw = os.getenv(var, "").strip()
-        if raw:
-            try:
-                # Verify it's a valid Fernet key (32 url-safe base64 bytes).
-                Fernet(raw.encode())
-                return raw.encode()
-            except Exception as e:
-                logger.warning(f"[{MODULE_ID}] env {var} is set but invalid: {e}")
+        if not raw:
+            continue
+        # First, try the value as-is (proper 44-char base64 Fernet key).
+        try:
+            Fernet(raw.encode())
+            return raw.encode()
+        except Exception as e:
+            logger.warning(f"[{MODULE_ID}] env {var} is set but invalid: {e}")
+            # NEXUS v0.2 — try to coerce the user's value into a valid key
+            # so credentials persist across restarts instead of evaporating
+            # to in-memory-only on every request.
+            coerced = _coerce_to_fernet_key(raw)
+            if coerced is not None:
+                logger.warning(
+                    f"[{MODULE_ID}] {var} coerced to a valid Fernet key via "
+                    f"SHA-256 derivation. For production, replace this env "
+                    f"value with the output of: python -c 'from cryptography"
+                    f".fernet import Fernet; print(Fernet.generate_key()"
+                    f".decode())'"
+                )
+                return coerced
 
     # Dev fallback — file-based, will not survive Render restart but at
     # least keeps the vault working on a local laptop.
