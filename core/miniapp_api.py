@@ -20,6 +20,7 @@ except /api/health-check which is public.
 ============================================================
 """
 
+import asyncio
 import json
 import os
 import traceback
@@ -1933,7 +1934,24 @@ async def handle_user_upload_cv(request: web.Request) -> web.Response:
                 telegram_id = (await part.text()).strip()
             elif part.name == 'cv':
                 cv_filename = part.filename or 'resume.pdf'
-                cv_data = await part.read(limit=5 * 1024 * 1024)  # Max 5MB
+                # NEXUS v0.2 fix — aiohttp 3.9+ removed the `limit=` kwarg
+                # from BodyPartReader.read(). Stream chunks manually with a
+                # 5 MB cap so oversized uploads are rejected without OOM.
+                _MAX_CV_BYTES = 5 * 1024 * 1024
+                _chunks: list[bytes] = []
+                _total = 0
+                while True:
+                    _chunk = await part.read_chunk(size=64 * 1024)
+                    if not _chunk:
+                        break
+                    _total += len(_chunk)
+                    if _total > _MAX_CV_BYTES:
+                        return _json_response(
+                            {"success": False, "error": "CV exceeds 5 MB limit"},
+                            413,
+                        )
+                    _chunks.append(_chunk)
+                cv_data = b"".join(_chunks)
 
         if not cv_data:
             return _json_response({"success": False, "error": "No CV file provided"}, 400)
@@ -2914,19 +2932,34 @@ async def handle_admin_overview(request: web.Request) -> web.Response:
         except Exception as e:
             users_summary['error'] = str(e)[:120]
 
-        # NEXUS layer health
+        # NEXUS layer health — snapshot() is async, must be awaited.
         nexus_snapshot: Dict[str, Any] = {}
         try:
             from core.nexus_runtime import get_runtime
             rt = get_runtime()
             if rt and hasattr(rt, 'snapshot'):
-                snap = rt.snapshot()
-                nexus_snapshot = {
-                    "version":     getattr(snap, 'version', None) or snap.get('version'),
-                    "layers_ok":   getattr(snap, 'layers_ok', None) or snap.get('layers_ok', []),
-                    "layers_fail": getattr(snap, 'layers_fail', None) or snap.get('layers_fail', {}),
-                    "triad_live":  getattr(snap, 'triad_live', None) or snap.get('triad_live', False),
-                }
+                snap_coro = rt.snapshot()
+                # snapshot() returns a coroutine; await it.
+                if asyncio.iscoroutine(snap_coro):
+                    snap = await snap_coro
+                else:
+                    snap = snap_coro
+                if isinstance(snap, dict):
+                    nexus_snapshot = {
+                        "version":     snap.get('version'),
+                        "layers_ok":   snap.get('layers_ok', []),
+                        "layers_fail": snap.get('layers_fail', {}),
+                        "triad_live":  snap.get('triad_live', False),
+                        "db_backend":  snap.get('db_backend', 'null'),
+                        "dashboard":   snap.get('dashboard', False),
+                    }
+                else:
+                    nexus_snapshot = {
+                        "version":     getattr(snap, 'version', None),
+                        "layers_ok":   getattr(snap, 'layers_ok', []),
+                        "layers_fail": getattr(snap, 'layers_fail', {}),
+                        "triad_live":  getattr(snap, 'triad_live', False),
+                    }
         except Exception as e:
             nexus_snapshot = {"error": str(e)[:120]}
 

@@ -1146,8 +1146,33 @@ class TelegramDashboard:
 
     @staticmethod
     def _snap_to_rows(snap: Dict[str, Any]) -> List[DigestRow]:
+        """
+        Build DigestRow list from an orchestrator status snapshot.
+
+        NEXUS v0.2 fix: previously this assumed `snap['portals']` was a
+        dict of portal -> info. Some adapters (notably the in-process
+        OrchestratorAdapter in core/nexus_runtime.py) return a *list* of
+        portal names instead, which crashed the daily digest job with
+        `AttributeError: 'list' object has no attribute 'items'`.
+
+        We now accept both shapes:
+          • dict[str, dict]  → original rich path (preferred)
+          • list[str]        → degraded path with zero counters
+        """
         out: List[DigestRow] = []
-        for portal, info in (snap.get("portals") or {}).items():
+        portals = snap.get("portals") or {}
+
+        if isinstance(portals, dict):
+            iterable = portals.items()
+        elif isinstance(portals, (list, tuple, set)):
+            # No per-portal counters available — emit zero rows so the
+            # digest still renders cleanly with portal names.
+            iterable = ((str(p), {}) for p in portals)
+        else:
+            return out
+
+        for portal, info in iterable:
+            info = info if isinstance(info, dict) else {}
             out.append(
                 DigestRow(
                     portal=portal,
