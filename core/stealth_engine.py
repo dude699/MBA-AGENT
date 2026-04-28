@@ -278,28 +278,69 @@ class ProxyPoolManager:
             logger.error(f"Failed to load Webshare proxies: {e}")
 
     def _load_free_proxies(self):
-        """Load free proxy list from public sources."""
+        """
+        Load free proxy list from public sources.
+
+        NEXUS v0.2 fix:
+        • Iterate ALL configured sources (was capped at first 2 — that's why
+          the pool started at 200 and crashed to 14 alive within minutes:
+          public lists are noisy, more sources = more durable pool).
+        • Reset the in-memory pool on reload so dead proxies don't pile up
+          across emergency-reload cycles.
+        • De-duplicate against existing webshare entries.
+        """
         try:
             import requests
-            for source_url in self.config.free_proxy.sources[:2]:
+            with self._lock:
+                # Drop dead-only entries; keep alive ones to retain hot state.
+                alive_kept = [
+                    p for p in self._free_proxies
+                    if self._proxy_health.get(p, {}).get('alive', False)
+                ]
+                # Wipe health for everything else (so we don't leak failures
+                # across reloads).
+                for p in list(self._free_proxies):
+                    if p not in alive_kept:
+                        self._proxy_health.pop(p, None)
+                self._free_proxies = alive_kept
+                seen: Set[str] = set(self._free_proxies) | set(self._webshare_proxies)
+                cap = self.config.free_proxy.max_pool_size
+
+            loaded = 0
+            for source_url in self.config.free_proxy.sources:
                 try:
                     resp = requests.get(source_url, timeout=10)
-                    if resp.status_code == 200:
+                    if resp.status_code != 200:
+                        continue
+                    new_for_source = 0
+                    with self._lock:
                         for line in resp.text.strip().split('\n'):
                             line = line.strip()
-                            if line and ':' in line:
-                                proxy_url = f"http://{line}"
-                                if len(self._free_proxies) < self.config.free_proxy.max_pool_size:
-                                    self._free_proxies.append(proxy_url)
-                                    self._proxy_health[proxy_url] = {
-                                        'type': 'free',
-                                        'alive': True,
-                                        'latency': 0,
-                                        'failures': 0,
-                                    }
+                            if not line or ':' not in line:
+                                continue
+                            proxy_url = line if line.startswith(('http://', 'socks5://')) else f"http://{line}"
+                            if proxy_url in seen:
+                                continue
+                            if len(self._free_proxies) >= cap:
+                                break
+                            seen.add(proxy_url)
+                            self._free_proxies.append(proxy_url)
+                            self._proxy_health[proxy_url] = {
+                                'type': 'free',
+                                'alive': True,
+                                'latency': 0,
+                                'failures': 0,
+                            }
+                            new_for_source += 1
+                    loaded += new_for_source
+                    if len(self._free_proxies) >= cap:
+                        break
                 except Exception:
                     continue
-            logger.info(f"Loaded {len(self._free_proxies)} free proxies")
+            logger.info(
+                f"Loaded {len(self._free_proxies)} free proxies "
+                f"(+{loaded} new this reload)"
+            )
         except Exception as e:
             logger.error(f"Failed to load free proxies: {e}")
 
@@ -381,14 +422,49 @@ class ProxyPoolManager:
                     health['latency'] = latency_ms
 
     def mark_proxy_failure(self, proxy_url: str, site: str = ""):
-        """Record a failed proxy request."""
+        """Record a failed proxy request.
+
+        NEXUS v0.2 fix:
+        • Only emit ONE "marked dead" log per proxy URL (was emitting every
+          time `failures` crossed 3, which produced duplicate warnings like
+          the back-to-back 16:00:36 lines for 45.135.139.120:6423).
+        • Auto-trigger an emergency reload when alive ratio drops below 30%
+          so we don't wait for the hourly health-check loop to spam.
+        """
+        emergency_reload = False
         with self._lock:
             if proxy_url in self._proxy_health:
                 health = self._proxy_health[proxy_url]
+                # Skip noise once a proxy is already dead — callers race.
+                if not health.get('alive', True):
+                    return
                 health['failures'] += 1
                 if health['failures'] >= 3:
                     health['alive'] = False
                     logger.warning(f"Proxy marked dead: {proxy_url}")
+
+            # Compute alive ratio across the free pool (cheap; no I/O).
+            free_total = len(self._free_proxies)
+            if free_total > 0:
+                alive_count = sum(
+                    1 for p in self._free_proxies
+                    if self._proxy_health.get(p, {}).get('alive', False)
+                )
+                # Below 30% alive AND we haven't reloaded in the last 5 min.
+                last_reload = getattr(self, '_last_emergency_reload', 0.0)
+                if (alive_count / free_total) < 0.30 and (time.time() - last_reload) > 300:
+                    emergency_reload = True
+                    self._last_emergency_reload = time.time()
+
+        if emergency_reload:
+            try:
+                logger.info(
+                    "[STEALTH] Emergency proxy reload triggered "
+                    "(alive ratio < 30%)"
+                )
+                self._load_free_proxies()
+            except Exception as e:
+                logger.debug(f"[STEALTH] Emergency reload skipped: {e}")
 
     def health_check_all(self) -> Dict[str, int]:
         """Run health check on all proxies. Returns counts."""
