@@ -175,11 +175,9 @@ export default function BatchApplyPanel() {
     toast.loading('Logging into Internshala...', { id: 'login' });
 
     try {
-      const result = await loginToInternshala(
-        email, password,
-        credData.captcha_api_key?.trim() || '',
-        'capsolver',
-      );
+      // NEXUS v0.2 — no paid CAPTCHA service. Pass empty key/provider so the
+      // backend takes the cookie / NEXUS free-solver path.
+      const result = await loginToInternshala(email, password, '', '');
       toast.dismiss('login');
 
       if (result.success && result.data?.session_valid) {
@@ -206,9 +204,15 @@ export default function BatchApplyPanel() {
         const err = result.data?.message || result.error || 'Login failed';
         const needsKey = result.data?.needs_captcha_key;
         if (needsKey) {
+          // NEXUS v0.2 — CAPTCHA cannot be solved server-side on Render free
+          // tier (no browser available, reCAPTCHA Enterprise v3 needs a real
+          // page context). The ONLY free path that works is pasting a session
+          // cookie. Auto-open the cookie panel so the user doesn't have to
+          // hunt for it under "Advanced".
+          setShowAdvanced(true);
           toast.error(
-            'Internshala requires CAPTCHA for login. Add a capsolver.com API key (~$3/1000) below, OR paste your session cookie in Advanced.',
-            { duration: 8000 }
+            'Internshala blocks server logins with reCAPTCHA. Paste your session cookie below \u2014 it\'s free and lasts weeks.',
+            { duration: 9000 }
           );
         } else {
           toast.error(err, { duration: 6000 });
@@ -488,32 +492,13 @@ export default function BatchApplyPanel() {
                       </div>
                     </div>
 
-                    {/* Captcha API Key (collapsible) */}
-                    {isInternshala && (
-                      <div className="mb-2.5">
-                        <label className="text-[10px] font-semibold text-primary-600 uppercase mb-0.5 block">
-                          Captcha API Key <span className="text-primary-400">(optional)</span>
-                        </label>
-                        <div className="relative">
-                          <input
-                            type={showPasswords.captcha ? 'text' : 'password'}
-                            placeholder="CAP-xxx from capsolver.com (~$3/1000)"
-                            value={credData.captcha_api_key || ''}
-                            onChange={(e) => setCredData({ ...credData, captcha_api_key: e.target.value })}
-                            className="input-field text-sm pr-10"
-                          />
-                          <button
-                            onClick={() => setShowPasswords({ ...showPasswords, captcha: !showPasswords.captcha })}
-                            className="absolute right-3 top-1/2 -translate-y-1/2 text-primary-400"
-                          >
-                            {showPasswords.captcha ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                          </button>
-                        </div>
-                        <p className="text-[9px] text-primary-400 mt-0.5">
-                          Enables fully automated login. Without it, try login anyway or use session cookie below.
-                        </p>
-                      </div>
-                    )}
+                    {/* NEXUS v0.2 — captcha key UI removed.
+                        On Render free tier we have no browser context to
+                        solve reCAPTCHA Enterprise v3, and we don't push
+                        users to paid services. The ONLY free path that
+                        works for Internshala is the session cookie below.
+                        Gemini Vision + Groq Whisper handle CAPTCHAs that
+                        DO have an image / audio (Naukri, Greenhouse, etc.). */}
 
                     {/* Login Button */}
                     <button
@@ -536,24 +521,37 @@ export default function BatchApplyPanel() {
                           className="w-full flex items-center justify-center gap-1 text-[10px] text-primary-400 py-1"
                         >
                           {showAdvanced ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                          {showAdvanced ? 'Hide' : 'Show'} advanced (session cookie)
+                          {showAdvanced ? 'Hide' : 'Recommended:'} session cookie (free, lasts weeks)
                         </button>
                         {showAdvanced && (
                           <div className="mt-2 p-3 bg-blue-50 rounded-lg border border-blue-200">
-                            <p className="text-[10px] text-blue-700 mb-2">
-                              If login fails, paste your session cookie from browser DevTools:
+                            <p className="text-[11px] text-blue-800 font-bold mb-1">
+                              Free path — paste your Internshala session cookie
                             </p>
-                            <ol className="text-[9px] text-blue-600 space-y-0.5 ml-3 list-decimal mb-2">
-                              <li>Log in to <a href="https://internshala.com/login" target="_blank" rel="noopener" className="underline font-bold">internshala.com</a></li>
-                              <li>Press <kbd className="bg-blue-100 px-0.5 rounded font-mono">F12</kbd> → Console → type <code className="bg-blue-100 px-0.5 rounded font-mono">document.cookie</code></li>
-                              <li>Copy the output and paste below</li>
+                            <p className="text-[10px] text-blue-700 mb-2">
+                              Internshala blocks server logins with reCAPTCHA. Paste your browser cookie once — it lasts ~3 weeks and lets NEXUS auto-apply forever.
+                            </p>
+                            <p className="text-[10px] font-semibold text-blue-800 mb-1">Step-by-step (Chrome / Edge desktop):</p>
+                            <ol className="text-[10px] text-blue-700 space-y-1 ml-3 list-decimal mb-2">
+                              <li>Open <a href="https://internshala.com/login" target="_blank" rel="noopener" className="underline font-bold">internshala.com/login</a> and log in normally.</li>
+                              <li>Press <kbd className="bg-blue-100 px-1 rounded font-mono text-[9px]">F12</kbd> to open DevTools.</li>
+                              <li>Click the <b>Application</b> tab (Edge) or <b>Storage</b> tab (Firefox). In Chrome it's <b>Application → Storage → Cookies</b>.</li>
+                              <li>Click <code className="bg-blue-100 px-1 rounded font-mono text-[9px]">https://internshala.com</code> in the left sidebar.</li>
+                              <li>Find the row named <code className="bg-blue-100 px-1 rounded font-mono text-[9px]">_internshala_session</code>. Double-click its <b>Value</b> column and Ctrl+C the long string.</li>
+                              <li>Paste below as <code className="bg-blue-100 px-1 rounded font-mono text-[9px]">_internshala_session=THE_LONG_STRING</code> and tap Validate.</li>
                             </ol>
+                            <p className="text-[10px] text-blue-700 mb-2">
+                              <b>Mobile:</b> use <a href="https://www.kiwibrowser.com/" target="_blank" rel="noopener" className="underline">Kiwi Browser</a> on Android (it has DevTools), or do this once on desktop — the cookie works on every device after.
+                            </p>
+                            <p className="text-[10px] text-blue-700 mb-2">
+                              Shortcut: in DevTools <b>Console</b> tab, type <code className="bg-blue-100 px-1 rounded font-mono text-[9px]">document.cookie</code> and copy the output — that string contains every cookie at once and also works.
+                            </p>
                             <textarea
-                              placeholder="Paste cookie string here..."
+                              placeholder="_internshala_session=eyJhbGciOi...; csrf_cookie_name=..."
                               value={credData.session_cookie || ''}
                               onChange={(e) => setCredData({ ...credData, session_cookie: e.target.value })}
-                              rows={2}
-                              className="input-field text-[11px] resize-none mb-2"
+                              rows={3}
+                              className="input-field text-[11px] resize-none mb-2 font-mono"
                             />
                             <button
                               onClick={handleValidateCookie}
@@ -563,7 +561,7 @@ export default function BatchApplyPanel() {
                               {isLoggingIn ? (
                                 <><Loader2 className="w-3 h-3 animate-spin" /> Validating...</>
                               ) : (
-                                <><RefreshCcw className="w-3 h-3" /> Validate Cookie</>
+                                <><RefreshCcw className="w-3 h-3" /> Validate &amp; Save Cookie</>
                               )}
                             </button>
                           </div>
