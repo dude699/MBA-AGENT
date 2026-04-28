@@ -1975,35 +1975,35 @@ class WeeklyAgentScheduler:
             logger.error(f"[WEEKLY-SCHEDULER-v7] Maintenance error: {e}")
 
     async def _proxy_health_check(self):
+        """
+        Periodic proxy pool health check.
+
+        NEXUS v0.2 fix: the pool used to die down to 14/60 alive every cycle
+        because (a) only 2 of 4 source URLs were ever fetched and (b) the
+        emergency-reload threshold lived only in this scheduler, so
+        stealth_engine kept handing out dead proxies until the next tick.
+        Both root causes are now fixed in core/stealth_engine.py — here we
+        just call the underlying primitive and trust it to no-op when
+        recently reloaded.
+        """
         try:
             from core.stealth_engine import get_stealth_client
             client = get_stealth_client()
             result = client.proxy_pool.health_check_all()
             alive = result.get('alive', 0)
             dead = result.get('dead', 0)
+            total = alive + dead
             logger.info(
                 f"[WEEKLY-SCHEDULER-v7] Proxy health: "
                 f"{alive} alive, {dead} dead"
             )
 
-            # If too many proxies are dead, refresh the proxy list
-            total = alive + dead
-            if total > 0 and dead / total > 0.7:
-                logger.info(
-                    f"[WEEKLY-SCHEDULER-v7] >70% proxies dead ({dead}/{total}), "
-                    f"refreshing proxy list..."
-                )
+            # If too many proxies are dead, ask stealth_engine to reload.
+            # The 5-min emergency cooldown inside _load_free_proxies prevents
+            # log-storms from hammering the upstream lists.
+            if total > 0 and dead / total > 0.5:
+                pool = client.proxy_pool
                 try:
-                    # Clear dead proxies and reload
-                    pool = client.proxy_pool
-                    with pool._lock:
-                        # Remove dead proxies
-                        alive_proxies = [
-                            p for p in pool._free_proxies
-                            if pool._proxy_health.get(p, {}).get('alive', False)
-                        ]
-                        pool._free_proxies = alive_proxies
-                    # Reload fresh proxies
                     pool._load_free_proxies()
                     logger.info(
                         f"[WEEKLY-SCHEDULER-v7] Proxy list refreshed: "
