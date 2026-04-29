@@ -1365,12 +1365,58 @@ class InternshalaApplicator:
                             f"My background and skills align well with this role."
                         )
 
-            # Check for "already applied" indicator on the page
-            if ('already_applied' in detail_html.lower()
-                    or 'you have already applied' in detail_html.lower()
-                    or 'application_submitted' in detail_html.lower()):
-                logger.info(f"[{AGENT_ID}] Already applied to internship {internship_id}")
+            # Check for "already applied" indicator on the page.
+            #
+            # ⚠️ HISTORICAL BUG (fixed 2026-04-29):
+            # The previous version did a naive substring scan for
+            # 'already_applied' / 'application_submitted' against the entire
+            # HTML body. Every Internshala internship detail page embeds
+            # those strings in JS variable names, modal IDs, and analytics
+            # event listeners — even when the user has NOT applied yet.
+            # Result: every apply attempt short-circuited with a fake
+            # "Already applied" success and the POST to /application/easy_apply
+            # was never sent. Internshala then correctly showed "0 applications
+            # yet" while NEXUS reported success in Telegram.
+            #
+            # The fix below requires a HUMAN-VISIBLE confirmation — either
+            # the rendered "You have already applied" / "Application sent"
+            # banner text, or the proof-of-absence: no application form on
+            # the page (a freshly-applied page replaces the form with a
+            # success block). We also explicitly require that the apply
+            # form is GONE before claiming already-applied.
+            html_lower = detail_html.lower()
+            visible_already_markers = (
+                'you have already applied for this internship',
+                'you have already applied to this internship',
+                "you've already applied",
+                'application sent',
+                'application_status_label',  # Internshala's rendered status pill
+            )
+            has_visible_already = any(m in html_lower for m in visible_already_markers)
+            # Proof-of-absence: the apply form must be missing for
+            # already-applied to be a valid conclusion. If the form is
+            # present, the user can still apply, period.
+            apply_form_present = (
+                'id="application-form"' in html_lower
+                or 'id=\'application-form\'' in html_lower
+                or '/application/easy_apply/' in html_lower
+            )
+            if has_visible_already and not apply_form_present:
+                logger.info(
+                    f"[{AGENT_ID}] Already applied to internship {internship_id} "
+                    f"(visible banner detected, apply form absent)"
+                )
                 return True, 'Already applied'
+
+            # If the apply form simply isn't on the page (e.g. portal A/B
+            # test or the listing was removed) we must NOT claim success.
+            # Fail loudly so the orchestrator can fall back to assisted mode.
+            if not apply_form_present:
+                logger.warning(
+                    f"[{AGENT_ID}] Apply form not found on detail page for "
+                    f"internship {internship_id} — refusing to fake success"
+                )
+                return False, 'Apply form not found on listing page'
 
             # Detect the actual form action URL (might differ from default)
             form_action = f"/application/easy_apply/{internship_id}"
@@ -1425,19 +1471,33 @@ class InternshalaApplicator:
 
             if apply_resp.status_code == 200:
                 resp_lower = resp_text.lower()
-                # Success indicators
-                if (resp_json.get('success') is True
-                        or resp_json.get('status') == 'success'
-                        or 'successfully' in resp_lower
-                        or 'application_submitted' in resp_lower
-                        or 'congratul' in resp_lower
-                        or resp_json.get('applied') is True
-                        or 'your application has been submitted' in resp_lower):
+
+                # ⚠️ STRICT success check (fixed 2026-04-29):
+                # Only trust JSON {success:true} or {status:'success'} from
+                # the easy_apply endpoint. Plain-text matches like
+                # 'application_submitted' false-fired in JS analytics
+                # payloads even when the server REJECTED the apply.
+                json_success = (
+                    resp_json.get('success') is True
+                    or resp_json.get('status') == 'success'
+                    or resp_json.get('applied') is True
+                )
+                strong_text_success = (
+                    'your application has been submitted' in resp_lower
+                    or 'application has been sent' in resp_lower
+                    or 'congratulations' in resp_lower and 'applied' in resp_lower
+                )
+                if json_success or strong_text_success:
                     logger.info(f"[{AGENT_ID}] Internshala APPLY SUCCESS: internship {internship_id}")
                     return True, ''
 
-                # Already applied
-                if ('already' in resp_lower and 'applied' in resp_lower) or 'already applied' in resp_lower:
+                # Already applied — require an EXPLICIT phrase, not just two
+                # nearby words. 'already' + 'applied' co-occurred in unrelated
+                # JS error messages and was producing false positives.
+                if ('you have already applied' in resp_lower
+                        or "you've already applied" in resp_lower
+                        or resp_json.get('already_applied') is True
+                        or resp_json.get('alreadyApplied') is True):
                     logger.info(f"[{AGENT_ID}] Internshala: already applied to {internship_id}")
                     return True, 'Already applied'
 
@@ -1458,16 +1518,13 @@ class InternshalaApplicator:
                     )
                     return False, f"Internshala rejected: {str(error_msg)[:200]}"
 
-                # Some internships return HTML with success message
-                if 'application' in resp_lower and ('submitted' in resp_lower or 'received' in resp_lower):
-                    return True, ''
+                # ❌ Removed: 'application' + ('submitted'|'received') heuristic
+                # ❌ Removed: 'short 200 response = success' heuristic
+                # Both produced false positives. Internshala's easy_apply
+                # endpoint returns JSON; if we don't see explicit success
+                # markers we MUST fail loudly, not assume.
 
-                # Short 200 response often means success (form plugin returns minimal response)
-                if len(resp_text.strip()) < 100 and apply_resp.status_code == 200:
-                    logger.info(f"[{AGENT_ID}] Short 200 response — treating as success")
-                    return True, ''
-
-                return False, f"Unclear response ({len(resp_text)} bytes): {resp_text[:200]}"
+                return False, f"Unclear apply response ({len(resp_text)} bytes, no success markers): {resp_text[:200]}"
 
             elif apply_resp.status_code == 302:
                 redirect_url = apply_resp.headers.get('Location', '')
